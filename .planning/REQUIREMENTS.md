@@ -254,5 +254,36 @@
 - **Concurrency:** MAX_JOBS=2 on 8GB RAM to prevent OOM
 - **Encoding:** AAC-LC only (not HE-AAC), 64kbps mono default, `-movflags +faststart` mandatory
 
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| FR-CONV-01 | Phase 1 | Pending |
+| FR-CONV-02 | Phase 1 | Pending |
+| FR-CONV-03 | Phase 1 | Pending |
+| FR-CHAP-01 | Phase 1 | Pending |
+| FR-TRIG-03 | Phase 1 | Pending |
+| NFR-01 | Phase 1 | Pending |
+| NFR-05 | Phase 1 | Pending |
+| NFR-06 | Phase 1 | Pending |
+| FR-META-01 | Phase 2 | Pending |
+| FR-META-02 | Phase 2 | Pending |
+| FR-META-03 | Phase 2 | Pending |
+| FR-META-04 | Phase 2 | Pending |
+| FR-ASIN-01 | Phase 2 | Pending |
+| FR-ASIN-02 | Phase 2 | Pending |
+| FR-ASIN-03 | Phase 2 | Pending |
+| FR-CHAP-02 | Phase 2 | Pending |
+| FR-ORG-01 | Phase 3 | Pending |
+| FR-ORG-02 | Phase 3 | Pending |
+| FR-ARCH-01 | Phase 3 | Pending |
+| FR-TRIG-01 | Phase 4 | Pending |
+| FR-TRIG-02 | Phase 4 | Pending |
+| FR-CONC-01 | Phase 4 | Pending |
+| NFR-02 | Phase 4 | Pending |
+| NFR-03 | Phase 4 | Pending |
+| NFR-04 | Phase 4 | Pending |
+| FR-CHAP-03 | Deferred (v2) | -- |
+
 ---
 *Last updated: 2026-02-20*
