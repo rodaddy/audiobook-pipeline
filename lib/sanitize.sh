@@ -44,13 +44,23 @@ sanitize_chapter_title() {
   '
 }
 
-# Generate a 16-char hex hash from source path + sorted MP3 file list
-# This is the idempotency key for a book
+# Generate a 16-char hex hash for idempotency
+# For directories: hash source path + sorted audio file list
+# For files (M4B): hash file path + file size
 generate_book_hash() {
   local source_path="$1"
 
-  {
-    echo "$source_path"
-    find "$source_path" -type f -name "*.mp3" | sort -V
-  } | shasum -a 256 | cut -d' ' -f1 | cut -c1-16
+  if [[ -f "$source_path" ]]; then
+    # Single file input (M4B enrichment)
+    local file_size
+    file_size=$(stat -f%z "$source_path" 2>/dev/null || stat -c%s "$source_path" 2>/dev/null)
+    [[ -z "$file_size" ]] && { echo "Cannot stat file: $source_path" >&2; return 1; }
+    printf '%s\n%s\n' "$source_path" "$file_size" | shasum -a 256 | cut -d' ' -f1 | cut -c1-16
+  else
+    # Directory input (conversion)
+    {
+      echo "$source_path"
+      find "$source_path" -type f \( -iname "*.mp3" -o -iname "*.flac" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.wma" \) | sort -V
+    } | shasum -a 256 | cut -d' ' -f1 | cut -c1-16
+  fi
 }

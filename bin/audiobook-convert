@@ -12,6 +12,8 @@ STAGE_DIR="$SCRIPT_DIR/../stages"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE="${FORCE:-false}"
 VERBOSE="${VERBOSE:-false}"
+SKIP_LOCK="${SKIP_LOCK:-false}"
+PIPELINE_MODE=""
 CONFIG_FILE="${SCRIPT_DIR}/../config.env"
 
 # Track current stage for error reporting
@@ -22,22 +24,33 @@ show_help() {
   cat <<'USAGE'
 Usage: audiobook-convert [OPTIONS] SOURCE_PATH
 
-Convert a directory of MP3 audiobook files into a single M4B with chapters.
+Convert, enrich, and organize audiobooks into tagged M4B files with chapters.
+
+Modes:
+  convert   (default for directories)  Full pipeline: validate -> concat -> convert -> tag -> organize
+  enrich    (default for .m4b files)   Tag and organize existing M4B: asin -> metadata -> organize
+  metadata  (explicit only)            Fetch and apply metadata only: asin -> metadata
+  organize  (explicit only)            Organize into Plex/Audiobookshelf folder structure
 
 Options:
+  -m, --mode MODE    Set pipeline mode (convert|enrich|metadata|organize)
+                     Auto-detected from input type if not specified
   --dry-run          Show what would happen without making changes
   --force            Re-process even if already completed
+  --no-lock          Skip global singleton lock (for batch/parallel runs)
   -v, --verbose      Enable debug-level logging
   -c, --config FILE  Path to config.env (default: <script>/../config.env)
   -h, --help         Show this help message
 
 Arguments:
-  SOURCE_PATH        Directory containing MP3 files to convert
+  SOURCE_PATH        Directory with audio files (convert) or .m4b file (enrich)
 
 Examples:
-  audiobook-convert /mnt/downloads/MyBook/
-  audiobook-convert --dry-run /mnt/downloads/MyBook/
-  audiobook-convert --force --verbose /mnt/downloads/MyBook/
+  audiobook-convert /mnt/downloads/MyBook/              # Convert MP3 dir (auto: convert mode)
+  audiobook-convert /mnt/media/book.m4b                  # Enrich existing M4B (auto: enrich mode)
+  audiobook-convert --mode metadata /path/to/book.m4b    # Metadata only
+  audiobook-convert --mode organize /path/to/book.m4b    # Organize only
+  audiobook-convert --dry-run --verbose /mnt/downloads/   # Preview with debug logging
 USAGE
 }
 
@@ -51,6 +64,15 @@ while [[ $# -gt 0 ]]; do
     --force)
       FORCE=true
       shift
+      ;;
+    --no-lock)
+      SKIP_LOCK=true
+      shift
+      ;;
+    -m|--mode)
+      [[ -z "${2:-}" ]] && { echo "Error: --mode requires an argument (convert|enrich|metadata|organize)" >&2; exit 1; }
+      PIPELINE_MODE="$2"
+      shift 2
       ;;
     -v|--verbose)
       VERBOSE=true
@@ -78,7 +100,7 @@ done
 SOURCE_PATH="${1:-}"
 
 # Export behavior flags so sourced libs and stages see them
-export DRY_RUN FORCE VERBOSE
+export DRY_RUN FORCE VERBOSE SKIP_LOCK PIPELINE_MODE
 
 # Source config (if exists)
 if [[ -f "$CONFIG_FILE" ]]; then
@@ -138,9 +160,28 @@ if [[ -z "$SOURCE_PATH" ]]; then
   die "SOURCE_PATH required. Use --help for usage."
 fi
 
-if [[ ! -d "$SOURCE_PATH" ]]; then
-  die "SOURCE_PATH is not a directory: $SOURCE_PATH"
+# Auto-detect mode based on input type
+if [[ -z "$PIPELINE_MODE" ]]; then
+  if [[ -f "$SOURCE_PATH" && "$SOURCE_PATH" == *.m4b ]]; then
+    PIPELINE_MODE="enrich"
+  elif [[ -d "$SOURCE_PATH" ]]; then
+    PIPELINE_MODE="convert"
+  else
+    die "SOURCE_PATH must be a directory or .m4b file: $SOURCE_PATH"
+  fi
 fi
+
+# Validate input exists
+if [[ "$PIPELINE_MODE" == "convert" && ! -d "$SOURCE_PATH" ]]; then
+  die "Convert mode requires a directory: $SOURCE_PATH"
+fi
+if [[ "$PIPELINE_MODE" == "enrich" && ! -f "$SOURCE_PATH" ]]; then
+  die "Enrich mode requires a file: $SOURCE_PATH"
+fi
+if [[ "$PIPELINE_MODE" =~ ^(metadata|organize)$ && ! -f "$SOURCE_PATH" ]]; then
+  die "$PIPELINE_MODE mode requires a file: $SOURCE_PATH"
+fi
+export PIPELINE_MODE
 
 # Error trap -- categorizes failure, handles retries, moves to failed/ if needed
 on_error() {
@@ -211,7 +252,25 @@ declare -A STAGE_MAP=(
   [archive]="08"
   [cleanup]="09"
 )
-STAGE_ORDER=(validate concat convert asin metadata organize archive cleanup)
+
+# Dynamic stage order based on mode
+case "$PIPELINE_MODE" in
+  convert)
+    STAGE_ORDER=(validate concat convert asin metadata organize archive cleanup)
+    ;;
+  enrich)
+    STAGE_ORDER=(asin metadata organize cleanup)
+    ;;
+  metadata)
+    STAGE_ORDER=(asin metadata cleanup)
+    ;;
+  organize)
+    STAGE_ORDER=(organize cleanup)
+    ;;
+  *)
+    die "Unknown mode: $PIPELINE_MODE (valid: convert, enrich, metadata, organize)"
+    ;;
+esac
 
 # Run a single stage
 run_stage() {
@@ -241,18 +300,24 @@ main() {
   PIPELINE_START=$(date +%s)
 
   # Resolve to absolute path
-  SOURCE_PATH="$(cd "$SOURCE_PATH" && pwd)"
+  if [[ -d "$SOURCE_PATH" ]]; then
+    SOURCE_PATH="$(cd "$SOURCE_PATH" && pwd)"
+  else
+    SOURCE_PATH="$(cd "$(dirname "$SOURCE_PATH")" && pwd)/$(basename "$SOURCE_PATH")"
+  fi
   export SOURCE_PATH
 
-  log_info "Pipeline starting for: $SOURCE_PATH"
+  log_info "Pipeline starting for: $SOURCE_PATH (mode=$PIPELINE_MODE)"
   [[ "$DRY_RUN" == "true" ]] && log_info "DRY-RUN mode -- no files will be modified"
   [[ "$FORCE" == "true" ]] && log_info "FORCE mode -- will reprocess even if completed"
 
-  # Verify source has MP3 files
-  local mp3_count
-  mp3_count=$(find "$SOURCE_PATH" -type f -iname "*.mp3" | wc -l | tr -d ' ')
-  if [[ "$mp3_count" -eq 0 ]]; then
-    die "No MP3 files found in $SOURCE_PATH"
+  # Verify source has audio files (skip for enrich/metadata/organize modes with M4B input)
+  if [[ "$PIPELINE_MODE" == "convert" ]]; then
+    local audio_count
+    audio_count=$(find "$SOURCE_PATH" -type f \( -iname "*.mp3" -o -iname "*.flac" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.wma" \) | wc -l | tr -d ' ')
+    if [[ "$audio_count" -eq 0 ]]; then
+      die "No audio files found in $SOURCE_PATH"
+    fi
   fi
 
   # Generate book hash for idempotency
@@ -285,7 +350,7 @@ main() {
 
   # Initialize manifest if new book
   if [[ "$book_status" == "new" ]]; then
-    manifest_create "$BOOK_HASH" "$SOURCE_PATH"
+    manifest_create "$BOOK_HASH" "$SOURCE_PATH" "$PIPELINE_MODE"
   elif [[ "$book_status" == "failed" ]]; then
     log_info "Resuming previously failed pipeline"
   fi

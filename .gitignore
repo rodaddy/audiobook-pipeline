@@ -1,0 +1,21 @@
+# Runtime directories
+work/
+output/
+processing/
+queue/
+completed/
+failed/
+locks/
+logs/
+archive/
+manifests/
+
+# Personal config (use config.env.example as template)
+config.env
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

@@ -59,7 +59,7 @@ stage_convert() {
     log_info "Using hardware-accelerated encoder: aac_at (AudioToolbox)"
   fi
 
-  log_info "Converting to: $output_file (bitrate=$TARGET_BITRATE, mono, encoder=$aac_encoder)"
+  log_info "Converting to: $output_file (bitrate=$TARGET_BITRATE, channels=${CHANNELS:-1}, encoder=$aac_encoder)"
 
   # Single-pass ffmpeg: concat + encode + chapter inject + faststart
   run ffmpeg -y -threads 0 \
@@ -67,7 +67,7 @@ stage_convert() {
     -i "$metadata_file" \
     -map_metadata 1 \
     -map 0:a \
-    -c:a "$aac_encoder" -b:a "$TARGET_BITRATE" -ac 1 \
+    -c:a "$aac_encoder" -b:a "$TARGET_BITRATE" -ac "${CHANNELS:-1}" \
     -movflags +faststart \
     "$output_file"
 

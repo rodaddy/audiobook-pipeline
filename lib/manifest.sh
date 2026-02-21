@@ -15,10 +15,12 @@ manifest_path() {
 }
 
 # Create a new manifest for a book
-# Args: BOOK_HASH SOURCE_PATH
+# Args: BOOK_HASH SOURCE_PATH [INPUT_MODE]
+# INPUT_MODE: convert (default), enrich, metadata, organize
 manifest_create() {
   local book_hash="$1"
   local source_path="$2"
+  local input_mode="${3:-convert}"
   local manifest
   manifest=$(manifest_path "$book_hash")
 
@@ -30,10 +32,12 @@ manifest_create() {
     --arg hash "$book_hash" \
     --arg source "$source_path" \
     --arg created "$created_at" \
+    --arg mode "$input_mode" \
     '{
       book_hash: $hash,
       source_path: $source,
       created_at: $created,
+      mode: $mode,
       status: "pending",
       retry_count: 0,
       max_retries: 3,
@@ -51,12 +55,26 @@ manifest_create() {
       metadata: {}
     }')
 
+  # For non-convert modes, pre-complete early stages and seed output file
+  if [[ "$input_mode" != "convert" ]]; then
+    json=$(echo "$json" | jq \
+      --arg source "$source_path" \
+      --arg ts "$created_at" \
+      '.stages.validate.status = "completed"
+       | .stages.validate.completed_at = $ts
+       | .stages.concat.status = "completed"
+       | .stages.concat.completed_at = $ts
+       | .stages.convert.status = "completed"
+       | .stages.convert.completed_at = $ts
+       | .stages.convert.output_file = $source')
+  fi
+
   # Atomic write: temp file + mv
   local tmpfile="$manifest.tmp.$$"
   echo "$json" > "$tmpfile"
   mv "$tmpfile" "$manifest"
 
-  log_info "Manifest created for $book_hash"
+  log_info "Manifest created for $book_hash (mode=$input_mode)"
 }
 
 # Read a field from a manifest
@@ -139,13 +157,22 @@ check_book_status() {
 }
 
 # Find the next stage that hasn't been completed
+# Uses STAGE_ORDER from the environment (set by bin/audiobook-convert)
 # Returns stage name, or "done" if all completed
 get_next_stage() {
   local book_hash="$1"
   local manifest
   manifest=$(manifest_path "$book_hash")
 
-  for stage in validate concat convert asin metadata organize archive cleanup; do
+  # Use STAGE_ORDER if available, otherwise fall back to full list
+  local stages
+  if [[ ${#STAGE_ORDER[@]} -gt 0 ]] 2>/dev/null; then
+    stages=("${STAGE_ORDER[@]}")
+  else
+    stages=(validate concat convert asin metadata organize archive cleanup)
+  fi
+
+  for stage in "${stages[@]}"; do
     local stage_status
     stage_status=$(jq -r ".stages.${stage}.status // \"pending\"" "$manifest")
     if [[ "$stage_status" != "completed" ]]; then
