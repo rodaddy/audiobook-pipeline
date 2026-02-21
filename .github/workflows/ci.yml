@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on library files
+        run: |
+          shellcheck -x -e SC1091,SC2034 lib/*.sh
+
+      - name: Run ShellCheck on stage files
+        run: |
+          shellcheck -x -e SC1091,SC2034 stages/*.sh
+
+      - name: Run ShellCheck on bin scripts
+        run: |
+          shellcheck -x -e SC1091,SC2034 bin/*.sh bin/audiobook-convert
+
+      - name: Run ShellCheck on installer
+        run: |
+          shellcheck -x -e SC1091,SC2034 install.sh
