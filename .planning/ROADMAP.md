@@ -11,7 +11,7 @@ Convert downloaded MP3 audiobooks into chaptered, tagged M4B files organized for
 - [x] **Phase 1: Core Conversion Pipeline** - MP3 to chaptered M4B via CLI (2026-02-20)
 - [x] **Phase 2: Metadata Enrichment** - Audnexus tagging with cover art and chapters (2026-02-20)
 - [x] **Phase 3: Folder Organization & Output** - Plex folder structure and archival (2026-02-21)
-- [ ] **Phase 4: Automation & Triggers** - Readarr hooks, cron, concurrency, error recovery
+- [x] **Phase 4: Automation & Triggers** - Readarr hooks, cron, concurrency, error recovery (2026-02-21)
 
 ## Phase Details
 
@@ -77,9 +77,9 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
-- [ ] 04-01-PLAN.md - Readarr hook shim and cron scanner (wave 1)
-- [ ] 04-02-PLAN.md - flock concurrency, retry logic, disk space pre-flight (wave 1)
-- [ ] 04-03-PLAN.md - Structured logging, error recovery, failed book handling (wave 2)
+- [x] 04-01: Readarr hook shim and cron scanner
+- [x] 04-02: flock concurrency, disk space pre-flight
+- [x] 04-03: Error recovery, retry logic, failed book handling
 
 ### Deferred to v2
 
@@ -131,7 +131,7 @@ Plans:
 | 1. Core Conversion Pipeline | 3/3 | Complete | 2026-02-20 |
 | 2. Metadata Enrichment | 3/3 | Complete | 2026-02-20 |
 | 3. Folder Organization & Output | 2/2 | Complete | 2026-02-21 |
-| 4. Automation & Triggers | 0/3 | Not started | - |
+| 4. Automation & Triggers | 3/3 | Complete | 2026-02-21 |
 
 ---
 *Created: 2026-02-20*
