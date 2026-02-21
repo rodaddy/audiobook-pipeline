@@ -10,24 +10,24 @@ See: .planning/PROJECT.md (updated 2026-02-20)
 ## Current Position
 
 Phase: 1 of 4 (Core Conversion Pipeline)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: Executing
-Last activity: 2026-02-20 -- Completed 01-01 (project skeleton)
+Last activity: 2026-02-20 -- Completed 01-02 (conversion stages)
 
-Progress: [█░░░░░░░░░] 8%
+Progress: [██░░░░░░░░] 17%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 2min
-- Total execution time: 0.03 hours
+- Total plans completed: 2
+- Average duration: 3.5min
+- Total execution time: 0.1 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01 | 1 | 2min | 2min |
+| 01 | 2 | 7min | 3.5min |
 
 ## Accumulated Context
 
@@ -42,6 +42,8 @@ Recent decisions affecting current work:
 - 01-01: run() uses "$@" instead of eval to avoid quoting bugs
 - 01-01: Manifest writes use temp file + mv for atomicity
 - 01-01: Log output to both stderr and file for terminal visibility
+- 01-02: Single-file books skip chapter generation entirely
+- 01-02: Chapter count mismatch is warning, not fatal (allows graceful degradation)
 
 ### Pending Todos
 
@@ -55,5 +57,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-20
-Stopped at: Completed 01-01-PLAN.md
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None
