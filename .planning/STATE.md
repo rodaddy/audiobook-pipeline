@@ -5,30 +5,30 @@
 See: .planning/PROJECT.md (updated 2026-02-20)
 
 **Core value:** Downloaded audiobooks are automatically converted, tagged, and organized into the correct Plex library structure without manual intervention.
-**Current focus:** Phase 2 -- Metadata Enrichment (02-02 complete, 02-03 next)
+**Current focus:** Phase 2 -- Metadata Enrichment (all plans complete, pending verification)
 
 ## Current Position
 
 Phase: 2 of 4 (Metadata Enrichment)
-Plan: 2 of 3 in current phase
-Status: Executing Phase 2
-Last activity: 2026-02-20 -- Completed 02-02 (Audnexus API client)
+Plan: 3 of 3 in current phase
+Status: Phase 2 execution complete, pending verification
+Last activity: 2026-02-20 -- Completed 02-03 (metadata enrichment stage)
 
-Progress: [█████░░░░░] 45%
+Progress: [██████░░░░] 55%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
-- Average duration: 3.8min
-- Total execution time: 0.3 hours
+- Total plans completed: 6
+- Average duration: 3.5min
+- Total execution time: 0.35 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 3/3 | 11min | 3.7min |
-| 02 | 2/3 | 8min | 4min |
+| 02 | 3/3 | 10min | 3.3min |
 
 ## Accumulated Context
 
@@ -56,6 +56,9 @@ Recent decisions affecting current work:
 - 02-02: All API failures use log_warn for graceful degradation, never crash the pipeline
 - 02-02: extract_metadata_fields outputs single-quoted eval-safe shell assignments
 - 02-02: Genre field uses numeric Audnexus category ID (not human-readable)
+- 02-03: lib/metadata.sh extracts fields directly via jq (not eval) -- safer than audnexus.sh pattern
+- 02-03: download_cover_art reused from lib/audnexus.sh, not duplicated
+- 02-03: Only tone tag failure is fatal; all other metadata failures degrade gracefully
 
 ### Pending Todos
 
@@ -64,10 +67,12 @@ None yet.
 ### Blockers/Concerns
 
 - Phase 4: Bookshelf hook env vars (`readarr_addedbookpaths`) reportedly unreliable on manual imports -- needs testing on actual install
+- Shadow reviewer (Phase 1): Case-sensitivity mismatch in MP3 matching (-name vs -iname) -- should be fixed before production use
+- Shadow reviewer (Phase 1): Missing dependency checks for ffmpeg, ffprobe, jq, tone at pipeline start
 
 ## Session Continuity
 
 Last session: 2026-02-20
-Stopped at: Completed 02-02-PLAN.md -- Audnexus API client
+Stopped at: Phase 2 execution complete -- all 3 plans done
 Resume file: None
-Next: 02-03 (metadata enrichment stage script)
+Next: Phase 2 verification, then Phase 3 planning
