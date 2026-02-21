@@ -41,7 +41,7 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of unacceptable behavior may be reported to the community leaders
-responsible for enforcement at **rico@rojotech.dev**.
+responsible for enforcement at **rico@rodaddy.live**.
 
 All complaints will be reviewed and investigated promptly and fairly.
 

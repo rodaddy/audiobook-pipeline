@@ -12,7 +12,7 @@
 
 Instead, report security vulnerabilities via email to:
 
-**security@rojotech.dev**
+**rico@rodaddy.live**
 
 You should receive an acknowledgment within 48 hours. We will follow up with a timeline for a fix after investigating the issue.
 
