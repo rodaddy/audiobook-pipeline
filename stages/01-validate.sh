@@ -10,6 +10,7 @@ STAGE="validate"
 source "$SCRIPT_DIR/lib/core.sh"
 source "$SCRIPT_DIR/lib/ffmpeg.sh"
 source "$SCRIPT_DIR/lib/manifest.sh"
+source "$SCRIPT_DIR/lib/concurrency.sh"
 
 stage_validate() {
   log_info "Starting input validation"
@@ -22,6 +23,11 @@ stage_validate() {
   # Verify source directory exists
   if [[ ! -d "$SOURCE_PATH" ]]; then
     die "Source path is not a directory: $SOURCE_PATH"
+  fi
+
+  # Pre-flight disk space check (NFR-04)
+  if ! check_disk_space "$SOURCE_PATH" "$WORK_DIR"; then
+    die "Insufficient disk space to process $SOURCE_PATH (need 3x source size)"
   fi
 
   # Find all MP3 files with natural sort
