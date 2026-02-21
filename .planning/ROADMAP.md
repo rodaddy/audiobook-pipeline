@@ -45,7 +45,7 @@ Plans:
 **Plans:** TBD
 
 Plans:
-- [ ] 02-01: ASIN discovery (manual .asin file, folder name regex, Readarr API lookup)
+- [x] 02-01: ASIN discovery (manual .asin file, folder name regex, Readarr API lookup)
 - [ ] 02-02: Audnexus API integration (book metadata, chapter data, cover art download, caching)
 - [ ] 02-03: tone CLI tagging (metadata write, chapter import, cover embed, companion files)
 
@@ -129,7 +129,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|---------------|--------|-----------|
 | 1. Core Conversion Pipeline | 3/3 | Complete | 2026-02-20 |
-| 2. Metadata Enrichment | 0/3 | Not started | - |
+| 2. Metadata Enrichment | 1/3 | In progress | - |
 | 3. Folder Organization & Output | 0/2 | Not started | - |
 | 4. Automation & Triggers | 0/3 | Not started | - |
 
