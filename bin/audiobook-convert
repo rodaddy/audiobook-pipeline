@@ -1,0 +1,398 @@
+#!/usr/bin/env bash
+# bin/audiobook-convert -- CLI entry point for the audiobook conversion pipeline
+# Orchestrates stages 01-04: validate, concat, convert, cleanup
+set -euo pipefail
+
+# Resolve script location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/../lib"
+STAGE_DIR="$SCRIPT_DIR/../stages"
+
+# Defaults (before config/args override)
+DRY_RUN="${DRY_RUN:-false}"
+FORCE="${FORCE:-false}"
+VERBOSE="${VERBOSE:-false}"
+SKIP_LOCK="${SKIP_LOCK:-false}"
+PIPELINE_MODE=""
+CONFIG_FILE="${SCRIPT_DIR}/../config.env"
+
+# Track current stage for error reporting
+CURRENT_STAGE=""
+PIPELINE_START=""
+
+show_help() {
+  cat <<'USAGE'
+Usage: audiobook-convert [OPTIONS] SOURCE_PATH
+
+Convert, enrich, and organize audiobooks into tagged M4B files with chapters.
+
+Modes:
+  convert   (default for directories)  Full pipeline: validate -> concat -> convert -> tag -> organize
+  enrich    (default for .m4b files)   Tag and organize existing M4B: asin -> metadata -> organize
+  metadata  (explicit only)            Fetch and apply metadata only: asin -> metadata
+  organize  (explicit only)            Organize into Plex/Audiobookshelf folder structure
+
+Options:
+  -m, --mode MODE    Set pipeline mode (convert|enrich|metadata|organize)
+                     Auto-detected from input type if not specified
+  --dry-run          Show what would happen without making changes
+  --force            Re-process even if already completed
+  --no-lock          Skip global singleton lock (for batch/parallel runs)
+  -v, --verbose      Enable debug-level logging
+  -c, --config FILE  Path to config.env (default: <script>/../config.env)
+  -h, --help         Show this help message
+
+Arguments:
+  SOURCE_PATH        Directory with audio files (convert) or .m4b file (enrich)
+
+Examples:
+  audiobook-convert /mnt/downloads/MyBook/              # Convert MP3 dir (auto: convert mode)
+  audiobook-convert /mnt/media/book.m4b                  # Enrich existing M4B (auto: enrich mode)
+  audiobook-convert --mode metadata /path/to/book.m4b    # Metadata only
+  audiobook-convert --mode organize /path/to/book.m4b    # Organize only
+  audiobook-convert --dry-run --verbose /mnt/downloads/   # Preview with debug logging
+USAGE
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --force)
+      FORCE=true
+      shift
+      ;;
+    --no-lock)
+      SKIP_LOCK=true
+      shift
+      ;;
+    -m|--mode)
+      [[ -z "${2:-}" ]] && { echo "Error: --mode requires an argument (convert|enrich|metadata|organize)" >&2; exit 1; }
+      PIPELINE_MODE="$2"
+      shift 2
+      ;;
+    -v|--verbose)
+      VERBOSE=true
+      shift
+      ;;
+    -c|--config)
+      [[ -z "${2:-}" ]] && { echo "Error: --config requires a FILE argument" >&2; exit 1; }
+      CONFIG_FILE="$2"
+      shift 2
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -*)
+      echo "Error: Unknown option: $1 (use --help)" >&2
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+SOURCE_PATH="${1:-}"
+
+# Export behavior flags so sourced libs and stages see them
+export DRY_RUN FORCE VERBOSE SKIP_LOCK PIPELINE_MODE
+
+# Source config (if exists)
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+fi
+
+# Apply defaults for any config vars not set
+WORK_DIR="${WORK_DIR:-/var/lib/audiobook-pipeline/work}"
+MANIFEST_DIR="${MANIFEST_DIR:-/var/lib/audiobook-pipeline/manifests}"
+OUTPUT_DIR="${OUTPUT_DIR:-/var/lib/audiobook-pipeline/output}"
+LOG_DIR="${LOG_DIR:-/var/log/audiobook-pipeline}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+CLEANUP_WORK_DIR="${CLEANUP_WORK_DIR:-true}"
+FILE_OWNER="${FILE_OWNER:-}"
+FILE_MODE="${FILE_MODE:-644}"
+NFS_OUTPUT_DIR="${NFS_OUTPUT_DIR:-$OUTPUT_DIR}"
+CREATE_COMPANION_FILES="${CREATE_COMPANION_FILES:-true}"
+ARCHIVE_DIR="${ARCHIVE_DIR:-/var/lib/audiobook-pipeline/archive}"
+LOCK_DIR="${LOCK_DIR:-/var/lib/audiobook-pipeline/locks}"
+METADATA_SOURCE="${METADATA_SOURCE:-audible}"
+AUDIBLE_REGION="${AUDIBLE_REGION:-com}"
+export WORK_DIR MANIFEST_DIR OUTPUT_DIR LOG_DIR LOG_LEVEL CLEANUP_WORK_DIR
+export FILE_OWNER FILE_MODE NFS_OUTPUT_DIR CREATE_COMPANION_FILES ARCHIVE_DIR
+export LOCK_DIR METADATA_SOURCE AUDIBLE_REGION
+
+# Override log level if verbose
+if [[ "$VERBOSE" == "true" ]]; then
+  LOG_LEVEL="DEBUG"
+  export LOG_LEVEL
+fi
+
+# Source libraries in order
+# shellcheck disable=SC1091
+source "$LIB_DIR/core.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/ffmpeg.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/manifest.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/sanitize.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/asin.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/audnexus.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/audible.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/metadata.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/organize.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/archive.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/concurrency.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/error-recovery.sh"
+
+# Validate source path provided
+if [[ -z "$SOURCE_PATH" ]]; then
+  die "SOURCE_PATH required. Use --help for usage."
+fi
+
+# Auto-detect mode based on input type
+if [[ -z "$PIPELINE_MODE" ]]; then
+  if [[ -f "$SOURCE_PATH" && "$SOURCE_PATH" == *.m4b ]]; then
+    PIPELINE_MODE="enrich"
+  elif [[ -d "$SOURCE_PATH" ]]; then
+    PIPELINE_MODE="convert"
+  else
+    die "SOURCE_PATH must be a directory or .m4b file: $SOURCE_PATH"
+  fi
+fi
+
+# Validate input exists
+if [[ "$PIPELINE_MODE" == "convert" && ! -d "$SOURCE_PATH" ]]; then
+  die "Convert mode requires a directory: $SOURCE_PATH"
+fi
+if [[ "$PIPELINE_MODE" == "enrich" && ! -f "$SOURCE_PATH" ]]; then
+  die "Enrich mode requires a file: $SOURCE_PATH"
+fi
+if [[ "$PIPELINE_MODE" =~ ^(metadata|organize)$ && ! -f "$SOURCE_PATH" ]]; then
+  die "$PIPELINE_MODE mode requires a file: $SOURCE_PATH"
+fi
+export PIPELINE_MODE
+
+# Error trap -- categorizes failure, handles retries, moves to failed/ if needed
+on_error() {
+  local lineno="$1"
+  local exit_code=$?
+
+  log_error "Pipeline failed at line $lineno (exit=$exit_code)"
+
+  if [[ -z "$CURRENT_STAGE" || -z "${BOOK_HASH:-}" ]]; then
+    log_error "No stage or book_hash set, cannot update manifest"
+    return 0
+  fi
+
+  # Categorize failure based on exit code
+  local category="transient"
+  case $exit_code in
+    2|3)
+      category="permanent"
+      log_error "Permanent failure detected (exit=$exit_code)"
+      ;;
+    *)
+      category="transient"
+      log_warn "Transient failure detected (exit=$exit_code)"
+      ;;
+  esac
+
+  # Update manifest with error details
+  if [[ -f "$(manifest_path "$BOOK_HASH")" ]]; then
+    manifest_set_stage "$BOOK_HASH" "$CURRENT_STAGE" "failed" || true
+    manifest_set_error "$BOOK_HASH" "$CURRENT_STAGE" "$exit_code" "$category" "Pipeline failed at line $lineno" || true
+    manifest_increment_retry "$BOOK_HASH" || true
+    manifest_update "$BOOK_HASH" '.status = "failed"' || true
+  fi
+
+  # Handle permanent failures immediately
+  if [[ "$category" == "permanent" ]]; then
+    log_error "Permanent failure -- moving to failed/ directory"
+    send_failure_notification "$BOOK_HASH" "$CURRENT_STAGE" "Permanent failure at line $lineno"
+    move_to_failed "$BOOK_HASH" "$SOURCE_PATH"
+    exit $exit_code
+  fi
+
+  # Check retry limit for transient failures
+  local retry_count
+  retry_count=$(manifest_read "$BOOK_HASH" "retry_count" || echo "0")
+  local max_retries="${MAX_RETRIES:-3}"
+
+  if [[ "$retry_count" -ge "$max_retries" ]]; then
+    log_error "Max retries ($max_retries) exceeded -- moving to failed/"
+    send_failure_notification "$BOOK_HASH" "$CURRENT_STAGE" "Max retries exceeded after $retry_count attempts"
+    move_to_failed "$BOOK_HASH" "$SOURCE_PATH"
+    exit 1
+  fi
+
+  log_info "Work directory preserved for debugging: ${WORK_DIR:-unknown}"
+  log_info "Will retry on next automation cycle (attempt $retry_count/$max_retries)"
+}
+trap 'on_error $LINENO' ERR
+
+# Stage definitions -- name to file number mapping
+declare -A STAGE_MAP=(
+  [validate]="01"
+  [concat]="02"
+  [convert]="03"
+  [asin]="05"
+  [metadata]="06"
+  [organize]="07"
+  [archive]="08"
+  [cleanup]="09"
+)
+
+# Dynamic stage order based on mode
+case "$PIPELINE_MODE" in
+  convert)
+    STAGE_ORDER=(validate concat convert asin metadata organize archive cleanup)
+    ;;
+  enrich)
+    STAGE_ORDER=(asin metadata organize cleanup)
+    ;;
+  metadata)
+    STAGE_ORDER=(asin metadata cleanup)
+    ;;
+  organize)
+    STAGE_ORDER=(organize cleanup)
+    ;;
+  *)
+    die "Unknown mode: $PIPELINE_MODE (valid: convert, enrich, metadata, organize)"
+    ;;
+esac
+
+# Run a single stage
+run_stage() {
+  local stage_name="$1"
+  local stage_num="${STAGE_MAP[$stage_name]}"
+
+  CURRENT_STAGE="$stage_name"
+  export STAGE="$stage_name"
+
+  log_info "Starting stage: $stage_name ($stage_num)"
+
+  # Source the stage file
+  # shellcheck disable=SC1090
+  source "$STAGE_DIR/${stage_num}-${stage_name}.sh"
+
+  # Call the stage function
+  "stage_${stage_name}"
+
+  log_info "Stage completed: $stage_name"
+}
+
+# Main entry point
+main() {
+  acquire_global_lock
+  log_info "Global lock acquired. Starting pipeline."
+
+  PIPELINE_START=$(date +%s)
+
+  # Resolve to absolute path
+  if [[ -d "$SOURCE_PATH" ]]; then
+    SOURCE_PATH="$(cd "$SOURCE_PATH" && pwd)"
+  else
+    SOURCE_PATH="$(cd "$(dirname "$SOURCE_PATH")" && pwd)/$(basename "$SOURCE_PATH")"
+  fi
+  export SOURCE_PATH
+
+  log_info "Pipeline starting for: $SOURCE_PATH (mode=$PIPELINE_MODE)"
+  [[ "$DRY_RUN" == "true" ]] && log_info "DRY-RUN mode -- no files will be modified"
+  [[ "$FORCE" == "true" ]] && log_info "FORCE mode -- will reprocess even if completed"
+
+  # Verify source has audio files (skip for enrich/metadata/organize modes with M4B input)
+  if [[ "$PIPELINE_MODE" == "convert" ]]; then
+    local audio_count
+    audio_count=$(find "$SOURCE_PATH" -type f \( -iname "*.mp3" -o -iname "*.flac" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.wma" \) | wc -l | tr -d ' ')
+    if [[ "$audio_count" -eq 0 ]]; then
+      die "No audio files found in $SOURCE_PATH"
+    fi
+  fi
+
+  # Generate book hash for idempotency
+  BOOK_HASH=$(generate_book_hash "$SOURCE_PATH")
+  export BOOK_HASH
+  log_info "Book hash: $BOOK_HASH"
+
+  # Set up per-book work directory
+  WORK_DIR="${WORK_DIR}/${BOOK_HASH}"
+  export WORK_DIR
+  mkdir -p "$WORK_DIR"
+
+  # Idempotency check
+  local book_status
+  # check_book_status returns exit 1 for "completed", so capture output separately
+  book_status=$(check_book_status "$BOOK_HASH") || true
+
+  if [[ "$book_status" == "completed" ]]; then
+    if [[ "$FORCE" != "true" ]]; then
+      log_info "Already processed, skipping (use --force to reprocess)"
+      exit 0
+    fi
+    log_info "Force reprocessing -- resetting manifest"
+    # Delete existing manifest to start fresh
+    local manifest_file
+    manifest_file=$(manifest_path "$BOOK_HASH")
+    rm -f "$manifest_file"
+    book_status="new"
+  fi
+
+  # Initialize manifest if new book
+  if [[ "$book_status" == "new" ]]; then
+    manifest_create "$BOOK_HASH" "$SOURCE_PATH" "$PIPELINE_MODE"
+  elif [[ "$book_status" == "failed" ]]; then
+    log_info "Resuming previously failed pipeline"
+  fi
+
+  # Stage orchestration loop with resume support
+  for stage_name in "${STAGE_ORDER[@]}"; do
+    local next_stage
+    next_stage=$(get_next_stage "$BOOK_HASH")
+
+    # All stages done
+    if [[ "$next_stage" == "done" ]]; then
+      break
+    fi
+
+    # Skip already-completed stages (resume support)
+    if [[ "$next_stage" != "$stage_name" ]]; then
+      log_debug "Skipping completed stage: $stage_name"
+      continue
+    fi
+
+    run_stage "$stage_name"
+  done
+
+  CURRENT_STAGE=""
+
+  # Verify final status
+  local final_status
+  final_status=$(manifest_read "$BOOK_HASH" "status")
+
+  local pipeline_end
+  pipeline_end=$(date +%s)
+  local duration=$((pipeline_end - PIPELINE_START))
+
+  if [[ "$final_status" == "completed" ]] || [[ "${DRY_RUN:-false}" == "true" ]]; then
+    log_info "Pipeline complete (${duration}s)"
+  else
+    log_warn "Pipeline finished but status is: $final_status"
+  fi
+}
+
+main
