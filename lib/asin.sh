@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# lib/asin.sh -- ASIN discovery via priority chain (.asin file, folder regex, Readarr API)
+# lib/asin.sh -- ASIN discovery via priority chain (.asin file, folder regex, Audible search, Readarr API)
 # Sourced by stages/05-asin.sh; do not execute directly.
 # Requires: lib/core.sh sourced first (for log_info, log_warn, log_debug, die)
+# Requires: lib/audible.sh sourced for search_audible_book()
 
 set -euo pipefail
 
@@ -14,6 +15,12 @@ ASIN_SOURCE=""
 # Returns: 0 if found and valid format, 1 otherwise
 check_manual_asin_file() {
   local source_dir="$1"
+
+  # If source_dir is a file, check its parent directory
+  if [[ -f "$source_dir" ]]; then
+    source_dir=$(dirname "$source_dir")
+  fi
+
   local asin_file="$source_dir/.asin"
 
   if [[ ! -f "$asin_file" ]]; then
@@ -44,6 +51,12 @@ check_manual_asin_file() {
 # Returns: 0 if found, 1 otherwise
 extract_asin_from_folder() {
   local source_dir="$1"
+
+  # If source_dir is a file, use its parent directory
+  if [[ -f "$source_dir" ]]; then
+    source_dir=$(dirname "$source_dir")
+  fi
+
   local folder_name
   folder_name=$(basename "$source_dir")
 
@@ -145,8 +158,120 @@ query_readarr_for_asin() {
   return 1
 }
 
+# Strip series numbering patterns from a string for cleaner search queries
+# Patterns: "[05]", "05 ", "#1-", "01-", leading/trailing numbers
+# Args: $1 = input string
+# Stdout: cleaned string
+_strip_series_numbers() {
+  local s="$1"
+  # Remove bracketed numbers: [05], [1], [12]
+  s=$(echo "$s" | sed -E 's/\[[0-9]+\]//g')
+  # Remove hash-number prefix: #1-, #05-
+  s=$(echo "$s" | sed -E 's/#[0-9]+-//g')
+  # Remove leading number sequences: "05 ", "01 - "
+  s=$(echo "$s" | sed -E 's/^[0-9]+[[:space:]]*[-–]?[[:space:]]*//')
+  # Remove standalone numbers between words (e.g., "Mistborn 05 Shadows")
+  s=$(echo "$s" | sed -E 's/[[:space:]][0-9]{1,3}[[:space:]]/ /g')
+  # Clean up whitespace
+  s=$(echo "$s" | sed -E 's/  +/ /g; s/^ +//; s/ +$//')
+  echo "$s"
+}
+
+# Search Audible catalog using title/author extracted from path
+# Args: SOURCE_PATH (file or directory)
+# Stdout: ASIN or nothing
+# Returns: 0 if found, 1 otherwise
+search_asin_by_title() {
+  local source_path="$1"
+
+  if [[ ! -e "$source_path" ]]; then
+    log_warn "Source path does not exist: $source_path"
+    return 1
+  fi
+
+  # Build search query from path components
+  local basename_part
+  basename_part=$(basename "$source_path")
+
+  # Strip file extension if present
+  basename_part="${basename_part%.*}"
+
+  # Strip pipeline hash suffix (e.g., " - a7edd490030561fb")
+  basename_part=$(echo "$basename_part" | sed -E 's/ - [a-f0-9]{16}$//')
+
+  # Get parent dir name for author context (strip hash there too)
+  local parent_name=""
+  local parent_dir
+  parent_dir=$(dirname "$source_path")
+  if [[ "$parent_dir" != "/" && "$parent_dir" != "." ]]; then
+    parent_name=$(basename "$parent_dir")
+    parent_name=$(echo "$parent_name" | sed -E 's/ - [a-f0-9]{16}$//')
+  fi
+
+  # Walk to grandparent when parent == basename (dedup collapsed the context)
+  # e.g., .../Mistborn/Mistborn [05] Shadows Of Self - hash/Mistborn [05] Shadows Of Self.m4b
+  # parent="Mistborn [05] Shadows Of Self", basename="Mistborn [05] Shadows Of Self"
+  # grandparent="Mistborn" (the series/author context we lost)
+  local author_hint=""
+  if [[ -n "$parent_name" && "$parent_name" == "$basename_part" ]]; then
+    local grandparent_dir
+    grandparent_dir=$(dirname "$parent_dir")
+    if [[ "$grandparent_dir" != "/" && "$grandparent_dir" != "." ]]; then
+      local grandparent_name
+      grandparent_name=$(basename "$grandparent_dir")
+      grandparent_name=$(echo "$grandparent_name" | sed -E 's/ - [a-f0-9]{16}$//')
+      if [[ -n "$grandparent_name" ]]; then
+        log_debug "Using grandparent dir for context: $grandparent_name"
+        parent_name="$grandparent_name"
+      fi
+    fi
+  fi
+
+  # Extract title hint (basename with series numbers stripped)
+  local title_hint
+  title_hint=$(_strip_series_numbers "$basename_part")
+  # Remove brackets, parens, braces for clean hint
+  title_hint=$(echo "$title_hint" | sed -E 's/[][(){}]//g; s/  +/ /g; s/^ +//; s/ +$//')
+
+  # Build query: "Author Title" or just "Title"
+  local query=""
+  if [[ -n "$parent_name" && "$parent_name" != "$basename_part" ]]; then
+    author_hint="$parent_name"
+    # Strip series numbers from parent too (might be "Mistborn" which is fine,
+    # but could be "Series 03" which isn't)
+    local clean_parent
+    clean_parent=$(_strip_series_numbers "$parent_name")
+    query="$clean_parent $title_hint"
+  else
+    query="$title_hint"
+  fi
+
+  # Clean up query -- remove brackets, parens, braces, excess punctuation
+  query=$(echo "$query" | sed -E 's/[][(){}]//g; s/  +/ /g; s/^ +//; s/ +$//')
+
+  if [[ -z "$query" ]]; then
+    log_debug "Empty search query from path: $source_path"
+    return 1
+  fi
+
+  log_info "Searching Audible for: $query"
+  if [[ -n "$title_hint" ]]; then
+    log_debug "Search hints: title='$title_hint' author='$author_hint'"
+  fi
+
+  local asin
+  asin=$(search_audible_book "$query" "$title_hint" "$author_hint") || return 1
+
+  if [[ -n "$asin" ]]; then
+    echo "$asin"
+    return 0
+  fi
+
+  return 1
+}
+
 # Priority chain orchestrator for ASIN discovery
-# Sets ASIN_SOURCE global: "manual", "folder_regex", or "readarr"
+# Sets ASIN_SOURCE global: "manual", "folder_regex", "audible_search", or "readarr"
 # Args: SOURCE_DIR
 # Stdout: validated ASIN or nothing
 # Returns: 0 if ASIN found, 1 otherwise
@@ -157,6 +282,12 @@ discover_asin() {
   local methods_tried=0
 
   ASIN_SOURCE=""
+
+  # Verify source exists before the priority chain
+  if [[ ! -e "$source_dir" ]]; then
+    log_error "Source does not exist: $source_dir"
+    return 1
+  fi
 
   # Helper: try to validate an ASIN, handle network errors
   _try_validate() {
@@ -186,6 +317,32 @@ discover_asin() {
     fi
   }
 
+  # Priority 0: CLI override via --asin flag
+  if [[ -n "${OVERRIDE_ASIN:-}" ]]; then
+    local override
+    override=$(echo "$OVERRIDE_ASIN" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+    if validate_asin_format "$override"; then
+      local validate_result=0
+      validate_asin_against_audnexus "$override" || validate_result=$?
+      if [[ $validate_result -eq 0 ]]; then
+        ASIN_SOURCE="cli_override"
+        log_info "ASIN from --asin flag: $override"
+        echo "$override"
+        return 0
+      elif [[ $validate_result -eq 2 ]]; then
+        # Audnexus unreachable -- accept format-valid override
+        ASIN_SOURCE="cli_override"
+        log_warn "Audnexus unreachable -- using unvalidated --asin override: $override"
+        echo "$override"
+        return 0
+      else
+        log_warn "ASIN from --asin flag failed Audnexus validation: $override"
+      fi
+    else
+      log_warn "Invalid ASIN format from --asin flag: $override"
+    fi
+  fi
+
   # Priority 1: manual .asin file
   methods_tried=$((methods_tried + 1))
   asin=$(check_manual_asin_file "$source_dir") || true
@@ -209,6 +366,15 @@ discover_asin() {
   asin=$(query_readarr_for_asin "$source_dir") || true
   if [[ -n "$asin" ]]; then
     if _try_validate "$asin" "readarr"; then
+      return 0
+    fi
+  fi
+
+  # Priority 4: Audible catalog search by title/author
+  methods_tried=$((methods_tried + 1))
+  asin=$(search_asin_by_title "$source_dir") || true
+  if [[ -n "$asin" ]]; then
+    if _try_validate "$asin" "audible_search"; then
       return 0
     fi
   fi

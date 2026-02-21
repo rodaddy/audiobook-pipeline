@@ -238,13 +238,59 @@ download_audible_cover() {
 }
 
 # Search Audible catalog by keywords (for ASIN-less lookups)
-# Args: $1 = search query (e.g., "Brandon Sanderson Way of Kings")
-# Outputs: first matching ASIN to stdout, or empty
+# Args: $1 = search query, $2 = expected_title (optional), $3 = expected_author (optional)
+# When hints are provided, scores results and picks best match above threshold.
+# Without hints, returns first result (backward compat).
+# Outputs: best matching ASIN to stdout, or empty
 # Returns: 0 if found, 1 if no results
 search_audible_book() {
   local query="$1"
+  local expected_title="${2:-}"
+  local expected_author="${3:-}"
   local region="${AUDIBLE_REGION:-com}"
 
+  # Prefer Python for search + scoring (handles its own API call)
+  local py_script="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/python/asin_search.py"
+  local py_venv="${py_script%/*}/.venv/bin/python3"
+  local py_cmd="python3"
+  [[ -x "$py_venv" ]] && py_cmd="$py_venv"
+
+  if [[ -f "$py_script" ]] && command -v "$py_cmd" >/dev/null 2>&1; then
+    local result
+    local stderr_file="/tmp/asin_search_$$.err"
+    result=$("$py_cmd" "$py_script" \
+      --query "$query" \
+      --expected-title "$expected_title" \
+      --expected-author "$expected_author" \
+      --region "$region" \
+      ${AI_API_URL:+--ai-api-url "$AI_API_URL"} \
+      ${AI_API_KEY:+--ai-api-key "$AI_API_KEY"} \
+      ${AI_MODEL:+--ai-model "$AI_MODEL"} \
+      --threshold "${ASIN_SEARCH_THRESHOLD:-65}" 2>"$stderr_file") || true
+
+    [[ -s "$stderr_file" ]] && log_debug "Python asin_search: $(cat "$stderr_file")"
+    rm -f "$stderr_file"
+
+    if [[ -n "$result" ]]; then
+      local asin score method result_title result_author
+      asin=$(echo "$result" | jq -r '.asin // empty')
+      score=$(echo "$result" | jq -r '.score // "?"')
+      method=$(echo "$result" | jq -r '.method // "unknown"')
+      result_title=$(echo "$result" | jq -r '.title // ""')
+      result_author=$(echo "$result" | jq -r '.author // ""')
+
+      if [[ -n "$asin" ]]; then
+        log_info "Audible search matched: '$result_title' by $result_author (score: $score, method: $method, ASIN: $asin)"
+        echo "$asin"
+        return 0
+      fi
+    fi
+
+    log_warn "Audible search: Python scoring found no confident match for: $query"
+    return 1
+  fi
+
+  # Fallback: no Python available -- use bash curl + first result
   local api_base
   api_base=$(_audible_api_base "$region")
 
@@ -253,7 +299,7 @@ search_audible_book() {
 
   local response
   if ! response=$(curl -fsSL --max-time 30 \
-    "${api_base}/catalog/products?keywords=${encoded_query}&num_results=5&products_sort_by=Relevance&response_groups=contributors,media,product_desc,product_attrs,series&image_sizes=100" \
+    "${api_base}/catalog/products?keywords=${encoded_query}&num_results=10&products_sort_by=Relevance&response_groups=contributors,media,product_desc,product_attrs,series&image_sizes=100" \
     2>/dev/null); then
     log_warn "Audible search API request failed"
     return 1
@@ -261,13 +307,12 @@ search_audible_book() {
 
   local first_asin
   first_asin=$(echo "$response" | jq -r '.products[0].asin // empty')
-
-  if [[ -z "$first_asin" ]]; then
-    log_info "No Audible results for query: $query"
-    return 1
+  if [[ -n "$first_asin" ]]; then
+    log_info "Audible search found ASIN: $first_asin (no Python, first result)"
+    echo "$first_asin"
+    return 0
   fi
 
-  log_info "Audible search found ASIN: $first_asin"
-  echo "$first_asin"
-  return 0
+  log_info "No Audible results for query: $query"
+  return 1
 }

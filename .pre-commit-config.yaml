@@ -1,0 +1,16 @@
+repos:
+  - repo: local
+    hooks:
+      - id: gen-readme
+        name: Generate README from docstrings
+        entry: python scripts/gen-readme.py
+        language: python
+        pass_filenames: false
+        files: __init__\.py$
+
+      - id: gen-requirements
+        name: Generate requirements.txt
+        entry: python scripts/gen-requirements.py
+        language: python
+        pass_filenames: false
+        files: pyproject\.toml$

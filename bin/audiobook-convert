@@ -35,6 +35,7 @@ Modes:
 Options:
   -m, --mode MODE    Set pipeline mode (convert|enrich|metadata|organize)
                      Auto-detected from input type if not specified
+  --asin ASIN        Override ASIN discovery with a specific ASIN
   --dry-run          Show what would happen without making changes
   --force            Re-process even if already completed
   --no-lock          Skip global singleton lock (for batch/parallel runs)
@@ -50,6 +51,7 @@ Examples:
   audiobook-convert /mnt/media/book.m4b                  # Enrich existing M4B (auto: enrich mode)
   audiobook-convert --mode metadata /path/to/book.m4b    # Metadata only
   audiobook-convert --mode organize /path/to/book.m4b    # Organize only
+  audiobook-convert --asin B002V5A12Y /mnt/media/book.m4b   # Use specific ASIN
   audiobook-convert --dry-run --verbose /mnt/downloads/   # Preview with debug logging
 USAGE
 }
@@ -64,6 +66,11 @@ while [[ $# -gt 0 ]]; do
     --force)
       FORCE=true
       shift
+      ;;
+    --asin)
+      [[ -z "${2:-}" ]] && { echo "Error: --asin requires an ASIN argument" >&2; exit 1; }
+      OVERRIDE_ASIN="$2"
+      shift 2
       ;;
     --no-lock)
       SKIP_LOCK=true
@@ -101,6 +108,7 @@ SOURCE_PATH="${1:-}"
 
 # Export behavior flags so sourced libs and stages see them
 export DRY_RUN FORCE VERBOSE SKIP_LOCK PIPELINE_MODE
+export OVERRIDE_ASIN="${OVERRIDE_ASIN:-}"
 
 # Source config (if exists)
 if [[ -f "$CONFIG_FILE" ]]; then
