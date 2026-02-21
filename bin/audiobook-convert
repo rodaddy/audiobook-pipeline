@@ -121,9 +121,11 @@ NFS_OUTPUT_DIR="${NFS_OUTPUT_DIR:-$OUTPUT_DIR}"
 CREATE_COMPANION_FILES="${CREATE_COMPANION_FILES:-true}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-/var/lib/audiobook-pipeline/archive}"
 LOCK_DIR="${LOCK_DIR:-/var/lib/audiobook-pipeline/locks}"
+METADATA_SOURCE="${METADATA_SOURCE:-audible}"
+AUDIBLE_REGION="${AUDIBLE_REGION:-com}"
 export WORK_DIR MANIFEST_DIR OUTPUT_DIR LOG_DIR LOG_LEVEL CLEANUP_WORK_DIR
 export FILE_OWNER FILE_MODE NFS_OUTPUT_DIR CREATE_COMPANION_FILES ARCHIVE_DIR
-export LOCK_DIR
+export LOCK_DIR METADATA_SOURCE AUDIBLE_REGION
 
 # Override log level if verbose
 if [[ "$VERBOSE" == "true" ]]; then
@@ -144,6 +146,8 @@ source "$LIB_DIR/sanitize.sh"
 source "$LIB_DIR/asin.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/audnexus.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/audible.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/metadata.sh"
 # shellcheck disable=SC1091

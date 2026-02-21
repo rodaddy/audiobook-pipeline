@@ -13,9 +13,11 @@ tag_m4b() {
   local book_json="$3"
   local chapters_file="${4:-}"
 
-  # Extract metadata fields from book JSON
+  # Extract metadata fields from book JSON (works with both Audible and Audnexus shapes)
   local title author narrator genre description release_date
   local series_name series_position asin
+  local subtitle copyright publisher album_artist composer
+  local genre_path rating audible_url
 
   title=$(echo "$book_json" | jq -r '.title // empty')
   author=$(echo "$book_json" | jq -r '[.authors[]?.name] | join(", ") // empty')
@@ -25,6 +27,21 @@ tag_m4b() {
   series_name=$(echo "$book_json" | jq -r '.seriesPrimary?.name // empty')
   series_position=$(echo "$book_json" | jq -r '.seriesPrimary?.position // empty')
   asin=$(echo "$book_json" | jq -r '.asin // empty')
+
+  # Audible-enriched fields (present when _source=audible, empty otherwise)
+  subtitle=$(echo "$book_json" | jq -r '.subtitle // empty')
+  copyright=$(echo "$book_json" | jq -r '.copyright // empty')
+  publisher=$(echo "$book_json" | jq -r '.publisher // empty')
+  genre_path=$(echo "$book_json" | jq -r '.genrePath // empty')
+  rating=$(echo "$book_json" | jq -r '.rating // empty')
+  audible_url=$(echo "$book_json" | jq -r '.audibleUrl // empty')
+
+  # Album artist = first author with ASIN (Mp3tag convention: singleAlbumArtist)
+  album_artist=$(echo "$book_json" | jq -r '.primaryAuthor?.name // empty')
+  [[ -z "$album_artist" ]] && album_artist=$(echo "$book_json" | jq -r '.authors[0]?.name // empty')
+
+  # Composer = narrators (Mp3tag convention for audiobooks)
+  composer="$narrator"
 
   # Extract recording date -- must be ISO 8601 YYYY-MM-DD format
   release_date=$(echo "$book_json" | jq -r '
@@ -49,11 +66,51 @@ tag_m4b() {
   [[ -n "$title" ]] && tone_args+=("--meta-title" "$title")
   [[ -n "$author" ]] && tone_args+=("--meta-artist" "$author")
   [[ -n "$narrator" ]] && tone_args+=("--meta-narrator" "$narrator")
-  [[ -n "$genre" ]] && tone_args+=("--meta-genre" "$genre")
   [[ -n "$release_date" ]] && tone_args+=("--meta-recording-date" "$release_date")
   [[ -n "$description" ]] && tone_args+=("--meta-description" "$description")
+
+  # Series tags -- album, part, movement, sort-album, content group
   [[ -n "$series_name" ]] && tone_args+=("--meta-album" "$series_name")
   [[ -n "$series_position" ]] && tone_args+=("--meta-part" "$series_position")
+  if [[ -n "$series_name" ]]; then
+    tone_args+=("--meta-movement-name" "$series_name")
+    [[ -n "$series_position" ]] && tone_args+=("--meta-movement" "$series_position")
+
+    # Content group: "Series Name, Book #N"
+    if [[ -n "$series_position" ]]; then
+      tone_args+=("--meta-group" "${series_name}, Book #${series_position}")
+      # Sort album: zero-padded for proper sort order
+      local padded_pos
+      if [[ "$series_position" =~ ^[0-9]+$ ]]; then
+        padded_pos=$(printf "%02d" "$series_position")
+      else
+        padded_pos="$series_position"
+      fi
+      tone_args+=("--meta-sort-album" "${series_name} ${padded_pos} - ${title}")
+    fi
+  fi
+
+  # Genre -- use full category path if available, else first genre name
+  if [[ -n "$genre_path" ]]; then
+    tone_args+=("--meta-genre" "$genre_path")
+  elif [[ -n "$genre" ]]; then
+    tone_args+=("--meta-genre" "$genre")
+  fi
+
+  # Audible-enriched fields (only present when source is Audible API)
+  [[ -n "$subtitle" ]] && tone_args+=("--meta-subtitle" "$subtitle")
+  [[ -n "$copyright" ]] && tone_args+=("--meta-copyright" "$copyright")
+  [[ -n "$publisher" ]] && tone_args+=("--meta-publisher" "$publisher")
+  [[ -n "$album_artist" ]] && tone_args+=("--meta-album-artist" "$album_artist")
+  [[ -n "$composer" ]] && tone_args+=("--meta-composer" "$composer")
+  [[ -n "$rating" ]] && tone_args+=("--meta-popularity" "$rating")
+  if [[ -n "$description" ]]; then
+    tone_args+=("--meta-long-description" "$description")
+  fi
+
+  # iTunes audiobook tags
+  tone_args+=("--meta-itunes-media-type" "Audiobook")
+  tone_args+=("--meta-itunes-play-gap" "1")
 
   # Cover art -- only if file exists
   if [[ -f "$work_dir/cover.jpg" ]]; then
@@ -65,9 +122,12 @@ tag_m4b() {
     tone_args+=("--meta-chapters-file" "$chapters_file")
   fi
 
-  # Store ASIN in custom field for future re-runs
+  # Store ASIN and Audible URL in custom fields for future re-runs
   if [[ -n "$asin" ]]; then
     tone_args+=("--meta-additional-field=----:com.pilabor.tone:AUDIBLE_ASIN=$asin")
+  fi
+  if [[ -n "$audible_url" ]]; then
+    tone_args+=("--meta-additional-field=----:com.pilabor.tone:AUDIBLE_URL=$audible_url")
   fi
 
   if [[ ${#tone_args[@]} -eq 0 ]]; then

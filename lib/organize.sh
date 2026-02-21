@@ -41,22 +41,22 @@ build_plex_path() {
 
   local author="" title="" series_name="" series_position="" year=""
 
-  # Try to find Audnexus JSON cache in work_dir
-  local audnexus_json=""
-  local audnexus_file
-  audnexus_file=$(find "$work_dir" -maxdepth 1 -name "audnexus_book_*.json" | head -n1)
+  # Try to find Audnexus-format JSON cache in work_dir
+  # (Audible data is normalized to Audnexus shape and saved here too)
+  local meta_json=""
+  local meta_file
+  meta_file=$(find "$work_dir" -maxdepth 1 -name "audnexus_book_*.json" | head -n1)
 
-  if [[ -n "$audnexus_file" && -f "$audnexus_file" ]]; then
-    # Primary metadata source: Audnexus JSON
-    audnexus_json=$(cat "$audnexus_file")
+  if [[ -n "$meta_file" && -f "$meta_file" ]]; then
+    meta_json=$(cat "$meta_file")
 
-    author=$(echo "$audnexus_json" | jq -r '.authors[0].name // empty')
-    title=$(echo "$audnexus_json" | jq -r '.title // empty')
-    series_name=$(echo "$audnexus_json" | jq -r '.seriesPrimary.name // empty')
-    series_position=$(echo "$audnexus_json" | jq -r '.seriesPrimary.position // empty')
+    author=$(echo "$meta_json" | jq -r '.authors[0].name // empty')
+    title=$(echo "$meta_json" | jq -r '.title // empty')
+    series_name=$(echo "$meta_json" | jq -r '.seriesPrimary.name // empty')
+    series_position=$(echo "$meta_json" | jq -r '.seriesPrimary.position // empty')
 
     # Extract year from releaseDate (ISO 8601)
-    year=$(echo "$audnexus_json" | jq -r '
+    year=$(echo "$meta_json" | jq -r '
       if .releaseDate != null and .releaseDate != "" then
         if (.releaseDate | test("^[0-9]{4}")) then
           .releaseDate[:4]
