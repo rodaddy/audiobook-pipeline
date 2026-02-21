@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-02-20)
 
 **Core value:** Downloaded audiobooks are automatically converted, tagged, and organized into the correct Plex library structure without manual intervention.
-**Current focus:** Phase 1 -- Core Conversion Pipeline
+**Current focus:** Phase 2 -- Metadata Enrichment (Phase 1 complete)
 
 ## Current Position
 

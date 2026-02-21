@@ -8,7 +8,7 @@ Convert downloaded MP3 audiobooks into chaptered, tagged M4B files organized for
 
 ### Phases
 
-- [ ] **Phase 1: Core Conversion Pipeline** - MP3 to chaptered M4B via CLI
+- [x] **Phase 1: Core Conversion Pipeline** - MP3 to chaptered M4B via CLI (2026-02-20)
 - [ ] **Phase 2: Metadata Enrichment** - Audnexus tagging with cover art and chapters
 - [ ] **Phase 3: Folder Organization & Output** - Plex folder structure and archival
 - [ ] **Phase 4: Automation & Triggers** - Readarr hooks, cron, concurrency, error recovery
@@ -28,9 +28,9 @@ Convert downloaded MP3 audiobooks into chaptered, tagged M4B files organized for
 **Plans:** TBD
 
 Plans:
-- [ ] 01-01: Project scaffolding, config, shared libraries (logging, manifest, ffprobe helpers)
-- [ ] 01-02: MP3 merge, chapter generation, AAC encoding, M4B muxing
-- [ ] 01-03: CLI interface with --dry-run, --force, idempotency via manifest
+- [x] 01-01: Project scaffolding, config, shared libraries (logging, manifest, ffprobe helpers)
+- [x] 01-02: MP3 merge, chapter generation, AAC encoding, M4B muxing
+- [x] 01-03: CLI interface with --dry-run, --force, idempotency via manifest
 
 ### Phase 2: Metadata Enrichment
 **Goal:** Tag M4B files with rich metadata from Audnexus API (title, author, narrator, series, cover art, chapters)
@@ -128,7 +128,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|---------------|--------|-----------|
-| 1. Core Conversion Pipeline | 0/3 | Not started | - |
+| 1. Core Conversion Pipeline | 3/3 | Complete | 2026-02-20 |
 | 2. Metadata Enrichment | 0/3 | Not started | - |
 | 3. Folder Organization & Output | 0/2 | Not started | - |
 | 4. Automation & Triggers | 0/3 | Not started | - |
