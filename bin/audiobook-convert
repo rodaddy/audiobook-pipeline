@@ -130,6 +130,8 @@ source "$LIB_DIR/organize.sh"
 source "$LIB_DIR/archive.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/concurrency.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/error-recovery.sh"
 
 # Validate source path provided
 if [[ -z "$SOURCE_PATH" ]]; then
@@ -140,19 +142,61 @@ if [[ ! -d "$SOURCE_PATH" ]]; then
   die "SOURCE_PATH is not a directory: $SOURCE_PATH"
 fi
 
-# Error trap -- logs failing stage and marks manifest as failed
+# Error trap -- categorizes failure, handles retries, moves to failed/ if needed
 on_error() {
   local lineno="$1"
-  log_error "Pipeline failed at line $lineno"
-  if [[ -n "$CURRENT_STAGE" && -n "${BOOK_HASH:-}" ]]; then
-    log_error "Failed during stage: $CURRENT_STAGE"
-    # Mark the stage and overall status as failed in the manifest
-    if [[ -f "$(manifest_path "$BOOK_HASH")" ]]; then
-      manifest_set_stage "$BOOK_HASH" "$CURRENT_STAGE" "failed" || true
-      manifest_update "$BOOK_HASH" '.status = "failed"' || true
-    fi
+  local exit_code=$?
+
+  log_error "Pipeline failed at line $lineno (exit=$exit_code)"
+
+  if [[ -z "$CURRENT_STAGE" || -z "${BOOK_HASH:-}" ]]; then
+    log_error "No stage or book_hash set, cannot update manifest"
+    return 0
   fi
-  log_error "Work directory preserved for debugging: ${WORK_DIR:-unknown}"
+
+  # Categorize failure based on exit code
+  local category="transient"
+  case $exit_code in
+    2|3)
+      category="permanent"
+      log_error "Permanent failure detected (exit=$exit_code)"
+      ;;
+    *)
+      category="transient"
+      log_warn "Transient failure detected (exit=$exit_code)"
+      ;;
+  esac
+
+  # Update manifest with error details
+  if [[ -f "$(manifest_path "$BOOK_HASH")" ]]; then
+    manifest_set_stage "$BOOK_HASH" "$CURRENT_STAGE" "failed" || true
+    manifest_set_error "$BOOK_HASH" "$CURRENT_STAGE" "$exit_code" "$category" "Pipeline failed at line $lineno" || true
+    manifest_increment_retry "$BOOK_HASH" || true
+    manifest_update "$BOOK_HASH" '.status = "failed"' || true
+  fi
+
+  # Handle permanent failures immediately
+  if [[ "$category" == "permanent" ]]; then
+    log_error "Permanent failure -- moving to failed/ directory"
+    send_failure_notification "$BOOK_HASH" "$CURRENT_STAGE" "Permanent failure at line $lineno"
+    move_to_failed "$BOOK_HASH" "$SOURCE_PATH"
+    exit $exit_code
+  fi
+
+  # Check retry limit for transient failures
+  local retry_count
+  retry_count=$(manifest_read "$BOOK_HASH" "retry_count" || echo "0")
+  local max_retries="${MAX_RETRIES:-3}"
+
+  if [[ "$retry_count" -ge "$max_retries" ]]; then
+    log_error "Max retries ($max_retries) exceeded -- moving to failed/"
+    send_failure_notification "$BOOK_HASH" "$CURRENT_STAGE" "Max retries exceeded after $retry_count attempts"
+    move_to_failed "$BOOK_HASH" "$SOURCE_PATH"
+    exit 1
+  fi
+
+  log_info "Work directory preserved for debugging: ${WORK_DIR:-unknown}"
+  log_info "Will retry on next automation cycle (attempt $retry_count/$max_retries)"
 }
 trap 'on_error $LINENO' ERR
 
