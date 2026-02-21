@@ -25,7 +25,7 @@ Convert downloaded MP3 audiobooks into chaptered, tagged M4B files organized for
   3. Output is 64kbps mono AAC-LC with `-movflags +faststart`, verified by ffprobe
   4. Re-running the same book skips processing with "already processed" log message (idempotent)
   5. All file operations run as readarr user on local work directory, not NFS
-**Plans:** TBD
+**Plans:** 3 plans
 
 Plans:
 - [x] 01-01: Project scaffolding, config, shared libraries (logging, manifest, ffprobe helpers)
@@ -42,7 +42,7 @@ Plans:
   3. Companion files (`desc.txt`, `reader.txt`) generated next to the M4B
   4. When Audnexus has chapter data matching the book's duration, those chapters replace file-boundary chapters
   5. Pipeline continues without metadata when ASIN is unavailable or API is down (graceful degradation)
-**Plans:** TBD
+**Plans:** 3 plans
 
 Plans:
 - [x] 02-01: ASIN discovery (manual .asin file, folder name regex, Readarr API lookup)
@@ -58,10 +58,10 @@ Plans:
   2. Books without series land in `/mnt/media/AudioBooks/Author/Title (Year)/Title.m4b`
   3. Filenames and directories are sanitized (no invalid characters, truncated to 255 bytes)
   4. Original MP3 files moved to archive directory after output M4B is verified via ffprobe
-**Plans:** TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 03-01: Plex folder structure generation, filename sanitization, NFS output
+- [ ] 03-01-PLAN.md -- Plex folder structure generation, filename sanitization, NFS output (lib/organize.sh, stages/07-organize.sh)
 - [ ] 03-02: Archive stage with verification gate
 
 ### Phase 4: Automation & Triggers
