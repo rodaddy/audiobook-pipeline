@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# bin/audiobook-convert -- CLI entry point for the audiobook conversion pipeline
+set -euo pipefail
+
+# Resolve script location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/../lib"
+
+# Defaults (before config/args override)
+DRY_RUN="${DRY_RUN:-false}"
+FORCE="${FORCE:-false}"
+VERBOSE="${VERBOSE:-false}"
+CONFIG_FILE="${SCRIPT_DIR}/../config.env"
+
+show_help() {
+  cat <<'USAGE'
+Usage: audiobook-convert [OPTIONS] SOURCE_PATH
+
+Convert a directory of MP3 audiobook files into a single M4B with chapters.
+
+Options:
+  --dry-run          Show what would happen without making changes
+  --force            Re-process even if already completed
+  -v, --verbose      Enable debug-level logging
+  -c, --config FILE  Path to config.env (default: <script>/../config.env)
+  -h, --help         Show this help message
+
+Arguments:
+  SOURCE_PATH        Directory containing MP3 files to convert
+USAGE
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --force)
+      FORCE=true
+      shift
+      ;;
+    -v|--verbose)
+      VERBOSE=true
+      shift
+      ;;
+    -c|--config)
+      CONFIG_FILE="$2"
+      shift 2
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -*)
+      echo "Error: Unknown option: $1 (use --help)" >&2
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+SOURCE_PATH="${1:-}"
+
+# Export behavior flags so sourced libs can see them
+export DRY_RUN FORCE VERBOSE
+
+# Source config (if exists)
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+fi
+
+# Apply defaults for any config vars not set
+WORK_DIR="${WORK_DIR:-/var/lib/audiobook-pipeline/work}"
+MANIFEST_DIR="${MANIFEST_DIR:-/var/lib/audiobook-pipeline/manifests}"
+LOG_DIR="${LOG_DIR:-/var/log/audiobook-pipeline}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+export WORK_DIR MANIFEST_DIR LOG_DIR LOG_LEVEL
+
+# Override log level if verbose
+if [[ "$VERBOSE" == "true" ]]; then
+  LOG_LEVEL="DEBUG"
+  export LOG_LEVEL
+fi
+
+# Source libraries in order
+# shellcheck disable=SC1091
+source "$LIB_DIR/core.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/ffmpeg.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/manifest.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/sanitize.sh"
+
+# Validate source path
+if [[ -z "$SOURCE_PATH" ]]; then
+  die "SOURCE_PATH required. Use --help for usage."
+fi
+
+if [[ ! -d "$SOURCE_PATH" ]]; then
+  die "SOURCE_PATH is not a directory: $SOURCE_PATH"
+fi
+
+# Main entry point (stub -- filled in by plans 01-02 and 01-03)
+main() {
+  local source="$1"
+  log_info "Pipeline starting for $source"
+  exit 0
+}
+
+main "$SOURCE_PATH"
