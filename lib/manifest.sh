@@ -35,6 +35,9 @@ manifest_create() {
       source_path: $source,
       created_at: $created,
       status: "pending",
+      retry_count: 0,
+      max_retries: 3,
+      last_error: {},
       stages: {
         validate: { status: "pending" },
         concat:   { status: "pending" },
@@ -152,4 +155,35 @@ get_next_stage() {
   done
 
   echo "done"
+}
+
+# Increment retry count for a book
+# Args: BOOK_HASH
+manifest_increment_retry() {
+  local book_hash="$1"
+  manifest_update "$book_hash" '.retry_count += 1'
+  log_debug "Retry count incremented for $book_hash"
+}
+
+# Record error details in the manifest
+# Args: BOOK_HASH STAGE EXIT_CODE CATEGORY MESSAGE
+#   CATEGORY: "transient" or "permanent"
+manifest_set_error() {
+  local book_hash="$1"
+  local stage="$2"
+  local exit_code="$3"
+  local category="$4"
+  local message="$5"
+
+  local timestamp
+  timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  manifest_update "$book_hash" \
+    ".last_error.timestamp = \"$timestamp\"
+     | .last_error.stage = \"$stage\"
+     | .last_error.exit_code = $exit_code
+     | .last_error.category = \"$category\"
+     | .last_error.message = \"$message\""
+
+  log_error "Error recorded: stage=$stage exit=$exit_code category=$category"
 }
