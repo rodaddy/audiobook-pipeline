@@ -74,7 +74,7 @@ Plans:
   3. Only one pipeline instance runs at a time (flock-based), second instance exits cleanly
   4. Failed books retry up to 3 times, then move to `failed/` directory with error context
   5. Structured key=value logging with timestamp, stage, and book identifier on every line
-**Plans:** TBD
+**Plans:** 3 plans
 
 Plans:
 - [ ] 04-01: Readarr hook shim and cron scanner
