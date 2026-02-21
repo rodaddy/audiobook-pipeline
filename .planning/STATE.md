@@ -5,30 +5,30 @@
 See: .planning/PROJECT.md (updated 2026-02-20)
 
 **Core value:** Downloaded audiobooks are automatically converted, tagged, and organized into the correct Plex library structure without manual intervention.
-**Current focus:** Phase 2 -- Metadata Enrichment (02-01 complete, 02-02 next)
+**Current focus:** Phase 2 -- Metadata Enrichment (02-02 complete, 02-03 next)
 
 ## Current Position
 
 Phase: 2 of 4 (Metadata Enrichment)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: Executing Phase 2
-Last activity: 2026-02-20 -- Completed 02-01 (ASIN discovery)
+Last activity: 2026-02-20 -- Completed 02-02 (Audnexus API client)
 
-Progress: [████░░░░░░] 36%
+Progress: [█████░░░░░] 45%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: 3.8min
-- Total execution time: 0.25 hours
+- Total execution time: 0.3 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 3/3 | 11min | 3.7min |
-| 02 | 1/3 | 4min | 4min |
+| 02 | 2/3 | 8min | 4min |
 
 ## Accumulated Context
 
@@ -52,6 +52,10 @@ Recent decisions affecting current work:
 - 02-01: Audnexus network error returns exit 2 (distinct from validation failure exit 1)
 - 02-01: Missing ASIN marks stage completed, not failed (graceful degradation)
 - 02-01: Format-valid ASINs accepted with warning when Audnexus unreachable on all attempts
+- 02-02: Stat detection uses stat --version (not uname) -- GNU coreutils in PATH on macOS breaks uname detection
+- 02-02: All API failures use log_warn for graceful degradation, never crash the pipeline
+- 02-02: extract_metadata_fields outputs single-quoted eval-safe shell assignments
+- 02-02: Genre field uses numeric Audnexus category ID (not human-readable)
 
 ### Pending Todos
 
@@ -64,6 +68,6 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-20
-Stopped at: Completed 02-01-PLAN.md -- ASIN discovery
+Stopped at: Completed 02-02-PLAN.md -- Audnexus API client
 Resume file: None
-Next: 02-02 (Audnexus API integration)
+Next: 02-03 (metadata enrichment stage script)
