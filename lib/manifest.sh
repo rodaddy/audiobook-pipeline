@@ -42,6 +42,7 @@ manifest_create() {
         asin:     { status: "pending" },
         metadata: { status: "pending" },
         organize: { status: "pending" },
+        archive:  { status: "pending" },
         cleanup:  { status: "pending" }
       },
       metadata: {}
@@ -141,7 +142,7 @@ get_next_stage() {
   local manifest
   manifest=$(manifest_path "$book_hash")
 
-  for stage in validate concat convert asin metadata organize cleanup; do
+  for stage in validate concat convert asin metadata organize archive cleanup; do
     local stage_status
     stage_status=$(jq -r ".stages.${stage}.status // \"pending\"" "$manifest")
     if [[ "$stage_status" != "completed" ]]; then

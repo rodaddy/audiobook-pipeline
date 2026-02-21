@@ -97,8 +97,9 @@ FILE_OWNER="${FILE_OWNER:-}"
 FILE_MODE="${FILE_MODE:-644}"
 NFS_OUTPUT_DIR="${NFS_OUTPUT_DIR:-$OUTPUT_DIR}"
 CREATE_COMPANION_FILES="${CREATE_COMPANION_FILES:-true}"
+ARCHIVE_DIR="${ARCHIVE_DIR:-/var/lib/audiobook-pipeline/archive}"
 export WORK_DIR MANIFEST_DIR OUTPUT_DIR LOG_DIR LOG_LEVEL CLEANUP_WORK_DIR
-export FILE_OWNER FILE_MODE NFS_OUTPUT_DIR CREATE_COMPANION_FILES
+export FILE_OWNER FILE_MODE NFS_OUTPUT_DIR CREATE_COMPANION_FILES ARCHIVE_DIR
 
 # Override log level if verbose
 if [[ "$VERBOSE" == "true" ]]; then
@@ -123,6 +124,8 @@ source "$LIB_DIR/audnexus.sh"
 source "$LIB_DIR/metadata.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/organize.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/archive.sh"
 
 # Validate source path provided
 if [[ -z "$SOURCE_PATH" ]]; then
@@ -157,9 +160,10 @@ declare -A STAGE_MAP=(
   [asin]="05"
   [metadata]="06"
   [organize]="07"
-  [cleanup]="04"
+  [archive]="08"
+  [cleanup]="09"
 )
-STAGE_ORDER=(validate concat convert asin metadata organize cleanup)
+STAGE_ORDER=(validate concat convert asin metadata organize archive cleanup)
 
 # Run a single stage
 run_stage() {
