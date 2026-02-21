@@ -10,24 +10,24 @@ See: .planning/PROJECT.md (updated 2026-02-20)
 ## Current Position
 
 Phase: 1 of 4 (Core Conversion Pipeline)
-Plan: 0 of 3 in current phase
-Status: Ready to plan
-Last activity: 2026-02-20 -- Roadmap created
+Plan: 1 of 3 in current phase
+Status: Executing
+Last activity: 2026-02-20 -- Completed 01-01 (project skeleton)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 8%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: --
-- Total execution time: 0 hours
+- Total plans completed: 1
+- Average duration: 2min
+- Total execution time: 0.03 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01 | 1 | 2min | 2min |
 
 ## Accumulated Context
 
@@ -39,6 +39,9 @@ Recent decisions affecting current work:
 - Roadmap: 64kbps mono AAC-LC (not 128k floor -- research corrected this)
 - Roadmap: FR-CHAP-03 (silence detection) deferred to v2 -- unreliable, manual .asin fallback is sufficient
 - Roadmap: Phase 1 includes FR-TRIG-03 (manual CLI) so conversion is usable immediately
+- 01-01: run() uses "$@" instead of eval to avoid quoting bugs
+- 01-01: Manifest writes use temp file + mv for atomicity
+- 01-01: Log output to both stderr and file for terminal visibility
 
 ### Pending Todos
 
@@ -52,5 +55,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-20
-Stopped at: Roadmap and state initialized
+Stopped at: Completed 01-01-PLAN.md
 Resume file: None
