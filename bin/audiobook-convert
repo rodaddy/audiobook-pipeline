@@ -113,6 +113,8 @@ source "$LIB_DIR/ffmpeg.sh"
 source "$LIB_DIR/manifest.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/sanitize.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/asin.sh"
 
 # Validate source path provided
 if [[ -z "$SOURCE_PATH" ]]; then
@@ -144,9 +146,10 @@ declare -A STAGE_MAP=(
   [validate]="01"
   [concat]="02"
   [convert]="03"
+  [asin]="05"
   [cleanup]="04"
 )
-STAGE_ORDER=(validate concat convert cleanup)
+STAGE_ORDER=(validate concat convert asin cleanup)
 
 # Run a single stage
 run_stage() {
