@@ -51,6 +51,6 @@ generate_book_hash() {
 
   {
     echo "$source_path"
-    find "$source_path" -type f -name "*.mp3" | sort
+    find "$source_path" -type f -name "*.mp3" | sort -V
   } | shasum -a 256 | cut -d' ' -f1 | cut -c1-16
 }
