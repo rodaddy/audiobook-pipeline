@@ -3,13 +3,21 @@
 # Sourced by bin/audiobook-convert; do not execute directly.
 # Requires: lib/core.sh, lib/ffmpeg.sh sourced first; curl, jq available
 
-# Detect stat command for file age checking (macOS vs Linux)
+# Detect stat flavor once at source time (GNU coreutils vs BSD)
+if stat --version >/dev/null 2>&1; then
+  _AUDNEXUS_STAT_GNU=1
+else
+  _AUDNEXUS_STAT_GNU=0
+fi
+
+# Get file modification time as epoch seconds
 _audnexus_stat_mtime() {
   local file="$1"
-  case "$(uname)" in
-    Darwin) stat -f %m "$file" ;;
-    *)      stat -c %Y "$file" ;;
-  esac
+  if [[ $_AUDNEXUS_STAT_GNU -eq 1 ]]; then
+    stat -c %Y "$file"
+  else
+    stat -f %m "$file"
+  fi
 }
 
 # Check if a cache file exists and is within TTL
