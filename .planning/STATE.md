@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-20)
 
 **Core value:** Downloaded audiobooks are automatically converted, tagged, and organized into the correct Plex library structure without manual intervention.
-**Current focus:** Phase 4 -- Automation & Triggers (next)
+**Current focus:** Phase 4 -- Automation & Triggers (in progress)
 
 ## Current Position
 
-Phase: 3 of 4 (Folder Organization & Output) -- COMPLETE
-Plan: 2 of 2 executed
-Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-02-21 -- Completed 03-02-PLAN.md
+Phase: 4 of 4 (Automation & Triggers)
+Plan: 1 of 3 executed
+Status: Executing Phase 4
+Last activity: 2026-02-21 -- Completed 04-01-PLAN.md
 
-Progress: [█████████░] 87%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
+- Total plans completed: 9
 - Average duration: 3.1min
-- Total execution time: 0.42 hours
+- Total execution time: 0.47 hours
 
 **By Phase:**
 
@@ -30,6 +30,7 @@ Progress: [█████████░] 87%
 | 01 | 3/3 | 11min | 3.7min |
 | 02 | 3/3 | 10min | 3.3min |
 | 03 | 2/2 | 4min | 2.0min |
+| 04 | 1/3 | 3min | 3.0min |
 
 ## Accumulated Context
 
@@ -64,6 +65,9 @@ Recent decisions affecting current work:
 - [Phase 03]: UTF-8 byte truncation via wc -c (not character counting) for filesystem limits
 - [Phase 03]: Space-based sanitization for folder names (not underscore like filenames)
 - [Phase 03]: Primary metadata source: Audnexus JSON cache, fallback to source folder names
+- 04-01: Cron scanner replicates generate_book_hash() from lib/sanitize.sh for accurate manifest dedup
+- 04-01: Cross-platform mtime via stat -f%m (macOS) / stat -c%Y (Linux) instead of GNU-only find -printf
+- 04-01: Queue processor tracks all_succeeded per trigger file, partial failures move to failed/
 
 ### Pending Todos
 
@@ -78,6 +82,6 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-21
-Stopped at: Completed 03-02-PLAN.md (Phase 3 complete)
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None
-Next: Execute Phase 4 (Automation & Triggers)
+Next: Execute 04-02-PLAN.md (concurrency control/flock)
