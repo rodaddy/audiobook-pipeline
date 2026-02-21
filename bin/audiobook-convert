@@ -115,6 +115,10 @@ source "$LIB_DIR/manifest.sh"
 source "$LIB_DIR/sanitize.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/asin.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/audnexus.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/metadata.sh"
 
 # Validate source path provided
 if [[ -z "$SOURCE_PATH" ]]; then
@@ -147,9 +151,10 @@ declare -A STAGE_MAP=(
   [concat]="02"
   [convert]="03"
   [asin]="05"
+  [metadata]="06"
   [cleanup]="04"
 )
-STAGE_ORDER=(validate concat convert asin cleanup)
+STAGE_ORDER=(validate concat convert asin metadata cleanup)
 
 # Run a single stage
 run_stage() {
