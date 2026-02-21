@@ -95,8 +95,10 @@ LOG_LEVEL="${LOG_LEVEL:-INFO}"
 CLEANUP_WORK_DIR="${CLEANUP_WORK_DIR:-true}"
 FILE_OWNER="${FILE_OWNER:-}"
 FILE_MODE="${FILE_MODE:-644}"
+NFS_OUTPUT_DIR="${NFS_OUTPUT_DIR:-$OUTPUT_DIR}"
+CREATE_COMPANION_FILES="${CREATE_COMPANION_FILES:-true}"
 export WORK_DIR MANIFEST_DIR OUTPUT_DIR LOG_DIR LOG_LEVEL CLEANUP_WORK_DIR
-export FILE_OWNER FILE_MODE
+export FILE_OWNER FILE_MODE NFS_OUTPUT_DIR CREATE_COMPANION_FILES
 
 # Override log level if verbose
 if [[ "$VERBOSE" == "true" ]]; then
@@ -119,6 +121,8 @@ source "$LIB_DIR/asin.sh"
 source "$LIB_DIR/audnexus.sh"
 # shellcheck disable=SC1091
 source "$LIB_DIR/metadata.sh"
+# shellcheck disable=SC1091
+source "$LIB_DIR/organize.sh"
 
 # Validate source path provided
 if [[ -z "$SOURCE_PATH" ]]; then
@@ -152,9 +156,10 @@ declare -A STAGE_MAP=(
   [convert]="03"
   [asin]="05"
   [metadata]="06"
+  [organize]="07"
   [cleanup]="04"
 )
-STAGE_ORDER=(validate concat convert asin metadata cleanup)
+STAGE_ORDER=(validate concat convert asin metadata organize cleanup)
 
 # Run a single stage
 run_stage() {
