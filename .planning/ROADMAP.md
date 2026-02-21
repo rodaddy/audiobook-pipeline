@@ -77,9 +77,9 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
-- [ ] 04-01: Readarr hook shim and cron scanner
-- [ ] 04-02: flock concurrency, retry logic, disk space pre-flight
-- [ ] 04-03: Structured logging, error recovery, failed book handling
+- [ ] 04-01-PLAN.md - Readarr hook shim and cron scanner (wave 1)
+- [ ] 04-02-PLAN.md - flock concurrency, retry logic, disk space pre-flight (wave 1)
+- [ ] 04-03-PLAN.md - Structured logging, error recovery, failed book handling (wave 2)
 
 ### Deferred to v2
 
