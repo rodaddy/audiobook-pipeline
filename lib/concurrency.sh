@@ -12,6 +12,12 @@ LOCK_DIR="${LOCK_DIR:-/var/lib/audiobook-pipeline/locks}"
 # On contention: logs informational message and exits 0 (clean exit, not error).
 # Lock is automatically released when FD 200 closes (script exit, signal, etc).
 acquire_global_lock() {
+  # flock is Linux-only; skip locking on systems without it (macOS)
+  if ! command -v flock &>/dev/null; then
+    log_warn "flock not available -- skipping global lock (non-Linux system)"
+    return 0
+  fi
+
   mkdir -p "$LOCK_DIR" 2>/dev/null || true
 
   local lock_file="$LOCK_DIR/pipeline.lock"

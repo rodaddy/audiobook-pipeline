@@ -52,15 +52,22 @@ stage_convert() {
   book_name=$(basename "$SOURCE_PATH")
   local output_file="$output_dir/${book_name}.m4b"
 
-  log_info "Converting to: $output_file (bitrate=$TARGET_BITRATE, mono)"
+  # Select AAC encoder: prefer AudioToolbox (macOS HW accel) when available
+  local aac_encoder="aac"
+  if ffmpeg -encoders 2>/dev/null | grep -q "aac_at"; then
+    aac_encoder="aac_at"
+    log_info "Using hardware-accelerated encoder: aac_at (AudioToolbox)"
+  fi
+
+  log_info "Converting to: $output_file (bitrate=$TARGET_BITRATE, mono, encoder=$aac_encoder)"
 
   # Single-pass ffmpeg: concat + encode + chapter inject + faststart
-  run ffmpeg -y \
+  run ffmpeg -y -threads 0 \
     -f concat -safe 0 -i "$concat_file" \
     -i "$metadata_file" \
     -map_metadata 1 \
     -map 0:a \
-    -c:a aac -b:a "$TARGET_BITRATE" -ac 1 \
+    -c:a "$aac_encoder" -b:a "$TARGET_BITRATE" -ac 1 \
     -movflags +faststart \
     "$output_file"
 

@@ -39,7 +39,7 @@ build_plex_path() {
   local book_hash="$3"
   local source_path="$4"
 
-  local author title series_name series_position year
+  local author="" title="" series_name="" series_position="" year=""
 
   # Try to find Audnexus JSON cache in work_dir
   local audnexus_json=""

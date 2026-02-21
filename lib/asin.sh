@@ -28,7 +28,7 @@ check_manual_asin_file() {
   local asin
   asin=$(echo "$raw" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
 
-  if [[ ! "$asin" =~ ^B0[A-Z0-9]{8}$ ]]; then
+  if [[ ! "$asin" =~ ^[A-Z0-9]{10}$ ]]; then
     log_warn "Invalid ASIN format in .asin file: $asin"
     return 1
   fi
@@ -90,7 +90,8 @@ extract_asin_from_folder() {
 # Returns: 0 if valid format, 1 otherwise
 validate_asin_format() {
   local asin="$1"
-  [[ "$asin" =~ ^B0[A-Z0-9]{8}$ ]]
+  # Accept both Amazon ASINs (B0...) and Audible ASINs (ISBN-10 format)
+  [[ "$asin" =~ ^[A-Z0-9]{10}$ ]]
 }
 
 # Validate ASIN against Audnexus API

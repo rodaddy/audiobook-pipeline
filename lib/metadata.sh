@@ -67,7 +67,7 @@ tag_m4b() {
 
   # Store ASIN in custom field for future re-runs
   if [[ -n "$asin" ]]; then
-    tone_args+=("--meta-additional-field" "----:com.pilabor.tone:AUDIBLE_ASIN=$asin")
+    tone_args+=("--meta-additional-field=----:com.pilabor.tone:AUDIBLE_ASIN=$asin")
   fi
 
   if [[ ${#tone_args[@]} -eq 0 ]]; then
