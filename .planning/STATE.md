@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-20)
 ## Current Position
 
 Phase: 4 of 4 (Automation & Triggers)
-Plan: 1 of 3 executed
+Plan: 2 of 3 executed
 Status: Executing Phase 4
-Last activity: 2026-02-21 -- Completed 04-01-PLAN.md
+Last activity: 2026-02-21 -- Completed 04-02-PLAN.md
 
-Progress: [█████████░] 90%
+Progress: [██████████] 95%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
-- Average duration: 3.1min
-- Total execution time: 0.47 hours
+- Total plans completed: 10
+- Average duration: 2.9min
+- Total execution time: 0.49 hours
 
 **By Phase:**
 
@@ -30,7 +30,7 @@ Progress: [█████████░] 90%
 | 01 | 3/3 | 11min | 3.7min |
 | 02 | 3/3 | 10min | 3.3min |
 | 03 | 2/2 | 4min | 2.0min |
-| 04 | 1/3 | 3min | 3.0min |
+| 04 | 2/3 | 4min | 2.0min |
 
 ## Accumulated Context
 
@@ -68,6 +68,10 @@ Recent decisions affecting current work:
 - 04-01: Cron scanner replicates generate_book_hash() from lib/sanitize.sh for accurate manifest dedup
 - 04-01: Cross-platform mtime via stat -f%m (macOS) / stat -c%Y (Linux) instead of GNU-only find -printf
 - 04-01: Queue processor tracks all_succeeded per trigger file, partial failures move to failed/
+- 04-02: FD 200 for flock -- avoids collision with standard FDs and pipeline redirections
+- 04-02: Exit 0 on lock contention -- cron/hook callers treat as success, not failure
+- 04-02: 3x source size multiplier for disk space check (concat + convert + headroom)
+- 04-02: Disk check in validate stage (not main) -- fail fast before processing
 
 ### Pending Todos
 
@@ -82,6 +86,6 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-21
-Stopped at: Completed 04-01-PLAN.md
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None
-Next: Execute 04-02-PLAN.md (concurrency control/flock)
+Next: Execute 04-03-PLAN.md (systemd integration)
