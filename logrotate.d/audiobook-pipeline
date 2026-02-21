@@ -1,0 +1,12 @@
+/var/log/audiobook-pipeline/*.log {
+    daily
+    rotate 14
+    copytruncate
+    compress
+    delaycompress
+    notifempty
+    missingok
+    dateext
+    dateformat -%Y%m%d
+    su readarr media
+}
