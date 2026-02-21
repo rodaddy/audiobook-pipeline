@@ -13,8 +13,8 @@ sanitize_folder_component() {
   local sanitized
   sanitized=$(echo "$component" | sed -E 's/[\/\\:"*?<>|;]+/ /g')
 
-  # Normalize whitespace
-  sanitized=$(echo "$sanitized" | sed -E 's/  +/ /g; s/^ +//; s/ +$//')
+  # Normalize whitespace and strip leading/trailing dots
+  sanitized=$(echo "$sanitized" | sed -E 's/  +/ /g; s/^ +//; s/ +$//; s/^\.+//; s/\.+$//')
 
   # Truncate to 255 bytes (UTF-8 byte-aware)
   local byte_count
