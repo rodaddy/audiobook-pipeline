@@ -2,6 +2,21 @@
 
 Chronological log of all development sessions.
 
+## 2026-02-22 -- Pipeline Reordering and ASIN Stage (0838cfda)
+
+**Branch:** feat/python-rewrite
+**Type:** Feature -- ASIN resolution stage, metadata embedding rewrite
+
+Reordered pipeline to separate concerns: new ASIN stage resolves metadata (Audible/AI/tags), metadata stage embeds tags + cover art, organize stage moves files. Files now tagged before landing in library. Cover art embedded as attached_pic via ffmpeg (500/1024px from Audible API). Created stages/asin.py (~200 lines), rewrote metadata.py, slimmed organize.py (~100 lines removed). Added 11 tests for ASIN stage, updated metadata/organize tests.
+
+**New order:** validate -> concat -> convert -> asin -> metadata -> organize -> cleanup
+
+**Commit:** 609427e
+
+**Details:** `.reports/sessions/0838cfda-9b55-4bc9-865e-54a8eff24977.md`
+
+---
+
 ## 2026-02-21 -- Organize Edge Cases and Dedup (35ab4a9a)
 
 **Branch:** feat/python-rewrite
