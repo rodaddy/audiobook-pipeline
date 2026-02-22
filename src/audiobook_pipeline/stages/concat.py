@@ -126,15 +126,7 @@ def run(
 
         chapter_count = len(audio_files)
 
-    if dry_run:
-        click.echo(
-            f"  CONCAT: {chapter_count} chapters, files.txt + metadata.txt ready"
-        )
-        log.info(f"[DRY-RUN] Would write {chapter_count} chapters to metadata.txt")
-        manifest.set_stage(book_hash, Stage.CONCAT, StageStatus.COMPLETED)
-        return
-
-    # Write files
+    # Write files (always -- lightweight text manifests, not the conversion)
     try:
         files_txt_path.write_text("\n".join(files_txt_lines) + "\n")
         metadata_txt_path.write_text("\n".join(metadata_lines))
@@ -160,4 +152,5 @@ def run(
         )
 
     manifest.set_stage(book_hash, Stage.CONCAT, StageStatus.COMPLETED)
-    click.echo(f"  CONCAT: {chapter_count} chapters, files.txt + metadata.txt ready")
+    prefix = "  CONCAT (dry-run)" if dry_run else "  CONCAT"
+    click.echo(f"{prefix}: {chapter_count} chapters, files.txt + metadata.txt ready")

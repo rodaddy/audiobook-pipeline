@@ -124,7 +124,7 @@ class TestValidateStage:
     @patch("audiobook_pipeline.stages.validate.get_bitrate", return_value=128000)
     @patch("audiobook_pipeline.stages.validate.validate_audio_file", return_value=True)
     @patch("audiobook_pipeline.stages.validate.check_disk_space", return_value=True)
-    def test_dry_run_no_files_written(
+    def test_dry_run_still_writes_file_list(
         self, mock_disk, mock_valid, mock_br, mock_dur, tmp_path
     ):
         config = self._make_config(tmp_path)
@@ -142,5 +142,7 @@ class TestValidateStage:
             dry_run=True,
         )
 
-        # Work dir should not be created in dry_run
-        assert not (config.work_dir / book_hash / "audio_files.txt").exists()
+        # File list is always written (lightweight metadata for downstream stages)
+        assert (config.work_dir / book_hash / "audio_files.txt").exists()
+        data = manifest.read(book_hash)
+        assert data["stages"]["validate"]["status"] == "completed"

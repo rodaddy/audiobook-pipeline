@@ -113,28 +113,18 @@ def run(
         f"Total duration: {total_duration:.2f}s ({duration_to_timestamp(total_duration)})"
     )
 
-    # Create work directory and write file list (unless dry_run)
+    # Create work directory and write file list (always -- it's lightweight metadata)
     work_dir = config.work_dir / book_hash
+    work_dir.mkdir(parents=True, exist_ok=True)
+    file_list_path = work_dir / "audio_files.txt"
+    file_list_path.write_text("\n".join(str(f.resolve()) for f in valid_files) + "\n")
+    log.debug(f"Wrote file list to {file_list_path}")
 
-    if dry_run:
-        log.info(
-            f"  VALIDATE (dry-run): {len(valid_files)} files, "
-            f"{duration_to_timestamp(total_duration)}, target {target_bitrate}k"
-        )
-        log.info(f"  Would create work_dir: {work_dir}")
-        log.info(f"  Would write audio_files.txt with {len(valid_files)} paths")
-    else:
-        work_dir.mkdir(parents=True, exist_ok=True)
-        file_list_path = work_dir / "audio_files.txt"
-        file_list_path.write_text(
-            "\n".join(str(f.resolve()) for f in valid_files) + "\n"
-        )
-        log.debug(f"Wrote file list to {file_list_path}")
-
-        click.echo(
-            f"  VALIDATE: {len(valid_files)} files, "
-            f"{duration_to_timestamp(total_duration)}, target {target_bitrate}k"
-        )
+    prefix = "  VALIDATE (dry-run)" if dry_run else "  VALIDATE"
+    click.echo(
+        f"{prefix}: {len(valid_files)} files, "
+        f"{duration_to_timestamp(total_duration)}, target {target_bitrate}k"
+    )
 
     # Update manifest with metadata
     data = manifest.read(book_hash)

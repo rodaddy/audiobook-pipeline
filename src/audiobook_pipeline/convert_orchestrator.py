@@ -8,6 +8,8 @@ import os
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 
+import psutil
+
 import click
 from loguru import logger
 
@@ -39,6 +41,8 @@ class ConvertOrchestrator:
         """
         self.config = config
         self.manifest = Manifest(config.manifest_dir)
+        # Prime psutil's CPU counter so first call to cpu_percent() is meaningful
+        psutil.cpu_percent(interval=None)
 
     def run_batch(self, book_dirs: list[Path]) -> BatchResult:
         """Process a list of book directories in parallel with CPU monitoring.
@@ -55,6 +59,9 @@ class ConvertOrchestrator:
         if not book_dirs:
             log.warning("No books to process")
             return BatchResult(completed=0, failed=0, total=0)
+
+        # Ensure work/manifest/output directories exist
+        self.config.ensure_dirs()
 
         max_workers = self._calculate_max_workers()
         log.info(
@@ -161,6 +168,11 @@ class ConvertOrchestrator:
         ]
 
         for stage in mvp_stages:
+            # In dry-run, skip organize and cleanup (no output file to place)
+            if self.config.dry_run and stage in (Stage.ORGANIZE, Stage.CLEANUP):
+                log.debug(f"Skipping {stage.value} in dry-run mode")
+                continue
+
             # Check if already completed
             stage_status = self.manifest.read_field(
                 book_hash, f"stages.{stage.value}.status"
@@ -254,12 +266,12 @@ class ConvertOrchestrator:
         return max(1, (cpu_count - 1) // active_count)
 
     def _cpu_load_pct(self) -> float:
-        """Get current CPU load as a percentage.
+        """Get instant CPU utilization as a percentage (0-100).
 
-        Returns:
-            CPU load percentage (0-100+)
+        Uses psutil for real-time measurement instead of getloadavg() which
+        returns a 1-minute moving average -- too laggy for reactive scheduling.
         """
-        return os.getloadavg()[0] / (os.cpu_count() or 1) * 100
+        return psutil.cpu_percent(interval=None)
 
     def _display_status(
         self,
