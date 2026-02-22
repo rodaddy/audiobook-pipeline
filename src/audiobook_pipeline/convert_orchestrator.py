@@ -17,6 +17,7 @@ from loguru import logger
 from .config import PipelineConfig
 from .manifest import Manifest
 from .models import BatchResult, PipelineMode, Stage, StageStatus
+from .ops.organize import build_plex_path
 from .sanitize import generate_book_hash
 from .stages import get_stage_runner
 
@@ -128,6 +129,8 @@ class ConvertOrchestrator:
     def _run_single_safe(self, source_path: Path, threads: int) -> bool:
         """Wrapper for _run_single that catches exceptions.
 
+        Cleans up the work directory on failure to avoid orphaned artifacts.
+
         Args:
             source_path: Directory containing audiobook files
             threads: Number of threads to allocate for ffmpeg
@@ -140,6 +143,14 @@ class ConvertOrchestrator:
             return True
         except Exception as e:
             log.error(f"Error converting {source_path.name}: {e}")
+            # Clean up work dir on failure to avoid orphaned artifacts
+            book_hash = generate_book_hash(source_path)
+            work_dir = self.config.work_dir / book_hash
+            if work_dir.exists():
+                import shutil
+
+                shutil.rmtree(work_dir, ignore_errors=True)
+                log.debug(f"Cleaned up work dir for failed: {source_path.name}")
             return False
 
     def _run_single(self, source_path: Path, threads: int) -> None:
@@ -188,23 +199,8 @@ class ConvertOrchestrator:
                 book_hash, f"stages.{stage.value}.status"
             )
             if stage_status == StageStatus.COMPLETED.value and not self.config.force:
-                # Validate artifacts still exist for stages that produce files
-                if stage == Stage.CONVERT:
-                    output_file = self.manifest.read_field(
-                        book_hash, "stages.convert.output_file"
-                    ) or self.manifest.read_field(book_hash, "metadata.output_file")
-                    if output_file and not Path(output_file).is_file():
-                        log.warning(
-                            f"Stale manifest: {stage.value} output missing for "
-                            f"{source_path.name}, re-running"
-                        )
-                        self.manifest.set_stage(book_hash, stage, StageStatus.PENDING)
-                    else:
-                        log.debug(
-                            f"Skipping {stage.value} for {source_path.name} "
-                            f"(already completed)"
-                        )
-                        continue
+                if self._is_stage_stale(book_hash, stage, source_path):
+                    self.manifest.set_stage(book_hash, stage, StageStatus.PENDING)
                 else:
                     log.debug(
                         f"Skipping {stage.value} for {source_path.name} "
@@ -245,7 +241,170 @@ class ConvertOrchestrator:
                     f"Stage '{stage.value}' failed for {source_path.name}"
                 )
 
+            # After metadata resolves, check if destination already has the file.
+            # If so, re-tag in place and skip organize+cleanup.
+            if stage == Stage.METADATA:
+                if self._retag_existing_destination(book_hash, source_path):
+                    break
+
         log.info(f"Successfully converted: {source_path.name}")
+
+    def _is_stage_stale(self, book_hash: str, stage: Stage, source_path: Path) -> bool:
+        """Check if a 'completed' stage is actually stale.
+
+        Validates that expected artifacts still exist. A stage is stale if:
+        - validate/concat: work dir missing (no audio_files.txt/files.txt)
+        - convert: output M4B file missing
+        - metadata: convert output missing (metadata tags the convert output)
+
+        Returns True if stale (needs re-run), False if genuinely complete.
+        """
+        work_dir = self.config.work_dir / book_hash
+
+        if stage == Stage.VALIDATE:
+            audio_list = work_dir / "audio_files.txt"
+            if not audio_list.exists():
+                log.warning(
+                    f"Stale: audio_files.txt missing for {source_path.name}, "
+                    f"re-running from validate"
+                )
+                return True
+
+        elif stage == Stage.CONCAT:
+            files_txt = work_dir / "files.txt"
+            if not files_txt.exists():
+                log.warning(
+                    f"Stale: files.txt missing for {source_path.name}, "
+                    f"re-running from concat"
+                )
+                return True
+
+        elif stage == Stage.CONVERT:
+            output_file = self.manifest.read_field(
+                book_hash, "stages.convert.output_file"
+            ) or self.manifest.read_field(book_hash, "metadata.output_file")
+            if not output_file or not Path(output_file).is_file():
+                log.warning(
+                    f"Stale: convert output missing for {source_path.name}, "
+                    f"re-running from convert"
+                )
+                return True
+
+        elif stage == Stage.METADATA:
+            # Metadata tags the convert output -- if that's gone, re-run
+            output_file = self.manifest.read_field(
+                book_hash, "stages.convert.output_file"
+            ) or self.manifest.read_field(book_hash, "metadata.output_file")
+            if output_file and not Path(output_file).is_file():
+                log.warning(
+                    f"Stale: convert output missing for {source_path.name}, "
+                    f"re-running metadata"
+                )
+                return True
+
+        return False
+
+    def _retag_existing_destination(self, book_hash: str, source_path: Path) -> bool:
+        """Check if the book already exists at its destination and re-tag it.
+
+        After ASIN+metadata resolve, compute the Plex destination path.
+        If the M4B file already exists there, re-tag it in place with
+        updated metadata and skip organize+cleanup.
+
+        Returns True if destination was found and re-tagged (caller should
+        skip remaining stages), False to continue normally.
+        """
+        data = self.manifest.read(book_hash)
+        if not data:
+            return False
+
+        meta = data.get("metadata", {})
+        metadata = {
+            "author": meta.get("parsed_author", ""),
+            "title": meta.get("parsed_title", ""),
+            "series": meta.get("parsed_series", ""),
+            "position": meta.get("parsed_position", ""),
+        }
+
+        # Can't compute destination without at least a title
+        if not metadata["title"]:
+            return False
+
+        dest_dir = build_plex_path(self.config.nfs_output_dir, metadata)
+        if not dest_dir.is_dir():
+            return False
+
+        # Look for an existing M4B in the destination
+        m4b_files = list(dest_dir.glob("*.m4b"))
+        if not m4b_files:
+            return False
+
+        existing_file = m4b_files[0]
+        log.info(
+            f"Destination file exists: {existing_file.name} -- "
+            f"re-tagging in place, skipping organize"
+        )
+
+        # Re-tag the existing file with updated metadata
+        from .stages.metadata import _build_album, _download_cover, _write_tags
+
+        narrator = meta.get("parsed_narrator", "")
+        year = meta.get("parsed_year", "")
+        series = meta.get("parsed_series", "")
+        position = meta.get("parsed_position", "")
+        cover_url = meta.get("cover_url", "")
+
+        album = _build_album(metadata["title"], series, position)
+        tags: dict[str, str] = {
+            "artist": metadata["author"],
+            "album_artist": metadata["author"],
+            "album": album,
+            "title": metadata["title"],
+            "genre": "Audiobook",
+            "media_type": "2",
+        }
+        if narrator:
+            tags["composer"] = narrator
+        if year:
+            tags["date"] = year
+        if series:
+            tags["show"] = series
+            tags["grouping"] = series
+
+        if self.config.dry_run:
+            click.echo(f"  [DRY-RUN] Would re-tag {existing_file.name} in place")
+            self.manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
+            self.manifest.set_stage(book_hash, Stage.CLEANUP, StageStatus.COMPLETED)
+            return True
+
+        # Download cover (non-fatal)
+        cover_path = None
+        if cover_url:
+            cover_path = _download_cover(cover_url, existing_file.parent)
+
+        success = _write_tags(existing_file, tags, cover_path=cover_path)
+
+        if cover_path and cover_path.exists():
+            cover_path.unlink(missing_ok=True)
+
+        if not success:
+            click.echo(f"  WARNING: Re-tag failed for {existing_file.name}")
+            return False
+
+        click.echo(
+            f"  Re-tagged in place: {existing_file.name} "
+            f"(artist={metadata['author']!r})"
+        )
+
+        # Mark organize+cleanup as completed (skipped)
+        data = self.manifest.read(book_hash)
+        if data:
+            data["stages"]["organize"]["output_file"] = str(existing_file)
+            data["stages"]["organize"]["dest_dir"] = str(dest_dir)
+            self.manifest.update(book_hash, data)
+        self.manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
+        self.manifest.set_stage(book_hash, Stage.CLEANUP, StageStatus.COMPLETED)
+        return True
 
     def _calculate_max_workers(self) -> int:
         """Calculate maximum parallel workers based on config and CPU count.
