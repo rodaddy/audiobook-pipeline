@@ -46,7 +46,7 @@ class PipelineConfig(BaseSettings):
 
     # -- Parallel conversion --
     max_parallel_converts: int = 0  # 0 = auto (CPU-based)
-    cpu_ceiling: float = 85.0
+    cpu_ceiling: float = 80.0
 
     # -- Behavior --
     dry_run: bool = False

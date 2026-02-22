@@ -5,6 +5,7 @@ monitoring CPU load and dynamically allocating resources across parallel jobs.
 """
 
 import os
+import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 
@@ -41,8 +42,6 @@ class ConvertOrchestrator:
         """
         self.config = config
         self.manifest = Manifest(config.manifest_dir)
-        # Prime psutil's CPU counter so first call to cpu_percent() is meaningful
-        psutil.cpu_percent(interval=None)
 
     def run_batch(self, book_dirs: list[Path]) -> BatchResult:
         """Process a list of book directories in parallel with CPU monitoring.
@@ -77,6 +76,8 @@ class ConvertOrchestrator:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             while queued or active:
                 # Check CPU and submit new jobs if below ceiling
+                # Ramp up gradually: measure CPU with a real interval between
+                # submissions so readings reflect actual load from new workers
                 cpu_load = self._cpu_load_pct()
                 while (
                     queued
@@ -91,7 +92,9 @@ class ConvertOrchestrator:
                         f"Submitted {book_path.name} (threads={threads}, "
                         f"active={len(active)}/{max_workers})"
                     )
-                    cpu_load = self._cpu_load_pct()
+                    # Let CPU readings stabilize before submitting the next job
+                    time.sleep(2.0)
+                    cpu_load = psutil.cpu_percent(interval=1.0)
 
                 # Display status
                 self._display_status(
@@ -241,7 +244,7 @@ class ConvertOrchestrator:
             max_workers = self.config.max_parallel_converts
             log.debug(f"Using configured max_parallel_converts: {max_workers}")
         else:
-            max_workers = max(1, cpu_count // 2)  # auto: half the cores
+            max_workers = max(1, min(4, cpu_count // 3))  # auto: conservative
             log.debug(
                 f"Auto-calculated max_workers: {max_workers} "
                 f"(cpu_count={cpu_count})"
@@ -266,12 +269,13 @@ class ConvertOrchestrator:
         return max(1, (cpu_count - 1) // active_count)
 
     def _cpu_load_pct(self) -> float:
-        """Get instant CPU utilization as a percentage (0-100).
+        """Get CPU utilization as a percentage (0-100).
 
-        Uses psutil for real-time measurement instead of getloadavg() which
-        returns a 1-minute moving average -- too laggy for reactive scheduling.
+        Uses a blocking 1-second psutil sample for accurate system-wide
+        measurement. Non-blocking (interval=None) underreports when the
+        calling thread spends most of its time sleeping in wait().
         """
-        return psutil.cpu_percent(interval=None)
+        return psutil.cpu_percent(interval=1.0)
 
     def _display_status(
         self,

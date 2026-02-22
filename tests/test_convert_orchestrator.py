@@ -33,7 +33,7 @@ class TestConvertOrchestrator:
         orch = ConvertOrchestrator(config)
         workers = orch._calculate_max_workers()
         cpu_count = os.cpu_count() or 1
-        assert workers == max(1, cpu_count // 2)
+        assert workers == max(1, min(4, cpu_count // 3))
 
     def test_max_workers_configured(self, tmp_path):
         config = self._make_config(tmp_path)
