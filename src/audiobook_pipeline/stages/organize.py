@@ -60,13 +60,16 @@ def run(
         if metadata["title"] == source_file.stem:
             metadata["title"] = tag_metadata["title"]
 
-    # Search Audible for candidates
+    # Search Audible for candidates -- widen the net when AI is available
     audible_candidates = _search_audible(
         metadata["title"], metadata["series"], config,
+        author=metadata.get("author", ""),
+        widen=bool(config.pipeline_llm_base_url),
     )
 
     # Pick best Audible match via fuzzy scoring
     audible_result = None
+    has_ai = bool(config.pipeline_llm_base_url)
     if audible_candidates:
         scored = score_results(audible_candidates, metadata["title"], "")
         best = scored[0]
@@ -80,12 +83,12 @@ def run(
                 "position": best.get("position", ""),
             }
             log.debug(f"Audible match: {best['author_str']!r} (score={best['score']:.0f})")
-        else:
-            # Try AI disambiguation for low-confidence matches
-            client = get_client(config.openai_base_url, config.openai_api_key)
+        elif has_ai:
+            # AI available -- let it pick from all candidates in post
+            client = get_client(config.pipeline_llm_base_url, config.pipeline_llm_api_key)
             ai_pick = disambiguate(
                 scored[:5], metadata["title"], "",
-                config.openai_model, client,
+                config.pipeline_llm_model, client,
             )
             if ai_pick:
                 audible_result = {
@@ -103,10 +106,11 @@ def run(
     )
 
     if should_resolve:
-        client = get_client(config.openai_base_url, config.openai_api_key)
+        client = get_client(config.pipeline_llm_base_url, config.pipeline_llm_api_key)
         ai_metadata = resolve(
             metadata, tag_metadata,
-            audible_candidates, config.openai_model, client,
+            audible_candidates, config.pipeline_llm_model, client,
+            source_filename=source_file.name,
         )
         if ai_metadata:
             # Apply AI-resolved fields (only override non-empty values)
@@ -192,12 +196,22 @@ def _search_audible(
     title: str,
     series: str,
     config: PipelineConfig,
+    author: str = "",
+    widen: bool = False,
 ) -> list[dict]:
-    """Search Audible with multiple query strategies, dedupe by ASIN."""
+    """Search Audible with multiple query strategies, dedupe by ASIN.
+
+    When widen=True (AI available), cast a wider net with additional
+    query combinations -- AI will filter the results in post.
+    """
     queries = [title]
     if series:
         queries.append(series)
         queries.append(f"{series} {title}")
+    if widen and author:
+        queries.append(f"{author} {title}")
+        if series:
+            queries.append(f"{author} {series}")
 
     seen_asins: set[str] = set()
     all_results: list[dict] = []

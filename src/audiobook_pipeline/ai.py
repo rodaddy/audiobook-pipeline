@@ -8,6 +8,7 @@ Works with any OpenAI-compatible endpoint (OpenAI, LiteLLM, Ollama).
 from __future__ import annotations
 
 import re
+import uuid
 
 from loguru import logger
 
@@ -22,8 +23,13 @@ def get_client(base_url: str, api_key: str):
 
     from openai import OpenAI
 
+    # OpenAI SDK expects base_url WITHOUT /v1 -- it appends that itself
+    clean_url = base_url.rstrip("/")
+    if clean_url.endswith("/v1"):
+        clean_url = clean_url[:-3].rstrip("/")
+
     return OpenAI(
-        base_url=base_url.rstrip("/") + "/v1" if not base_url.rstrip("/").endswith("/v1") else base_url,
+        base_url=clean_url,
         api_key=api_key or "not-needed",
     )
 
@@ -62,6 +68,7 @@ def resolve(
     audible_candidates: list[dict] | None,
     model: str,
     client,
+    source_filename: str = "",
 ) -> dict | None:
     """Resolve ALL metadata (author, title, series, position) using AI.
 
@@ -73,6 +80,10 @@ def resolve(
         return None
 
     evidence_parts = []
+
+    # Source file identification -- leads the prompt to defeat semantic caching
+    if source_filename:
+        evidence_parts.append(f"Source filename: {source_filename!r}")
 
     # Path evidence
     if path_metadata.get("author"):
@@ -110,15 +121,17 @@ def resolve(
         return None
 
     evidence_text = "\n".join(evidence_parts)
+    nonce = uuid.uuid4().hex[:8]
 
+    # Unique evidence leads the prompt to defeat prefix-based semantic caching
     prompt = (
-        "I'm organizing an audiobook file and need to determine the correct metadata. "
-        "Based on the evidence below, provide the correct:\n"
-        "- Author (first and last name)\n"
-        "- Title (book title, not series name)\n"
-        "- Series (if part of a series, otherwise empty)\n"
-        "- Position (book number in series, otherwise empty)\n\n"
-        f"{evidence_text}\n\n"
+        f"[{nonce}] Resolve metadata for: {source_filename!r}\n\n"
+        f"Evidence:\n{evidence_text}\n\n"
+        "Determine the correct audiobook metadata from the evidence above.\n"
+        "- Author: real person's first and last name (not series/brand names)\n"
+        "- Title: the specific book title (not the series name)\n"
+        "- Series: series name if applicable, otherwise NONE\n"
+        "- Position: book number in series if applicable, otherwise NONE\n\n"
         "Reply in this exact format (one per line, no extra text):\n"
         "AUTHOR: <name>\n"
         "TITLE: <title>\n"
@@ -133,7 +146,8 @@ def resolve(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=150,
-            temperature=0,
+            temperature=0.1,
+            extra_headers={"Cache-Control": "no-cache"},
         )
         content = response.choices[0].message.content.strip()
         return _parse_resolve_response(content)
@@ -162,10 +176,12 @@ def disambiguate(
         for i, c in enumerate(candidates[:5])
     )
 
+    nonce = uuid.uuid4().hex[:8]
+
     prompt = (
-        f'I\'m looking for the audiobook: "{title_hint}"'
+        f'[{nonce}] Find the best match for: "{title_hint}"'
         + (f" by {author_hint}" if author_hint else "")
-        + f"\n\nHere are the search results:\n{candidate_text}"
+        + f"\n\nSearch results:\n{candidate_text}"
         + "\n\nWhich result (1-5) is the best match? Reply with ONLY the number,"
         + " or 0 if none match. No explanation."
     )
@@ -176,6 +192,7 @@ def disambiguate(
             messages=[{"role": "user", "content": prompt}],
             max_tokens=10,
             temperature=0,
+            extra_headers={"Cache-Control": "no-cache"},
         )
         content = response.choices[0].message.content.strip()
 
@@ -219,5 +236,21 @@ def _parse_resolve_response(content: str) -> dict | None:
     # Must have at least author to be useful
     if "author" not in result:
         return None
+
+    # Clean AI-produced title junk
+    if "title" in result:
+        result["title"] = re.sub(
+            r"\s*\((?:The\s+)?Audio\s*Book\)", "", result["title"],
+            flags=re.IGNORECASE,
+        )
+        result["title"] = re.sub(
+            r"\s*\(Unabridged\)", "", result["title"],
+            flags=re.IGNORECASE,
+        )
+        result["title"] = result["title"].strip()
+
+    # Normalize position: "01" -> "1"
+    if "position" in result and result["position"].isdigit():
+        result["position"] = str(int(result["position"]))
 
     return result

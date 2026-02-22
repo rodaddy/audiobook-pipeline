@@ -127,6 +127,14 @@ def parse_path(source_path: str) -> dict:
                 position = potential_pos
                 title = potential_title
 
+    # Pattern G: "Series [NN] Title" (e.g., "Mistborn [01] The Final Empire")
+    if not title:
+        match_g = re.match(r"^(.+?)\s+\[(\d+)\]\s+(.+)$", parse_target)
+        if match_g:
+            series = match_g.group(1).strip()
+            position = match_g.group(2).strip()
+            title = match_g.group(3).strip()
+
     # Pattern E: split "Author - Series" grandparents
     if gp_name and " - " in gp_name:
         parts = gp_name.split(" - ", 1)
@@ -186,6 +194,30 @@ def parse_path(source_path: str) -> dict:
     title = re.sub(r"\s*\{[^}]+\}", "", title)
     title = re.sub(r"\s*\([^)]*\b\d+k\b[^)]*\)", "", title)
     title = re.sub(r"\s*\([A-Z][a-z]+\)\s+\d+k\s+[\d.]+", "", title)
+    # Strip "(The AudioBook)", "(Audiobook)", "(Unabridged)", etc.
+    title = re.sub(r"\s*\((?:The\s+)?Audio\s*Book\)", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s*\(Unabridged\)", "", title, flags=re.IGNORECASE)
+    # Strip dash artifacts: "Food- A Love Story" -> "Food A Love Story"
+    title = re.sub(r"(\w)-\s", r"\1 ", title)
+    title = re.sub(r"-$", "", title).strip()
+
+    # Extract parenthesized series info from title:
+    # "Title - (Series Name - Day 1)" or "Title (Series, Book 2.5)"
+    if not series:
+        paren_match = re.search(
+            r"\s*-?\s*\(([^)]+?)"
+            r"(?:\s*[-,]\s*(?:Book|Day|#)\s*([\d.]+))?"
+            r"\)", title,
+        )
+        if paren_match:
+            candidate_series = paren_match.group(1).strip().rstrip(" -,")
+            if len(candidate_series) >= 3 and candidate_series.lower() not in _LABEL_SUFFIXES:
+                series = candidate_series
+                if paren_match.group(2) and not position:
+                    position = paren_match.group(2)
+                # Remove the parenthesized part from title
+                title = title[:paren_match.start()].strip().rstrip(" -")
+
 
     if not title:
         title = _clean_title_fallback(basename)
@@ -208,6 +240,9 @@ def build_plex_path(
       - With author, no series: Author/Title/
       - No author, with series: Series/Title/
       - No author, no series: _unsorted/Title/
+
+    Checks for existing near-duplicate folders and reuses them
+    to prevent duplicates like "Food A Love Story" vs "Food- A Love Story".
     """
     author = sanitize_filename(metadata["author"]) if metadata["author"] else ""
     title = sanitize_filename(metadata["title"]) if metadata["title"] else "Unknown"
@@ -219,13 +254,25 @@ def build_plex_path(
 
     # Top level is always author. No author = _unsorted.
     if author and series_name:
-        return nfs_output_dir / author / series_name / title
+        base = nfs_output_dir / author
+        series_name = _reuse_existing(base, series_name)
+        title_dir = base / series_name
+        title = _reuse_existing(title_dir, title)
+        return title_dir / title
     elif author:
-        return nfs_output_dir / author / title
+        base = nfs_output_dir / author
+        title = _reuse_existing(base, title)
+        return base / title
     elif series_name:
-        return nfs_output_dir / "_unsorted" / series_name / title
+        base = nfs_output_dir / "_unsorted"
+        series_name = _reuse_existing(base, series_name)
+        title_dir = base / series_name
+        title = _reuse_existing(title_dir, title)
+        return title_dir / title
     else:
-        return nfs_output_dir / "_unsorted" / title
+        base = nfs_output_dir / "_unsorted"
+        title = _reuse_existing(base, title)
+        return base / title
 
 
 def copy_to_library(
@@ -256,6 +303,46 @@ def copy_to_library(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _normalize_for_compare(name: str) -> str:
+    """Normalize a folder name for duplicate comparison.
+
+    Strips punctuation, years, edition markers, and whitespace
+    so "Food- A Love Story" matches "Food A Love Story (2014)".
+    """
+    s = name.lower()
+    # Strip year suffixes: "(2014)", "(2009)"
+    s = re.sub(r"\s*\(\d{4}\)", "", s)
+    # Strip edition markers: "(Unabridged)", "(The AudioBook)"
+    s = re.sub(r"\s*\([^)]*\)", "", s)
+    # Collapse punctuation and whitespace
+    s = re.sub(r"[^\w\s]", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    # Strip trailing 's' for singular/plural matching
+    # "Chronicle" vs "Chronicles"
+    s = s.rstrip("s")
+    return s
+
+
+def _reuse_existing(parent: Path, desired: str) -> str:
+    """Check if parent contains a folder that's a near-match for desired.
+
+    Returns the existing folder name if found, otherwise returns desired unchanged.
+    """
+    if not parent.is_dir():
+        return desired
+    # Exact match -- fast path
+    if (parent / desired).exists():
+        return desired
+    # Normalize and compare against existing siblings
+    desired_norm = _normalize_for_compare(desired)
+    for existing in parent.iterdir():
+        if not existing.is_dir():
+            continue
+        if _normalize_for_compare(existing.name) == desired_norm:
+            return existing.name
+    return desired
+
 
 def _strip_hash(name: str) -> str:
     """Strip pipeline hash suffix (e.g., ' - a7edd490030561fb')."""
@@ -301,6 +388,16 @@ def _looks_like_author(name: str) -> bool:
         return False
     if len(name) > 50:
         return False
+    # Reject titles masquerading as authors -- too many words
+    words = name.split()
+    if len(words) > 5:
+        return False
+    # Reject names starting with articles (titles, not people)
+    if lower.startswith(("the ", "a ", "an ")):
+        return False
+    # Single word is suspicious -- could be series name not author
+    if len(words) == 1:
+        return False
     return True
 
 
@@ -322,9 +419,13 @@ def _clean_title_fallback(basename: str) -> str:
 
 def _build_result(author: str, title: str, series: str, position: str) -> dict:
     """Build clean result dict."""
+    pos = position.strip()
+    # Normalize leading zeros: "01" -> "1", "003" -> "3"
+    if pos and pos.isdigit():
+        pos = str(int(pos))
     return {
         "author": author.strip(),
         "title": title.strip().lstrip("- "),
         "series": series.strip().rstrip("- "),
-        "position": position.strip(),
+        "position": pos,
     }

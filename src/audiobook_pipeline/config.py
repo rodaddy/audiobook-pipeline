@@ -81,10 +81,10 @@ class PipelineConfig(BaseSettings):
     failure_webhook_url: str = ""
     failure_email: str = ""
 
-    # -- AI --
-    openai_base_url: str = ""
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    # -- AI (uses PIPELINE_LLM_* env vars to avoid OPENAI_* collisions) --
+    pipeline_llm_base_url: str = ""
+    pipeline_llm_api_key: str = ""
+    pipeline_llm_model: str = "haiku"
     ai_all: bool = False
     asin_search_threshold: int = 65
 
