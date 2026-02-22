@@ -22,7 +22,8 @@ class TestScoreResults:
         ]
         scored = score_results(results, "The Great Book", "John Smith")
         assert len(scored) == 1
-        assert scored[0]["score"] > 80
+        # Exact match: title 60 + author 30 + position 10 = 100
+        assert 95 <= scored[0]["score"] <= 100
 
     def test_title_only_matching(self):
         results = [
@@ -34,7 +35,8 @@ class TestScoreResults:
         ]
         scored = score_results(results, "Project Hail Mary", "")
         assert len(scored) == 1
-        assert scored[0]["score"] > 50
+        # Exact title, no author: title 60 + author 0 + position 10 = 70
+        assert 65 <= scored[0]["score"] <= 70
 
     def test_position_bonus_favors_first_result(self):
         results = [
@@ -62,7 +64,8 @@ class TestScoreResults:
             },
         ]
         scored = score_results(results, "Book Title", "Rowling")
-        assert scored[0]["score"] > 60
+        # Exact title (60) + partial_ratio author match (~100) * 0.3 = 30 + position 10 = 100
+        assert 95 <= scored[0]["score"] <= 100
 
     def test_multiple_authors_picks_best_match(self):
         results = [
@@ -73,8 +76,8 @@ class TestScoreResults:
             },
         ]
         scored = score_results(results, "Collaboration", "Bob Jones")
-        # Should use best author match
-        assert scored[0]["score"] > 70
+        # Exact title (60) + exact author match (30) + position (10) = 100
+        assert 95 <= scored[0]["score"] <= 100
 
     def test_sorting_by_score_descending(self):
         results = [
@@ -97,6 +100,19 @@ class TestScoreResults:
     def test_empty_results(self):
         scored = score_results([], "Any Title", "Any Author")
         assert scored == []
+
+    def test_empty_authors_with_author_hint(self):
+        results = [
+            {
+                "asin": "B001",
+                "title": "Book Title",
+                "authors": [],
+            },
+        ]
+        scored = score_results(results, "Book Title", "Some Author")
+        assert len(scored) == 1
+        # Exact title (60) + no author match (0) + position (10) = 70
+        assert 65 <= scored[0]["score"] <= 70
 
 
 class TestParseSourcePath:

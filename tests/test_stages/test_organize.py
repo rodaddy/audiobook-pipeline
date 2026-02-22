@@ -159,7 +159,7 @@ class TestOrganizeStage:
             {
                 "asin": "B001ABC",
                 "title": "Great Book",
-                "authors": [{"name": "John Smith"}],
+                "authors": ["John Smith"],
                 "author_str": "John Smith",
                 "series": "",
                 "position": "",
@@ -381,6 +381,7 @@ class TestOrganizeStage:
         assert data["metadata"]["parsed_title"] == "Actual Book Title"
         assert data["metadata"]["parsed_author"] == "Tag Author"
 
+    @patch("audiobook_pipeline.stages.organize.parse_path")
     @patch("audiobook_pipeline.stages.organize.get_client")
     @patch("audiobook_pipeline.stages.organize.disambiguate")
     @patch("audiobook_pipeline.stages.organize.get_tags")
@@ -397,6 +398,7 @@ class TestOrganizeStage:
         mock_get_tags,
         mock_disambiguate,
         mock_get_client,
+        mock_parse_path,
         tmp_path,
         mock_config,
         mock_manifest,
@@ -409,13 +411,21 @@ class TestOrganizeStage:
         source_file = tmp_path / "book.m4b"
         source_file.write_text("fake audio")
 
+        # Mock parse_path to return base metadata
+        mock_parse_path.return_value = {
+            "author": "",
+            "title": "book",
+            "series": "",
+            "position": "",
+        }
+
         mock_get_tags.return_value = {}
         mock_extract_author.return_value = ""
 
         # Mock Audible candidates
         candidates = [
-            {"asin": "B001", "title": "Book A", "authors": [], "author_str": "Author A", "series": "", "position": ""},
-            {"asin": "B002", "title": "Book B", "authors": [], "author_str": "Author B", "series": "", "position": ""},
+            {"asin": "B001", "title": "Book A", "authors": ["Author A"], "author_str": "Author A", "series": "", "position": ""},
+            {"asin": "B002", "title": "Book B", "authors": ["Author B"], "author_str": "Author B", "series": "", "position": ""},
         ]
         mock_search.return_value = candidates
 
@@ -432,7 +442,7 @@ class TestOrganizeStage:
         # AI picks the second option
         mock_disambiguate.return_value = {**candidates[1], "score": 60.0}
 
-        dest_file = tmp_path / "library" / "_unsorted" / "Book B" / "book.m4b"
+        dest_file = tmp_path / "library" / "Author B" / "Book B" / "book.m4b"
         mock_copy.return_value = dest_file
 
         book_hash = "testhash123"
@@ -442,3 +452,209 @@ class TestOrganizeStage:
 
         # Verify AI disambiguate was called
         mock_disambiguate.assert_called_once()
+
+        # Verify the disambiguated result is applied via audible_result
+        # (disambiguate returns the pick, which becomes audible_result)
+        # Since needs_resolution will be True (no author), it should use audible_result
+        data = mock_manifest.read(book_hash)
+        # The logic: AI disambiguate creates audible_result with Author B
+        # Then needs_resolution=True triggers AI resolve path, but AI resolve not mocked
+        # So it falls back to audible_result author
+        assert data["metadata"]["parsed_author"] == "Author B"
+
+    @patch("audiobook_pipeline.stages.organize.parse_path")
+    @patch("audiobook_pipeline.stages.organize.score_results")
+    @patch("audiobook_pipeline.stages.organize.get_client")
+    @patch("audiobook_pipeline.stages.organize.resolve")
+    @patch("audiobook_pipeline.stages.organize.get_tags")
+    @patch("audiobook_pipeline.stages.organize.extract_author_from_tags")
+    @patch("audiobook_pipeline.stages.organize.search")
+    @patch("audiobook_pipeline.stages.organize.copy_to_library")
+    def test_ai_fallback_to_audible_when_ai_returns_none(
+        self,
+        mock_copy,
+        mock_search,
+        mock_extract_author,
+        mock_get_tags,
+        mock_resolve,
+        mock_get_client,
+        mock_score,
+        mock_parse_path,
+        tmp_path,
+        mock_config,
+        mock_manifest,
+    ):
+        # Enable AI
+        mock_config.pipeline_llm_base_url = "http://test:4000"
+        mock_config.pipeline_llm_api_key = "test-key"
+        mock_config.ai_all = True
+
+        source_file = tmp_path / "book.m4b"
+        source_file.write_text("fake audio")
+
+        # Mock parse_path
+        mock_parse_path.return_value = {
+            "author": "",
+            "title": "book",
+            "series": "",
+            "position": "",
+        }
+
+        mock_get_tags.return_value = {}
+        mock_extract_author.return_value = ""
+
+        # Mock Audible result
+        candidates = [
+            {
+                "asin": "B001",
+                "title": "Book Title",
+                "authors": ["Audible Author"],
+                "author_str": "Audible Author",
+                "series": "",
+                "position": "",
+            },
+        ]
+        mock_search.return_value = candidates
+
+        # Mock high score so audible_result is set
+        mock_score.return_value = [
+            {**candidates[0], "score": 85.0},  # Above 70 threshold
+        ]
+
+        # Mock AI client
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        # AI returns None (failed to resolve)
+        mock_resolve.return_value = None
+
+        dest_file = tmp_path / "library" / "Audible Author" / "Book Title" / "book.m4b"
+        mock_copy.return_value = dest_file
+
+        book_hash = "testhash123"
+        mock_manifest.create(book_hash, str(source_file), PipelineMode.ORGANIZE)
+
+        run(source_file, book_hash, mock_config, mock_manifest, dry_run=False)
+
+        # Verify fallback to Audible author
+        data = mock_manifest.read(book_hash)
+        assert data["metadata"]["parsed_author"] == "Audible Author"
+
+    @patch("audiobook_pipeline.stages.organize.get_client")
+    @patch("audiobook_pipeline.stages.organize.resolve")
+    @patch("audiobook_pipeline.stages.organize.get_tags")
+    @patch("audiobook_pipeline.stages.organize.extract_author_from_tags")
+    @patch("audiobook_pipeline.stages.organize.search")
+    @patch("audiobook_pipeline.stages.organize.copy_to_library")
+    def test_fallback_to_tag_author_when_ai_and_audible_fail(
+        self,
+        mock_copy,
+        mock_search,
+        mock_extract_author,
+        mock_get_tags,
+        mock_resolve,
+        mock_get_client,
+        tmp_path,
+        mock_config,
+        mock_manifest,
+    ):
+        # Enable AI
+        mock_config.pipeline_llm_base_url = "http://test:4000"
+        mock_config.pipeline_llm_api_key = "test-key"
+        mock_config.ai_all = True
+
+        source_file = tmp_path / "book.m4b"
+        source_file.write_text("fake audio")
+
+        mock_get_tags.return_value = {"title": "Book Title"}
+        mock_extract_author.return_value = "Tag Author"
+
+        # No Audible results
+        mock_search.return_value = []
+
+        # Mock AI client
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        # AI returns None (failed to resolve)
+        mock_resolve.return_value = None
+
+        dest_file = tmp_path / "library" / "Tag Author" / "Book Title" / "book.m4b"
+        mock_copy.return_value = dest_file
+
+        book_hash = "testhash123"
+        mock_manifest.create(book_hash, str(source_file), PipelineMode.ORGANIZE)
+
+        run(source_file, book_hash, mock_config, mock_manifest, dry_run=False)
+
+        # Verify fallback to tag author
+        data = mock_manifest.read(book_hash)
+        assert data["metadata"]["parsed_author"] == "Tag Author"
+
+    @patch("audiobook_pipeline.stages.organize.parse_path")
+    @patch("audiobook_pipeline.stages.organize.score_results")
+    @patch("audiobook_pipeline.stages.organize.needs_resolution")
+    @patch("audiobook_pipeline.stages.organize.get_tags")
+    @patch("audiobook_pipeline.stages.organize.extract_author_from_tags")
+    @patch("audiobook_pipeline.stages.organize.search")
+    @patch("audiobook_pipeline.stages.organize.copy_to_library")
+    def test_no_ai_path_uses_audible_directly(
+        self,
+        mock_copy,
+        mock_search,
+        mock_extract_author,
+        mock_get_tags,
+        mock_needs_resolution,
+        mock_score,
+        mock_parse_path,
+        tmp_path,
+        mock_config,
+        mock_manifest,
+    ):
+        # AI disabled (default config)
+        source_file = tmp_path / "book.m4b"
+        source_file.write_text("fake audio")
+
+        # Mock parse_path
+        mock_parse_path.return_value = {
+            "author": "",
+            "title": "book",
+            "series": "",
+            "position": "",
+        }
+
+        mock_get_tags.return_value = {"title": "Clean Book Title"}
+        mock_extract_author.return_value = "Tag Author"
+
+        # Mock Audible with high-score match
+        candidates = [
+            {
+                "asin": "B001",
+                "title": "Clean Book Title",
+                "authors": ["Audible Author"],
+                "author_str": "Audible Author",
+                "series": "",
+                "position": "",
+            },
+        ]
+        mock_search.return_value = candidates
+
+        # Mock high score so audible_result is set
+        mock_score.return_value = [
+            {**candidates[0], "score": 85.0},  # Above 70 threshold
+        ]
+
+        # Mock needs_resolution to return False (no conflict, clean metadata)
+        mock_needs_resolution.return_value = False
+
+        dest_file = tmp_path / "library" / "Audible Author" / "Clean Book Title" / "book.m4b"
+        mock_copy.return_value = dest_file
+
+        book_hash = "testhash123"
+        mock_manifest.create(book_hash, str(source_file), PipelineMode.ORGANIZE)
+
+        run(source_file, book_hash, mock_config, mock_manifest, dry_run=False)
+
+        # Verify Audible author is used directly (no AI involvement, else branch)
+        data = mock_manifest.read(book_hash)
+        assert data["metadata"]["parsed_author"] == "Audible Author"

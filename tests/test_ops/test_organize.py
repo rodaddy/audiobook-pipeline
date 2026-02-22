@@ -5,10 +5,13 @@ from pathlib import Path
 import pytest
 
 from audiobook_pipeline.ops.organize import (
+    _extract_author,
     _looks_like_author,
     _normalize_for_compare,
     _reuse_existing,
+    _strip_label_suffix,
     build_plex_path,
+    copy_to_library,
     parse_path,
 )
 
@@ -348,11 +351,11 @@ class TestBuildPlexPath:
             "position": "",
         }
         result = build_plex_path(tmp_path, metadata)
-        # sanitize_filename replaces unsafe chars with _
-        # <> becomes __, / and : become _
-        assert "Author_Name" in str(result)
-        assert "Series_Name" in str(result)
-        assert "Title_Name" in str(result)
+        # sanitize_filename replaces unsafe chars with _ and collapses repeated underscores
+        # Verify each component is sanitized
+        assert result.parts[-3] == "Author_Name"  # author folder (/ becomes _)
+        assert result.parts[-2] == "Series_Name"  # series folder (: becomes _)
+        assert result.parts[-1] == "Title_Name"   # title folder (<> becomes __, collapsed to _)
 
     def test_unknown_fallback_for_empty_title(self, tmp_path):
         """Empty title falls back to 'Unknown'"""
@@ -406,3 +409,132 @@ class TestBuildPlexPath:
         }
         result = build_plex_path(tmp_path, metadata)
         assert result == series_dir / "Food A Love Story"
+
+
+class TestCopyToLibrary:
+    """Test copying audiobook files to library destination."""
+
+    def test_successful_copy_creates_directory_and_copies_file(self, tmp_path):
+        """Successful copy creates directory tree and copies the file"""
+        source_file = tmp_path / "source" / "audio.m4b"
+        source_file.parent.mkdir()
+        source_file.write_text("audiobook content")
+
+        dest_dir = tmp_path / "library" / "Author" / "Title"
+
+        result = copy_to_library(source_file, dest_dir)
+
+        assert result == dest_dir / "audio.m4b"
+        assert result.exists()
+        assert result.read_text() == "audiobook content"
+        assert dest_dir.exists()
+
+    def test_dry_run_mode_skips_actual_copy(self, tmp_path):
+        """Dry run mode returns path but doesn't copy"""
+        source_file = tmp_path / "source" / "audio.m4b"
+        source_file.parent.mkdir()
+        source_file.write_text("audiobook content")
+
+        dest_dir = tmp_path / "library" / "Author" / "Title"
+
+        result = copy_to_library(source_file, dest_dir, dry_run=True)
+
+        assert result == dest_dir / "audio.m4b"
+        assert not result.exists()
+        # Directory is created even in dry run
+        assert dest_dir.exists()
+
+    def test_existing_file_with_same_size_is_skipped(self, tmp_path):
+        """Existing file with same size is not overwritten"""
+        source_file = tmp_path / "source" / "audio.m4b"
+        source_file.parent.mkdir()
+        source_file.write_text("audiobook content")
+
+        dest_dir = tmp_path / "library" / "Author" / "Title"
+        dest_dir.mkdir(parents=True)
+        dest_file = dest_dir / "audio.m4b"
+        dest_file.write_text("audiobook content")
+
+        original_mtime = dest_file.stat().st_mtime
+
+        result = copy_to_library(source_file, dest_dir)
+
+        assert result == dest_file
+        # File should not be modified (same mtime)
+        assert dest_file.stat().st_mtime == original_mtime
+
+    def test_existing_file_with_different_size_gets_overwritten(self, tmp_path):
+        """Existing file with different size is overwritten"""
+        source_file = tmp_path / "source" / "audio.m4b"
+        source_file.parent.mkdir()
+        source_file.write_text("new audiobook content")
+
+        dest_dir = tmp_path / "library" / "Author" / "Title"
+        dest_dir.mkdir(parents=True)
+        dest_file = dest_dir / "audio.m4b"
+        dest_file.write_text("old")
+
+        result = copy_to_library(source_file, dest_dir)
+
+        assert result == dest_file
+        assert dest_file.read_text() == "new audiobook content"
+
+
+class TestStripLabelSuffix:
+    """Test stripping common audiobook label suffixes."""
+
+    def test_strips_audiobook_suffix(self):
+        assert _strip_label_suffix("Title - Audiobook") == "Title"
+
+    def test_strips_audio_suffix(self):
+        assert _strip_label_suffix("Title - Audio") == "Title"
+
+    def test_strips_unabridged_suffix(self):
+        assert _strip_label_suffix("Title - Unabridged") == "Title"
+
+    def test_strips_abridged_suffix(self):
+        assert _strip_label_suffix("Title - Abridged") == "Title"
+
+    def test_case_insensitive(self):
+        assert _strip_label_suffix("Title - AUDIOBOOK") == "Title"
+        assert _strip_label_suffix("Title - audiobook") == "Title"
+
+    def test_preserves_non_label_suffixes(self):
+        assert _strip_label_suffix("Title - Part 1") == "Title - Part 1"
+        assert _strip_label_suffix("Title - Series Name") == "Title - Series Name"
+
+    def test_no_suffix_unchanged(self):
+        assert _strip_label_suffix("Just A Title") == "Just A Title"
+
+
+class TestExtractAuthor:
+    """Test extracting author names from directory names."""
+
+    def test_strips_parenthetical_suffixes(self):
+        """Strip parenthetical info like (All Chaptered)"""
+        assert _extract_author("Tad Williams (All Chaptered)") == "Tad Williams"
+        assert _extract_author("Brandon Sanderson (Fantasy)") == "Brandon Sanderson"
+
+    def test_strips_bracketed_suffixes(self):
+        """Strip bracketed info like [1-5]"""
+        assert _extract_author("Author Name [1-5]") == "Author Name"
+        assert _extract_author("J.K. Rowling [Complete]") == "J.K. Rowling"
+
+    def test_splits_on_dash_separator(self):
+        """Split on ' - ' and take first part if no digits"""
+        assert _extract_author("Brandon Sanderson - Mistborn") == "Brandon Sanderson"
+        assert _extract_author("J.R.R. Tolkien - Middle Earth") == "J.R.R. Tolkien"
+
+    def test_preserves_dash_if_contains_digits(self):
+        """Preserve full string if left side has digits"""
+        # If the candidate author (left of dash) has digits, return cleaned full string
+        result = _extract_author("Series 1 - Title")
+        assert result == "Series 1 - Title"
+
+    def test_combines_parenthetical_and_dash_stripping(self):
+        """Handle both parenthetical and dash splitting"""
+        assert _extract_author("Author Name (All Chaptered) - Series") == "Author Name"
+
+    def test_no_special_chars_unchanged(self):
+        """Plain author name returned as-is"""
+        assert _extract_author("Brandon Sanderson") == "Brandon Sanderson"
