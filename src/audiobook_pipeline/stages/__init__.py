@@ -5,7 +5,10 @@ Stages:
                 optional LibraryIndex for O(1) batch lookups and reorganize flag
                 for in-place library cleanup (move instead of copy). Logs audio
                 file discovery, Audible search strategies, AI resolution decisions,
-                cross-source dedup, and correctly-placed detection.
+                cross-source dedup, correctly-placed detection, and
+                progress bar with ETA for batch operations. Auto-stages
+                README via Claude hook on commit. Supports batch and
+                single-file modes.
 """
 
 from ..models import Stage
@@ -18,6 +21,7 @@ def get_stage_runner(stage: Stage):
     """
     if stage == Stage.ORGANIZE:
         from .organize import run
+
         return run
 
     # Raise clear error for unimplemented stages
