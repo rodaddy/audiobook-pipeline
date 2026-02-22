@@ -21,7 +21,10 @@ def get_duration(file: Path) -> float:
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(file),
     ])
-    return float(result.stdout.strip())
+    output = result.stdout.strip()
+    if not output:
+        raise ValueError(f"ffprobe returned empty duration for {file}")
+    return float(output)
 
 
 def get_bitrate(file: Path) -> int:
@@ -31,7 +34,10 @@ def get_bitrate(file: Path) -> int:
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(file),
     ])
-    return int(result.stdout.strip())
+    output = result.stdout.strip()
+    if not output:
+        raise ValueError(f"ffprobe returned empty bitrate for {file}")
+    return int(output)
 
 
 def get_codec(file: Path) -> str:
@@ -53,7 +59,10 @@ def get_channels(file: Path) -> int:
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(file),
     ])
-    return int(result.stdout.strip())
+    output = result.stdout.strip()
+    if not output:
+        raise ValueError(f"ffprobe returned empty channel count for {file}")
+    return int(output)
 
 
 def get_sample_rate(file: Path) -> int:
@@ -64,7 +73,10 @@ def get_sample_rate(file: Path) -> int:
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(file),
     ])
-    return int(result.stdout.strip())
+    output = result.stdout.strip()
+    if not output:
+        raise ValueError(f"ffprobe returned empty sample rate for {file}")
+    return int(output)
 
 
 def validate_audio_file(file: Path) -> bool:

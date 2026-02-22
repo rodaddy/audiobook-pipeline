@@ -96,18 +96,17 @@ def main(
 
     pipeline_mode = PipelineMode(mode)
 
-    # CLI flags override env vars -- set them explicitly
-    if dry_run:
-        os.environ["DRY_RUN"] = "true"
-    if force:
-        os.environ["FORCE"] = "true"
+    # Pass CLI flags as kwargs to avoid env pollution
+    config_kwargs = {
+        "dry_run": dry_run,
+        "force": force,
+        "verbose": verbose,
+        "ai_all": ai_all,
+    }
     if verbose:
-        os.environ["VERBOSE"] = "true"
-        os.environ["LOG_LEVEL"] = "DEBUG"
-    if ai_all:
-        os.environ["AI_ALL"] = "true"
+        config_kwargs["log_level"] = "DEBUG"
 
-    config = PipelineConfig()
+    config = PipelineConfig(**config_kwargs)
     config.setup_logging()
 
     runner = PipelineRunner(config=config, mode=pipeline_mode)

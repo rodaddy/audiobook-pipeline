@@ -67,10 +67,11 @@ class TestAudioExtensions:
         assert ".mp3" in AUDIO_EXTENSIONS
         assert ".flac" in AUDIO_EXTENSIONS
         assert ".m4a" in AUDIO_EXTENSIONS
+        assert ".m4b" in AUDIO_EXTENSIONS
 
     def test_excludes_non_audio(self):
-        assert ".m4b" not in AUDIO_EXTENSIONS
         assert ".txt" not in AUDIO_EXTENSIONS
+        assert ".pdf" not in AUDIO_EXTENSIONS
 
     def test_is_frozenset(self):
         assert isinstance(AUDIO_EXTENSIONS, frozenset)

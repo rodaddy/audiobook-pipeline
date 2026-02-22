@@ -9,7 +9,7 @@ from loguru import logger
 from .config import PipelineConfig
 from .errors import ExternalToolError
 from .manifest import Manifest
-from .models import STAGE_ORDER, PipelineMode, Stage, StageStatus
+from .models import AUDIO_EXTENSIONS, STAGE_ORDER, PipelineMode, Stage, StageStatus
 from .stages import get_stage_runner
 
 log = logger.bind(stage="runner")
@@ -38,7 +38,7 @@ class PipelineRunner:
         if source_path.is_dir() and self.mode == PipelineMode.ORGANIZE:
             audio_files = sorted(
                 f for f in source_path.rglob("*")
-                if f.suffix.lower() in {".m4b", ".mp3", ".m4a", ".flac"}
+                if f.suffix.lower() in AUDIO_EXTENSIONS
             )
             click.echo(
                 f"Batch organize: {len(audio_files)} audiobooks "
@@ -97,10 +97,6 @@ class PipelineRunner:
                 continue
 
             stage_runner = get_stage_runner(stage)
-            if stage_runner is None:
-                log.debug(f"[{stage.value}] not yet implemented, skipping")
-                continue
-
             stage_runner(
                 source_path=source_path,
                 book_hash=book_hash,

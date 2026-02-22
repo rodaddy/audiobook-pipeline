@@ -4,8 +4,7 @@ import hashlib
 import re
 from pathlib import Path
 
-# Audio extensions for hash generation
-AUDIO_EXTENSIONS: frozenset[str] = frozenset({".mp3", ".flac", ".ogg", ".m4a", ".wma"})
+from .models import AUDIO_EXTENSIONS
 
 
 def sanitize_filename(filename: str) -> str:

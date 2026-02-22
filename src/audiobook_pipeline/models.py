@@ -62,5 +62,5 @@ PRE_COMPLETED_STAGES: dict[PipelineMode, list[Stage]] = {
 }
 
 AUDIO_EXTENSIONS: frozenset[str] = frozenset({
-    ".mp3", ".flac", ".ogg", ".m4a", ".wma",
+    ".mp3", ".m4a", ".m4b", ".flac", ".ogg", ".wma",
 })

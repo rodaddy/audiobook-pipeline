@@ -11,7 +11,7 @@ from ..api.search import score_results
 from ..config import PipelineConfig
 from ..ffprobe import extract_author_from_tags, get_tags
 from ..manifest import Manifest
-from ..models import Stage, StageStatus
+from ..models import AUDIO_EXTENSIONS, Stage, StageStatus
 from ..ops.organize import build_plex_path, copy_to_library, parse_path
 
 log = logger.bind(stage="organize")
@@ -184,10 +184,9 @@ def _find_audio_file(source_path: Path) -> Path | None:
     if m4b_files:
         return m4b_files[0]
 
-    audio_exts = {".m4b", ".mp3", ".m4a", ".flac"}
     audio_files = [
         f for f in source_path.rglob("*")
-        if f.suffix.lower() in audio_exts
+        if f.suffix.lower() in AUDIO_EXTENSIONS
     ]
     return audio_files[0] if audio_files else None
 

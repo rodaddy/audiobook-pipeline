@@ -28,12 +28,26 @@ class TestGetDuration:
         mock_run.return_value = _mock_result("123.456\n")
         assert get_duration(Path("test.mp3")) == 123.456
 
+    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
+    def test_empty_output_raises(self, mock_run):
+        import pytest
+        mock_run.return_value = _mock_result("")
+        with pytest.raises(ValueError, match="empty duration"):
+            get_duration(Path("test.mp3"))
+
 
 class TestGetBitrate:
     @patch("audiobook_pipeline.ffprobe._run_ffprobe")
     def test_parses_int(self, mock_run):
         mock_run.return_value = _mock_result("128000\n")
         assert get_bitrate(Path("test.mp3")) == 128000
+
+    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
+    def test_empty_output_raises(self, mock_run):
+        import pytest
+        mock_run.return_value = _mock_result("")
+        with pytest.raises(ValueError, match="empty bitrate"):
+            get_bitrate(Path("test.mp3"))
 
 
 class TestGetCodec:
@@ -49,12 +63,26 @@ class TestGetChannels:
         mock_run.return_value = _mock_result("2\n")
         assert get_channels(Path("test.mp3")) == 2
 
+    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
+    def test_empty_output_raises(self, mock_run):
+        import pytest
+        mock_run.return_value = _mock_result("")
+        with pytest.raises(ValueError, match="empty channel count"):
+            get_channels(Path("test.mp3"))
+
 
 class TestGetSampleRate:
     @patch("audiobook_pipeline.ffprobe._run_ffprobe")
     def test_parses_int(self, mock_run):
         mock_run.return_value = _mock_result("44100\n")
         assert get_sample_rate(Path("test.mp3")) == 44100
+
+    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
+    def test_empty_output_raises(self, mock_run):
+        import pytest
+        mock_run.return_value = _mock_result("")
+        with pytest.raises(ValueError, match="empty sample rate"):
+            get_sample_rate(Path("test.mp3"))
 
 
 class TestValidateAudioFile:

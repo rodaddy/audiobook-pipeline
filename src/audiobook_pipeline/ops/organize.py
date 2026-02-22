@@ -318,9 +318,12 @@ def _normalize_for_compare(name: str) -> str:
     # Collapse punctuation and whitespace
     s = re.sub(r"[^\w\s]", "", s)
     s = re.sub(r"\s+", " ", s).strip()
-    # Strip trailing 's' for singular/plural matching
-    # "Chronicle" vs "Chronicles"
-    s = s.rstrip("s")
+    # Strip single trailing 's' for singular/plural matching
+    # "Chronicles" -> "Chronicle", but not "Mass" -> "Ma"
+    # This is imperfect (affects "James" -> "Jame") but better than
+    # the old .rstrip("s") which would turn "Ross" -> "Ro"
+    if s.endswith("s"):
+        s = s[:-1]
     return s
 
 
