@@ -47,14 +47,21 @@ def search(query: str, region: str = "com") -> list[dict]:
         images = p.get("product_images") or {}
         cover_url = images.get("1024", images.get("500", ""))
 
+        narrators = [n.get("name", "") for n in (p.get("narrators") or [])]
+        release_date = p.get("release_date", "")
+
         results.append(
             {
                 "asin": p.get("asin", ""),
                 "title": p.get("title", ""),
                 "authors": authors,
                 "author_str": ", ".join(authors),
+                "narrators": narrators,
+                "narrator_str": ", ".join(narrators),
                 "series": series_info.get("title", "") if series_info else "",
                 "position": series_info.get("sequence", "") if series_info else "",
+                "release_date": release_date,
+                "year": release_date[:4] if release_date else "",
                 "cover_url": cover_url,
             }
         )

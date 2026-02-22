@@ -486,10 +486,44 @@ def _normalize_for_compare(name: str) -> str:
     return s
 
 
+def _is_near_match(desired_norm: str, existing_norm: str) -> bool:
+    """Check if two normalized folder names are near-matches.
+
+    Handles cases where existing folders have redundant author prefixes,
+    e.g. desired="the raven tower" vs existing="ann leckie the raven tower".
+
+    Uses token-based Jaccard similarity with a bias toward the smaller name:
+    if all tokens of the shorter name appear in the longer one, it's a match.
+    Otherwise falls back to 70% Jaccard overlap.
+    """
+    if desired_norm == existing_norm:
+        return True
+
+    desired_tokens = set(desired_norm.split())
+    existing_tokens = set(existing_norm.split())
+
+    # Skip trivially short token sets (single common word like "the")
+    if len(desired_tokens) < 2 and len(existing_tokens) < 2:
+        return False
+
+    # If the smaller set is a subset of the larger, it's a match
+    # e.g. "the raven tower" is fully contained in "ann leckie the raven tower"
+    smaller, larger = sorted([desired_tokens, existing_tokens], key=len)
+    if smaller <= larger and len(smaller) >= 2:
+        return True
+
+    # Jaccard similarity fallback for reordered/partial matches
+    intersection = desired_tokens & existing_tokens
+    union = desired_tokens | existing_tokens
+    similarity = len(intersection) / len(union) if union else 0
+    return similarity >= 0.7
+
+
 def _reuse_existing(parent: Path, desired: str) -> str:
     """Check if parent contains a folder that's a near-match for desired.
 
     Returns the existing folder name if found, otherwise returns desired unchanged.
+    Uses token-based similarity to catch redundant author prefixes in folder names.
     """
     if not parent.is_dir():
         return desired
@@ -501,7 +535,8 @@ def _reuse_existing(parent: Path, desired: str) -> str:
     for existing in parent.iterdir():
         if not existing.is_dir():
             continue
-        if _normalize_for_compare(existing.name) == desired_norm:
+        existing_norm = _normalize_for_compare(existing.name)
+        if _is_near_match(desired_norm, existing_norm):
             log.debug(f"Near-match found: '{desired}' -> '{existing.name}'")
             return existing.name
     return desired

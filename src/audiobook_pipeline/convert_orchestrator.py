@@ -188,10 +188,29 @@ class ConvertOrchestrator:
                 book_hash, f"stages.{stage.value}.status"
             )
             if stage_status == StageStatus.COMPLETED.value and not self.config.force:
-                log.debug(
-                    f"Skipping {stage.value} for {source_path.name} (already completed)"
-                )
-                continue
+                # Validate artifacts still exist for stages that produce files
+                if stage == Stage.CONVERT:
+                    output_file = self.manifest.read_field(
+                        book_hash, "stages.convert.output_file"
+                    ) or self.manifest.read_field(book_hash, "metadata.output_file")
+                    if output_file and not Path(output_file).is_file():
+                        log.warning(
+                            f"Stale manifest: {stage.value} output missing for "
+                            f"{source_path.name}, re-running"
+                        )
+                        self.manifest.set_stage(book_hash, stage, StageStatus.PENDING)
+                    else:
+                        log.debug(
+                            f"Skipping {stage.value} for {source_path.name} "
+                            f"(already completed)"
+                        )
+                        continue
+                else:
+                    log.debug(
+                        f"Skipping {stage.value} for {source_path.name} "
+                        f"(already completed)"
+                    )
+                    continue
 
             # Get stage runner
             stage_runner = get_stage_runner(stage)

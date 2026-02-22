@@ -79,19 +79,27 @@ def run(
     series = meta.get("parsed_series", "")
     position = meta.get("parsed_position", "")
     asin = meta.get("parsed_asin", "")
+    narrator = meta.get("parsed_narrator", "")
+    year = meta.get("parsed_year", "")
     cover_url = meta.get("cover_url", "")
 
     album = _build_album(title, series, position)
 
-    tags = {
+    tags: dict[str, str] = {
         "artist": author,
         "album_artist": author,
         "album": album,
         "title": title,
         "genre": "Audiobook",
+        "media_type": "2",
     }
-    if asin:
-        tags["ASIN"] = asin
+    if narrator:
+        tags["composer"] = narrator
+    if year:
+        tags["date"] = year
+    if series:
+        tags["show"] = series
+        tags["grouping"] = series
 
     log.debug(
         f"Tagging {output_file.name}: artist={author!r} album={album!r} "
@@ -230,8 +238,8 @@ def _write_tags(
     # Add cover art as second input
     if cover_path and cover_path.exists():
         cmd.extend(["-i", str(cover_path)])
-        # Map audio from first input, cover from second
-        cmd.extend(["-map", "0", "-map", "1"])
+        # Map audio from first input (skip data/subtitle streams), cover from second
+        cmd.extend(["-map", "0:a", "-map", "1"])
         cmd.extend(["-c", "copy"])
         cmd.extend(["-disposition:v:0", "attached_pic"])
     else:
@@ -242,6 +250,8 @@ def _write_tags(
     for key, value in tags.items():
         cmd.extend(["-metadata", f"{key}={value}"])
 
+    # Force ipod/m4b format -- ffmpeg can't guess from .m4b.tmp extension
+    cmd.extend(["-f", "ipod"])
     cmd.append(str(temp_file))
 
     log.debug(f"ffmpeg command: {' '.join(cmd)}")
@@ -260,7 +270,7 @@ def _write_tags(
 
     if result.returncode != 0:
         click.echo(f"  ERROR: ffmpeg failed tagging {filepath.name}")
-        log.error(f"ffmpeg stderr: {result.stderr[:500]}")
+        log.error(f"ffmpeg stderr: {result.stderr[-500:]}")
         temp_file.unlink(missing_ok=True)
         return False
 

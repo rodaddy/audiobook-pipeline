@@ -45,6 +45,8 @@ class TestMetadataStage:
         series="",
         position="",
         asin="B001234567",
+        narrator="",
+        year="",
         cover_url="",
     ):
         """Create manifest with ASIN-resolved metadata and convert output."""
@@ -62,6 +64,8 @@ class TestMetadataStage:
                 "parsed_series": series,
                 "parsed_position": position,
                 "parsed_asin": asin,
+                "parsed_narrator": narrator,
+                "parsed_year": year,
                 "cover_url": cover_url,
             }
         )
@@ -87,6 +91,8 @@ class TestMetadataStage:
             series="The Expanse",
             position="1",
             asin="B005LZHV6Q",
+            narrator="Jefferson Mays",
+            year="2011",
         )
 
         def ffmpeg_side_effect(cmd, **kwargs):
@@ -122,7 +128,11 @@ class TestMetadataStage:
         assert "album=The Expanse, Book 1" in metadata_pairs
         assert "title=Leviathan Wakes" in metadata_pairs
         assert "genre=Audiobook" in metadata_pairs
-        assert "ASIN=B005LZHV6Q" in metadata_pairs
+        assert "media_type=2" in metadata_pairs
+        assert "composer=Jefferson Mays" in metadata_pairs
+        assert "date=2011" in metadata_pairs
+        assert "show=The Expanse" in metadata_pairs
+        assert "grouping=The Expanse" in metadata_pairs
 
         data = manifest.read("meta01")
         assert data["stages"]["metadata"]["status"] == "completed"

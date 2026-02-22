@@ -27,8 +27,11 @@ cp config.env.example config.env
 
 # Install dependencies (see Installation section)
 
-# Convert a directory of MP3s
-bin/audiobook-convert /path/to/audiobook-mp3s/
+# Convert a directory of MP3s to M4B
+uv run audiobook-convert /path/to/audiobook-mp3s/
+
+# Batch convert multiple books (CPU-aware parallel processing)
+uv run audiobook-convert --mode convert /path/to/incoming/
 ```
 
 ## Installation
@@ -258,14 +261,19 @@ The pipeline writes the following metadata tags to M4B files using `tone`:
 
 ## Usage
 
+Entry point: `uv run audiobook-convert`
+
 ### Convert a directory of audio files
 
 ```bash
 # Auto-detects directory input -> convert mode
-bin/audiobook-convert /mnt/downloads/MyBook/
+uv run audiobook-convert /mnt/downloads/MyBook/
+
+# Batch convert with CPU-aware parallel processing
+uv run audiobook-convert --mode convert /mnt/downloads/incoming/
 
 # With options
-bin/audiobook-convert --verbose --force /mnt/downloads/MyBook/
+uv run audiobook-convert --verbose --force /mnt/downloads/MyBook/
 ```
 
 Pipeline stages: `validate -> concat -> convert -> asin -> metadata -> organize -> archive -> cleanup`
@@ -274,7 +282,7 @@ Pipeline stages: `validate -> concat -> convert -> asin -> metadata -> organize 
 
 ```bash
 # Auto-detects .m4b input -> enrich mode
-bin/audiobook-convert /mnt/media/untagged-book.m4b
+uv run audiobook-convert /mnt/media/untagged-book.m4b
 ```
 
 Skips conversion stages. Fetches metadata from configured source and organizes into your library.
@@ -282,7 +290,7 @@ Skips conversion stages. Fetches metadata from configured source and organizes i
 ### Metadata-only mode
 
 ```bash
-bin/audiobook-convert --mode metadata /path/to/book.m4b
+uv run audiobook-convert --mode metadata /path/to/book.m4b
 ```
 
 Fetches ASIN and applies metadata (cover art, author, narrator, series) without moving the file.
@@ -290,7 +298,7 @@ Fetches ASIN and applies metadata (cover art, author, narrator, series) without 
 ### Organize-only mode
 
 ```bash
-bin/audiobook-convert --mode organize /path/to/book.m4b
+uv run audiobook-convert --mode organize /path/to/book.m4b
 ```
 
 Moves the file into the `Author/Book (Year)/Book.m4b` folder structure without touching metadata.
@@ -299,20 +307,20 @@ Moves the file into the `Author/Book (Year)/Book.m4b` folder structure without t
 
 ```bash
 # German audiobook
-AUDIBLE_REGION=de bin/audiobook-convert /path/to/german-book/
+AUDIBLE_REGION=de uv run audiobook-convert /path/to/german-book/
 
 # UK audiobook
-AUDIBLE_REGION=co.uk bin/audiobook-convert /path/to/uk-book/
+AUDIBLE_REGION=co.uk uv run audiobook-convert /path/to/uk-book/
 ```
 
 ### Override metadata source
 
 ```bash
 # Use Audnexus instead of Audible for this run
-METADATA_SOURCE=audnexus bin/audiobook-convert /path/to/book.m4b
+METADATA_SOURCE=audnexus uv run audiobook-convert /path/to/book.m4b
 
 # Use Audible API for UK marketplace
-AUDIBLE_REGION=co.uk METADATA_SOURCE=audible bin/audiobook-convert /path/to/book/
+AUDIBLE_REGION=co.uk METADATA_SOURCE=audible uv run audiobook-convert /path/to/book/
 ```
 
 ### Large library processing
@@ -323,20 +331,20 @@ For large batches (hundreds or thousands of books), the pipeline builds an in-me
 
 ```bash
 # Organize a staging directory into your library
-audiobook-pipeline /path/to/new/books --mode organize --dry-run
+uv run audiobook-convert /path/to/new/books --mode organize --dry-run
 
 # Verify the dry-run output, then run for real
-audiobook-pipeline /path/to/new/books --mode organize
+uv run audiobook-convert /path/to/new/books --mode organize
 ```
 
 **Reorganize an existing library in-place:**
 
 ```bash
 # Dry-run first -- see what would move
-audiobook-pipeline /Volumes/media_files/AudioBooks --reorganize --dry-run
+uv run audiobook-convert /Volumes/media_files/AudioBooks --reorganize --dry-run
 
 # Verify moves look correct, then run
-audiobook-pipeline /Volumes/media_files/AudioBooks --reorganize
+uv run audiobook-convert /Volumes/media_files/AudioBooks --reorganize
 ```
 
 The `--reorganize` flag:
@@ -355,9 +363,12 @@ The `--reorganize` flag:
 ### Batch processing
 
 ```bash
-# Process multiple books in parallel (each skips the global lock)
+# Automatic CPU-aware parallel processing (recommended)
+uv run audiobook-convert --mode convert /mnt/downloads/batch/
+
+# Manual parallel processing (legacy)
 for dir in /mnt/downloads/*/; do
-  bin/audiobook-convert --no-lock "$dir" &
+  uv run audiobook-convert --no-lock "$dir" &
 done
 wait
 ```
@@ -366,7 +377,22 @@ wait
 
 ```bash
 # Preview what would happen without making changes
-bin/audiobook-convert --dry-run --verbose /mnt/downloads/MyBook/
+uv run audiobook-convert --dry-run --verbose /mnt/downloads/MyBook/
+```
+
+### CLI flags reference
+
+```
+-m, --mode {convert,enrich,metadata,organize}  Pipeline mode (auto-detected if omitted)
+--dry-run                                      Preview without making changes
+--force                                        Re-process even if completed
+-v, --verbose                                  Enable DEBUG logging
+-c, --config PATH                              Path to .env file
+--ai-all                                       Run AI validation on all books
+--reorganize                                   Move misplaced books (implies --ai-all)
+--verify                                       Run data quality checks after processing
+--no-lock                                      Skip file locking (manual batch mode)
+--asin TEXT                                    Override ASIN discovery
 ```
 
 ## Architecture
@@ -536,7 +562,7 @@ WantedBy=multi-user.target
 - Verify NFS mount is accessible: `ls -la $NFS_OUTPUT_DIR`
 - Kill hung ffmpeg processes: `pkill -9 ffmpeg`
 - Check work directory for partial files: `ls -lah $WORK_DIR`
-- Enable verbose logging and retry: `bin/audiobook-convert --verbose --force /path/to/book/`
+- Enable verbose logging and retry: `uv run audiobook-convert --verbose --force /path/to/book/`
 
 ### Permission denied errors
 

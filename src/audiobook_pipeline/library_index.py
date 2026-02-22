@@ -16,7 +16,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from .ops.organize import _normalize_for_compare
+from .ops.organize import _is_near_match, _normalize_for_compare
 
 log = logger.bind(stage="index")
 
@@ -81,6 +81,7 @@ class LibraryIndex:
 
         Returns the existing folder name if a near-match exists
         under parent, otherwise returns desired unchanged.
+        Uses token-based similarity to catch redundant author prefixes.
         """
         folder_map = self._folders.get(parent)
         if folder_map is None:
@@ -90,10 +91,19 @@ class LibraryIndex:
         if desired in folder_map.values():
             return desired
 
-        # Normalized lookup
+        # Normalized exact lookup (O(1))
         desired_norm = _normalize_for_compare(desired)
         existing = folder_map.get(desired_norm)
-        return existing if existing is not None else desired
+        if existing is not None:
+            return existing
+
+        # Token-based near-match scan (O(n) but rare -- only when exact fails)
+        for existing_norm, existing_name in folder_map.items():
+            if _is_near_match(desired_norm, existing_norm):
+                log.debug(f"Near-match found: '{desired}' -> '{existing_name}'")
+                return existing_name
+
+        return desired
 
     def file_exists(self, dest_dir: Path, filename: str) -> bool:
         """Check if a file exists at dest_dir/filename (O(1))."""

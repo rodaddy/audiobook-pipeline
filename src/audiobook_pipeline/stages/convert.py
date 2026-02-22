@@ -142,6 +142,10 @@ def run(
                 }
             },
         )
+        data = manifest.read(book_hash)
+        if data:
+            data["stages"]["convert"]["output_file"] = str(output_m4b)
+            manifest.update(book_hash, data)
         manifest.set_stage(book_hash, Stage.CONVERT, StageStatus.COMPLETED)
         return
 
@@ -203,7 +207,9 @@ def run(
             manifest.set_stage(book_hash, Stage.CONVERT, StageStatus.FAILED)
             return
 
-    # Update manifest
+    # Update manifest -- store output_file in both locations:
+    # - stages.convert.output_file: canonical location for downstream stages
+    # - metadata dict: codec/bitrate info for reference
     manifest.update(
         book_hash,
         {
@@ -215,6 +221,10 @@ def run(
             }
         },
     )
+    data = manifest.read(book_hash)
+    if data:
+        data["stages"]["convert"]["output_file"] = str(output_m4b)
+        manifest.update(book_hash, data)
 
     # Mark completed
     manifest.set_stage(book_hash, Stage.CONVERT, StageStatus.COMPLETED)

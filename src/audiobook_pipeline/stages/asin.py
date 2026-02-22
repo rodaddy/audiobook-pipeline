@@ -131,6 +131,8 @@ def run(
                 "title": best["title"],
                 "series": best.get("series", ""),
                 "position": best.get("position", ""),
+                "narrator": best.get("narrator_str", ""),
+                "year": best.get("year", ""),
             }
             cover_url = best.get("cover_url", "")
             log.debug(
@@ -154,6 +156,8 @@ def run(
                     "title": ai_pick["title"],
                     "series": ai_pick.get("series", ""),
                     "position": ai_pick.get("position", ""),
+                    "narrator": ai_pick.get("narrator_str", ""),
+                    "year": ai_pick.get("year", ""),
                 }
                 cover_url = ai_pick.get("cover_url", "")
                 log.debug(f"AI disambiguated: {ai_pick['author_str']!r}")
@@ -213,6 +217,12 @@ def run(
                 "parsed_series": metadata["series"],
                 "parsed_position": metadata["position"],
                 "parsed_asin": (audible_result["asin"] if audible_result else ""),
+                "parsed_narrator": (
+                    audible_result.get("narrator", "") if audible_result else ""
+                ),
+                "parsed_year": (
+                    audible_result.get("year", "") if audible_result else ""
+                ),
                 "cover_url": cover_url,
             }
         )
