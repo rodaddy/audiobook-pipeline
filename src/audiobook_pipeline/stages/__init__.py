@@ -6,9 +6,8 @@ Stages:
                 for in-place library cleanup (move instead of copy). Logs audio
                 file discovery, Audible search strategies, AI resolution decisions,
                 cross-source dedup, correctly-placed detection, and
-                progress bar with ETA for batch operations. Auto-stages
-                README via Claude hook on commit. Supports batch and
-                single-file modes.
+                progress bar with ETA for batch operations. Supports
+                batch and single-file modes.
 """
 
 from ..models import Stage
