@@ -47,7 +47,7 @@ STAGE_ORDER: dict[PipelineMode, list[Stage]] = {
         Stage.ASIN, Stage.METADATA, Stage.CLEANUP,
     ],
     PipelineMode.ORGANIZE: [
-        Stage.ORGANIZE, Stage.CLEANUP,
+        Stage.ORGANIZE,
     ],
 }
 

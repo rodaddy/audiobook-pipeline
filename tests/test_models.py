@@ -46,7 +46,7 @@ class TestStageOrder:
 
     def test_organize_is_minimal(self):
         stages = STAGE_ORDER[PipelineMode.ORGANIZE]
-        assert stages == [Stage.ORGANIZE, Stage.CLEANUP]
+        assert stages == [Stage.ORGANIZE]
 
 
 class TestPreCompletedStages:
