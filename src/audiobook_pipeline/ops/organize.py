@@ -21,20 +21,39 @@ if TYPE_CHECKING:
     from ..library_index import LibraryIndex
 
 # Label suffixes that are not real series names (e.g., "Title - Audiobook")
-_LABEL_SUFFIXES = frozenset({
-    "audiobook", "audio", "unabridged", "abridged",
-})
+_LABEL_SUFFIXES = frozenset(
+    {
+        "audiobook",
+        "audio",
+        "unabridged",
+        "abridged",
+    }
+)
 
 # Basenames that are useless -- use parent dir name instead
-_GENERIC_BASENAMES = frozenset({
-    "file", "mp3", "audiobook", "audio", "book", "track", "output",
-    "part1", "part2", "part 1", "part 2", "disc1", "disc2",
-})
+_GENERIC_BASENAMES = frozenset(
+    {
+        "file",
+        "mp3",
+        "audiobook",
+        "audio",
+        "book",
+        "track",
+        "output",
+        "part1",
+        "part2",
+        "part 1",
+        "part 2",
+        "disc1",
+        "disc2",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Path parsing
 # ---------------------------------------------------------------------------
+
 
 def parse_path(source_path: str) -> dict:
     """Parse a source path into structured metadata components.
@@ -78,11 +97,7 @@ def parse_path(source_path: str) -> dict:
 
     # Great-grandparent for deeper nesting
     ggp = grandparent.parent
-    ggp_name = (
-        _strip_hash(ggp.name)
-        if ggp not in (Path("/"), Path("."))
-        else ""
-    )
+    ggp_name = _strip_hash(ggp.name) if ggp not in (Path("/"), Path(".")) else ""
 
     author = ""
     title = ""
@@ -101,14 +116,14 @@ def parse_path(source_path: str) -> dict:
 
         last_match = list(re.finditer(r"-#(\d+)-", normalized))[-1]
         position = last_match.group(1)
-        title = normalized[last_match.end():].strip()
+        title = normalized[last_match.end() :].strip()
 
-        prefix = normalized[:last_match.start()]
+        prefix = normalized[: last_match.start()]
         first_match = re.search(r"-(.+?)-#\d+", prefix)
         if first_match:
             author_end = prefix.index("-")
             author = prefix[:author_end].strip()
-            series = prefix[author_end + 1:].strip()
+            series = prefix[author_end + 1 :].strip()
             series = re.split(r"-#\d+-", series)[0].strip()
         else:
             parts = prefix.rsplit("-", 1)
@@ -119,7 +134,9 @@ def parse_path(source_path: str) -> dict:
                 author = prefix.strip()
                 series = ""
 
-        log.debug(f"Pattern A matched: author={author} series={series} pos={position} title={title}")
+        log.debug(
+            f"Pattern A matched: author={author} series={series} pos={position} title={title}"
+        )
         return _build_result(author, title, series, position)
 
     # Pattern B2: "Name N - Title" (e.g., "Deathgate Cycle 1 - Dragon Wing")
@@ -128,7 +145,9 @@ def parse_path(source_path: str) -> dict:
         series = match_b2.group(1).strip()
         position = match_b2.group(2).strip()
         title = match_b2.group(3).strip()
-        log.debug(f"Pattern B2 matched: author={author} series={series} pos={position} title={title}")
+        log.debug(
+            f"Pattern B2 matched: author={author} series={series} pos={position} title={title}"
+        )
 
     # Pattern B: "SeriesName NN Title" (e.g., "The First Law 04 Best Served Cold")
     if not title:
@@ -141,7 +160,9 @@ def parse_path(source_path: str) -> dict:
                 series = potential_series
                 position = potential_pos
                 title = potential_title
-                log.debug(f"Pattern B matched: author={author} series={series} pos={position} title={title}")
+                log.debug(
+                    f"Pattern B matched: author={author} series={series} pos={position} title={title}"
+                )
 
     # Pattern G: "Series [NN] Title" (e.g., "Mistborn [01] The Final Empire")
     if not title:
@@ -150,7 +171,9 @@ def parse_path(source_path: str) -> dict:
             series = match_g.group(1).strip()
             position = match_g.group(2).strip()
             title = match_g.group(3).strip()
-            log.debug(f"Pattern G matched: author={author} series={series} pos={position} title={title}")
+            log.debug(
+                f"Pattern G matched: author={author} series={series} pos={position} title={title}"
+            )
 
     # Pattern E: split "Author - Series" grandparents
     if gp_name and " - " in gp_name:
@@ -164,7 +187,9 @@ def parse_path(source_path: str) -> dict:
                     author = gp_author
                 if not series:
                     series = gp_series
-                log.debug(f"Pattern E: extracted author={gp_author} series={gp_series} from grandparent")
+                log.debug(
+                    f"Pattern E: extracted author={gp_author} series={gp_series} from grandparent"
+                )
 
     # Pattern C: grandparent as author
     if parent_name == basename and gp_name:
@@ -181,7 +206,9 @@ def parse_path(source_path: str) -> dict:
             author = _extract_author(ggp_name)
             if not series:
                 series = _clean_collection_suffix(gp_name)
-            log.debug(f"Pattern C: extracted author={author} from great-grandparent, series={series}")
+            log.debug(
+                f"Pattern C: extracted author={author} from great-grandparent, series={series}"
+            )
 
     # Author-Title split from parent: "Author-Title" or "Author - Title"
     if not author and not series and "-" in parent_name and not title:
@@ -203,9 +230,9 @@ def parse_path(source_path: str) -> dict:
     if not title:
         title = basename
         if author and title.lower().startswith(author.lower()):
-            title = title[len(author):].lstrip(" -").strip()
+            title = title[len(author) :].lstrip(" -").strip()
         if series and title.lower().startswith(series.lower()):
-            title = title[len(series):].lstrip(" -").strip()
+            title = title[len(series) :].lstrip(" -").strip()
         title = re.sub(r"\[\d+\]", "", title)
         bracket_match = re.match(r"^\[(.+)\]$", title.strip())
         if bracket_match:
@@ -228,19 +255,27 @@ def parse_path(source_path: str) -> dict:
     # "Title - (Series Name - Day 1)" or "Title (Series, Book 2.5)"
     if not series:
         paren_match = re.search(
-            r"\s*-?\s*\(([^)]+?)"
-            r"(?:\s*[-,]\s*(?:Book|Day|#)\s*([\d.]+))?"
-            r"\)", title,
+            r"\s*-?\s*\(([^)]+?)" r"(?:\s*[-,]\s*(?:Book|Day|#)\s*([\d.]+))?" r"\)",
+            title,
         )
         if paren_match:
             candidate_series = paren_match.group(1).strip().rstrip(" -,")
-            if len(candidate_series) >= 3 and candidate_series.lower() not in _LABEL_SUFFIXES:
+            is_year = bool(re.fullmatch(r"\d{4}", candidate_series))
+            if is_year:
+                # Year = edition differentiator, not a series
+                # "Good Omens (2019)" -> title="Good Omens", position="2019"
+                if not position:
+                    position = candidate_series
+                title = title[: paren_match.start()].strip().rstrip(" -")
+            elif (
+                len(candidate_series) >= 3
+                and candidate_series.lower() not in _LABEL_SUFFIXES
+            ):
                 series = candidate_series
                 if paren_match.group(2) and not position:
                     position = paren_match.group(2)
                 # Remove the parenthesized part from title
-                title = title[:paren_match.start()].strip().rstrip(" -")
-
+                title = title[: paren_match.start()].strip().rstrip(" -")
 
     if not title:
         title = _clean_title_fallback(basename)
@@ -253,6 +288,7 @@ def parse_path(source_path: str) -> dict:
 # ---------------------------------------------------------------------------
 # Plex path building
 # ---------------------------------------------------------------------------
+
 
 def build_plex_path(
     nfs_output_dir: Path,
@@ -275,10 +311,21 @@ def build_plex_path(
     author = sanitize_filename(metadata["author"]) if metadata["author"] else ""
     title = sanitize_filename(metadata["title"]) if metadata["title"] else "Unknown"
     series_name = sanitize_filename(metadata["series"]) if metadata["series"] else ""
+    position = metadata.get("position", "")
+
+    # Canonicalize author against existing library folders (surname matching)
+    if author and index:
+        author = index.match_author(author)
 
     # Skip series folder when series == title (avoids Author/Title/Title/)
     if series_name and series_name.lower() == title.lower():
         series_name = ""
+
+    # Year-as-position: treat as edition subfolder under title
+    # "Good Omens (2019)" -> Author/Good Omens/2019/
+    is_year_edition = bool(
+        position and re.fullmatch(r"\d{4}", position) and not series_name
+    )
 
     reuse = index.reuse_existing if index else _reuse_existing
 
@@ -304,8 +351,14 @@ def build_plex_path(
         title = reuse(base, title)
         result = base / title
 
+    # Append year edition subfolder: Author/Title/2019/
+    if is_year_edition:
+        result = result / position
+
     # Register new path components in the index
     if index:
+        if author:
+            index.register_author(author)
         for parent, child in _path_components(nfs_output_dir, result):
             index.register_new_folder(parent, child)
 
@@ -360,6 +413,7 @@ def move_in_library(
     source_file: Path,
     dest_dir: Path,
     dry_run: bool = False,
+    library_root: Path | None = None,
 ) -> Path:
     """Move an audiobook file within the library (for reorganize mode).
 
@@ -379,8 +433,8 @@ def move_in_library(
     log.info(f"Move {source_file} -> {dest_file}")
     shutil.move(str(source_file), str(dest_file))
 
-    # Clean up empty parent dirs left behind by the move
-    _cleanup_empty_parents(source_file.parent, stop_at=None)
+    # Clean up empty parent dirs left behind by the move (bounded to library root)
+    _cleanup_empty_parents(source_file.parent, stop_at=library_root)
 
     return dest_file
 
@@ -407,6 +461,7 @@ def _cleanup_empty_parents(directory: Path, stop_at: Path | None) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _normalize_for_compare(name: str) -> str:
     """Normalize a folder name for duplicate comparison.
@@ -461,7 +516,9 @@ def _strip_label_suffix(name: str) -> str:
     """Strip label suffixes like ' - Audiobook' from dir names."""
     return re.sub(
         r"\s+-\s+(?:Audiobook|Audio|Unabridged|Abridged)$",
-        "", name, flags=re.IGNORECASE,
+        "",
+        name,
+        flags=re.IGNORECASE,
     )
 
 
@@ -487,15 +544,35 @@ def _looks_like_author(name: str) -> bool:
     """Heuristic: does this directory name look like an author?"""
     lower = name.lower()
     collection_words = [
-        "trilogy", "series", "saga", "collection", "volumes", "books",
-        "chronicle", "chronicles",
-        "standalones", "chaptered", "audiobook", "all chaptered",
-        "stuff", "random", "newbooks", "output", "input", "incoming",
-        "processing", "completed", "failed", "queue", "pipeline",
+        "trilogy",
+        "series",
+        "saga",
+        "collection",
+        "volumes",
+        "books",
+        "chronicle",
+        "chronicles",
+        "standalones",
+        "chaptered",
+        "audiobook",
+        "all chaptered",
+        "stuff",
+        "random",
+        "newbooks",
+        "output",
+        "input",
+        "incoming",
+        "processing",
+        "completed",
+        "failed",
+        "queue",
+        "pipeline",
     ]
     for word in collection_words:
         if word in lower:
-            log.debug(f"_looks_like_author: name={name} -> False (collection word: {word})")
+            log.debug(
+                f"_looks_like_author: name={name} -> False (collection word: {word})"
+            )
             return False
     if re.search(r"\d", name):
         log.debug(f"_looks_like_author: name={name} -> False (contains digit)")
@@ -506,7 +583,9 @@ def _looks_like_author(name: str) -> bool:
     # Reject titles masquerading as authors -- too many words
     words = name.split()
     if len(words) > 5:
-        log.debug(f"_looks_like_author: name={name} -> False (too many words: {len(words)})")
+        log.debug(
+            f"_looks_like_author: name={name} -> False (too many words: {len(words)})"
+        )
         return False
     # Reject names starting with articles (titles, not people)
     if lower.startswith(("the ", "a ", "an ")):

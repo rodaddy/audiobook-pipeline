@@ -23,6 +23,11 @@ def get_stage_runner(stage: Stage):
 
         return run
 
+    if stage == Stage.CLEANUP:
+        from .cleanup import run as cleanup_run
+
+        return cleanup_run
+
     # Raise clear error for unimplemented stages
     raise NotImplementedError(
         f"Stage '{stage.value}' is not yet implemented. "

@@ -90,10 +90,13 @@ def resolve(
     evidence_parts = []
 
     # Source file identification -- leads the prompt to defeat semantic caching
+    # Sanitize user-controlled paths to prevent prompt injection via dir/filenames
     if source_filename:
-        evidence_parts.append(f"Source filename: {source_filename!r}")
+        clean_name = source_filename.replace("\n", " ").replace("\r", " ")[:200]
+        evidence_parts.append(f"Source filename: {clean_name!r}")
     if source_directory:
-        evidence_parts.append(f"Source directory path: {source_directory!r}")
+        clean_dir = source_directory.replace("\n", " ").replace("\r", " ")[:200]
+        evidence_parts.append(f"Source directory path: {clean_dir!r}")
 
     # Path evidence
     has_path = False

@@ -53,8 +53,14 @@ def run(
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.FAILED)
         return
 
-    # Cross-source dedup: skip if same stem already processed in this batch
-    if index and index.mark_processed(source_file.stem):
+    # Cross-source dedup: scope by book directory to avoid collisions
+    # on common filenames like "audiobook.m4b" or "01.mp3"
+    dedup_key = (
+        f"{source_path.name}/{source_file.stem}"
+        if source_path.is_dir()
+        else source_file.stem
+    )
+    if index and index.mark_processed(dedup_key):
         click.echo(f"  SKIPPED {source_file.name} -- already processed in batch")
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
         return
@@ -72,6 +78,8 @@ def run(
     try:
         tags = get_tags(source_file)
         tag_author = extract_author_from_tags(tags)
+    except FileNotFoundError:
+        raise  # ffprobe missing or file disappeared -- fail fast
     except Exception as e:
         log.warning(f"Failed to read tags from {source_file.name}: {e}")
         tags = {}
@@ -180,7 +188,9 @@ def run(
 
     # Build destination
     dest_dir = build_plex_path(config.nfs_output_dir, metadata, index=index)
-    book_dir = source_file.parent if source_path.is_dir() else None
+    # Use source_path (the runner-identified book dir), not source_file.parent
+    # which may be a nested subdir (e.g., Book/CD1/ instead of Book/)
+    book_dir = source_path if source_path.is_dir() else None
 
     # Reorganize mode: check if source dir is already the correct dest
     if reorganize and book_dir:
@@ -219,9 +229,13 @@ def run(
 
     if reorganize and book_dir:
         # Move all files from source dir to dest dir
-        dest_file = _move_book_directory(book_dir, dest_dir)
+        dest_file = _move_book_directory(
+            book_dir, dest_dir, stop_at=config.nfs_output_dir
+        )
     elif reorganize:
-        dest_file = move_in_library(source_file, dest_dir, dry_run=False)
+        dest_file = move_in_library(
+            source_file, dest_dir, dry_run=False, library_root=config.nfs_output_dir
+        )
     else:
         dest_file = copy_to_library(source_file, dest_dir, dry_run=False)
 
@@ -248,29 +262,36 @@ def run(
     click.echo(f"  Organized: {dest_dir.relative_to(config.nfs_output_dir)}")
 
 
-def _move_book_directory(source_dir: Path, dest_dir: Path) -> Path:
-    """Move all files from source_dir into dest_dir.
+def _move_book_directory(
+    source_dir: Path, dest_dir: Path, stop_at: Path | None = None
+) -> Path:
+    """Move all contents from source_dir into dest_dir (recursively).
 
-    Handles multi-chapter books (many MP3s in one dir) and single-file
-    books alike. Cleans up the empty source directory after moving.
+    Handles multi-chapter books (many MP3s in one dir), multi-disc books
+    with CD1/CD2 subdirectories, and single-file books alike.
+    Cleans up the empty source directory after moving.
     Returns the destination directory path.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     moved = 0
-    for item in sorted(source_dir.iterdir()):
-        if item.is_file():
-            dest_file = dest_dir / item.name
-            if dest_file.exists() and dest_file.stat().st_size == item.stat().st_size:
-                log.debug(f"Skip (same size): {item.name}")
-                continue
-            shutil.move(str(item), str(dest_file))
-            moved += 1
+    for item in sorted(source_dir.rglob("*")):
+        if not item.is_file():
+            continue
+        # Preserve subdirectory structure (e.g., CD1/track01.mp3)
+        rel = item.relative_to(source_dir)
+        dest_file = dest_dir / rel
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        if dest_file.exists() and dest_file.stat().st_size == item.stat().st_size:
+            log.debug(f"Skip (same size): {rel}")
+            continue
+        shutil.move(str(item), str(dest_file))
+        moved += 1
     log.info(f"Moved {moved} files: {source_dir.name} -> {dest_dir}")
 
-    # Clean up empty source dir and parents
+    # Clean up empty source dir and parents (bounded to library root)
     from ..ops.organize import _cleanup_empty_parents
 
-    _cleanup_empty_parents(source_dir, stop_at=None)
+    _cleanup_empty_parents(source_dir, stop_at=stop_at)
 
     return dest_dir
 

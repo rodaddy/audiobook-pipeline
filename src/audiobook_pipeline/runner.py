@@ -23,29 +23,22 @@ log = logger.bind(stage="runner")
 
 
 def _find_book_directories(root: Path) -> list[Path]:
-    """Find leaf directories that contain audio files.
+    """Find book root directories that contain audio files.
 
-    A "book directory" is any directory containing audio files where
-    no subdirectory also contains audio files. This groups multi-chapter
-    MP3 books as a single unit instead of processing each file separately.
+    A "book directory" is the first directory in a subtree that contains
+    audio files. Once found, its children are pruned (not descended into)
+    so multi-disc structures like CD1/CD2 are treated as one book.
+
+    Single-pass O(n) -- no redundant rglob calls.
     """
     book_dirs: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         has_audio = any(Path(f).suffix.lower() in AUDIO_EXTENSIONS for f in filenames)
         if has_audio:
-            # Check if any child dir also has audio (making this a parent, not a leaf)
-            child_has_audio = False
-            for sub in dirnames:
-                sub_path = Path(dirpath) / sub
-                if any(
-                    f.suffix.lower() in AUDIO_EXTENSIONS
-                    for f in sub_path.rglob("*")
-                    if f.is_file()
-                ):
-                    child_has_audio = True
-                    break
-            if not child_has_audio:
-                book_dirs.append(Path(dirpath))
+            book_dirs.append(Path(dirpath))
+            # Prune children so os.walk doesn't descend into subdirs
+            # (treats this as the book root for multi-disc/nested structures)
+            dirnames.clear()
     return sorted(book_dirs)
 
 

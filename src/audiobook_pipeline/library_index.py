@@ -7,9 +7,11 @@ replacing per-call iterdir() with dict lookups. Supports:
 - Cross-source dedup within a batch
 - Dynamic registration as new content is added
 - Correctly-placed detection for reorganize mode
+- Author name canonicalization via surname matching
 """
 
 import os
+import re
 from pathlib import Path
 
 from loguru import logger
@@ -34,6 +36,8 @@ class LibraryIndex:
         self._files: set[tuple[Path, str]] = set()
         # Set of source stems already processed in this batch
         self._processed: set[str] = set()
+        # Map: lowercase surname -> list of existing author folder names
+        self._authors_by_surname: dict[str, list[str]] = {}
         self._scan(library_root)
 
     def _scan(self, root: Path) -> None:
@@ -59,6 +63,13 @@ class LibraryIndex:
             for f in filenames:
                 self._files.add((parent, f))
                 file_count += 1
+
+        # Build surname index from top-level author folders
+        root_folders = self._folders.get(root, {})
+        for actual_name in root_folders.values():
+            surname = _extract_surname(actual_name)
+            if surname:
+                self._authors_by_surname.setdefault(surname, []).append(actual_name)
 
         log.info(
             f"Library index built: {folder_count} folders, "
@@ -121,6 +132,60 @@ class LibraryIndex:
         except OSError:
             return False
 
+    def match_author(self, desired: str) -> str:
+        """Canonicalize an author name against existing library folders.
+
+        Extracts the surname from the desired name, looks up all existing
+        author folders with that surname, then picks the best match using
+        normalized comparison. Returns the existing folder name if a match
+        is found, otherwise returns desired unchanged.
+        """
+        if not desired:
+            return desired
+
+        surname = _extract_surname(desired)
+        if not surname:
+            return desired
+
+        candidates = self._authors_by_surname.get(surname, [])
+        if not candidates:
+            return desired
+
+        # Exact match -- fast path
+        if desired in candidates:
+            return desired
+
+        # Normalized comparison
+        desired_norm = _normalize_for_compare(desired)
+        for existing in candidates:
+            if _normalize_for_compare(existing) == desired_norm:
+                log.debug(f"Author canonicalized: '{desired}' -> '{existing}'")
+                return existing
+
+        # Single candidate with same surname -- use it
+        # (covers "R.A. Salvatore" vs "R. A. Salvatore")
+        if len(candidates) == 1:
+            log.debug(
+                f"Author canonicalized (sole surname match): "
+                f"'{desired}' -> '{candidates[0]}'"
+            )
+            return candidates[0]
+
+        # Multiple candidates, can't disambiguate -- return as-is
+        log.debug(
+            f"Author '{desired}' has {len(candidates)} surname matches, "
+            f"keeping as-is: {candidates}"
+        )
+        return desired
+
+    def register_author(self, author_name: str) -> None:
+        """Register a new author folder in the surname index."""
+        surname = _extract_surname(author_name)
+        if surname:
+            existing = self._authors_by_surname.setdefault(surname, [])
+            if author_name not in existing:
+                existing.append(author_name)
+
     @property
     def folder_count(self) -> int:
         """Total number of indexed folders."""
@@ -130,3 +195,25 @@ class LibraryIndex:
     def file_count(self) -> int:
         """Total number of indexed files."""
         return len(self._files)
+
+
+def _extract_surname(name: str) -> str:
+    """Extract the surname (last word) from an author name.
+
+    Handles multi-author: "Margaret Weis, Tracy Hickman" -> "hickman"
+    Handles initials: "R.A. Salvatore" -> "salvatore"
+    Handles "and": "Margaret Weis and Tracy Hickman" -> "hickman"
+    """
+    if not name:
+        return ""
+    # Take the last author if comma or "and" separated
+    parts = re.split(r",\s*|\s+and\s+", name)
+    last_author = parts[-1].strip()
+    # Take the last word (surname)
+    words = last_author.split()
+    if not words:
+        return ""
+    surname = words[-1].lower()
+    # Strip trailing punctuation
+    surname = surname.rstrip(".,;:")
+    return surname

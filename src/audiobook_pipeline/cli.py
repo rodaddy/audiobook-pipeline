@@ -53,24 +53,38 @@ def _load_env_file(env_file: Path) -> None:
 @click.command()
 @click.argument("source_path", type=click.Path(exists=True))
 @click.option(
-    "-m", "--mode",
+    "-m",
+    "--mode",
     type=click.Choice(["convert", "enrich", "metadata", "organize"]),
     default=None,
     help="Pipeline mode. Auto-detected if omitted.",
 )
 @click.option("--asin", default=None, help="Override ASIN discovery.")
-@click.option("--dry-run", is_flag=True, help="Show what would happen without doing it.")
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would happen without doing it."
+)
 @click.option("--force", is_flag=True, help="Re-process even if already completed.")
 @click.option("--no-lock", is_flag=True, help="Skip file locking.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-@click.option("--ai-all", is_flag=True, help="Run AI validation on all books, not just conflicts.")
 @click.option(
-    "--reorganize", is_flag=True,
+    "--ai-all", is_flag=True, help="Run AI validation on all books, not just conflicts."
+)
+@click.option(
+    "--reorganize",
+    is_flag=True,
     help="Reorganize library in-place: move (not copy) misplaced books. Implies --ai-all.",
 )
 @click.option(
-    "-c", "--config", "config_file",
-    type=click.Path(exists=True), default=None,
+    "--verify",
+    is_flag=True,
+    help="Run data quality checks on the library after processing.",
+)
+@click.option(
+    "-c",
+    "--config",
+    "config_file",
+    type=click.Path(exists=True),
+    default=None,
     help="Path to .env file.",
 )
 def main(
@@ -83,6 +97,7 @@ def main(
     verbose: bool,
     ai_all: bool,
     reorganize: bool,
+    verify: bool,
     config_file: str | None,
 ) -> None:
     """Convert, enrich, and organize audiobooks into tagged M4B files."""
@@ -122,7 +137,7 @@ def main(
         log.debug(f"Mode: {mode} (explicit)")
 
     # Pass CLI flags as kwargs to avoid env pollution
-    config_kwargs = {
+    config_kwargs: dict[str, bool | str] = {
         "dry_run": dry_run,
         "force": force,
         "verbose": verbose,
@@ -131,11 +146,13 @@ def main(
     if verbose:
         config_kwargs["log_level"] = "DEBUG"
 
-    config = PipelineConfig(**config_kwargs)
+    config = PipelineConfig(**config_kwargs)  # type: ignore[arg-type]
     config.setup_logging()
 
     runner = PipelineRunner(
-        config=config, mode=pipeline_mode, reorganize=reorganize,
+        config=config,
+        mode=pipeline_mode,
+        reorganize=reorganize,
     )
 
     log.info(
@@ -143,3 +160,12 @@ def main(
         f"dry_run={dry_run} force={force}"
     )
     runner.run(source_path=source, override_asin=asin, skip_lock=no_lock)
+
+    # Post-run data quality verification
+    if verify and mode == "organize":
+        from .ops.verify import print_report, verify_library
+
+        click.echo("")
+        library_root = config.nfs_output_dir
+        results = verify_library(library_root)
+        print_report(results)
