@@ -19,6 +19,7 @@ def get_client(base_url: str, api_key: str):
     Returns None if base_url is empty (AI disabled).
     """
     if not base_url:
+        logger.bind(stage="ai").debug("AI disabled (no base_url)")
         return None
 
     from openai import OpenAI
@@ -28,6 +29,7 @@ def get_client(base_url: str, api_key: str):
     if clean_url.endswith("/v1"):
         clean_url = clean_url[:-3].rstrip("/")
 
+    logger.bind(stage="ai").debug(f"AI client: {clean_url}")
     return OpenAI(
         base_url=clean_url,
         api_key=api_key or "not-needed",
@@ -55,10 +57,13 @@ def needs_resolution(
 
     # Conflict: multiple different non-empty authors
     if len(authors) > 1:
+        logger.bind(stage="ai").debug(f"Resolution needed: author conflict ({len(authors)} different)")
         return True
     # All empty: no author found anywhere
     if len(authors) == 0:
+        logger.bind(stage="ai").debug("Resolution needed: all sources empty")
         return True
+    logger.bind(stage="ai").debug("Resolution not needed")
     return False
 
 
@@ -86,24 +91,34 @@ def resolve(
         evidence_parts.append(f"Source filename: {source_filename!r}")
 
     # Path evidence
+    has_path = False
     if path_metadata.get("author"):
         evidence_parts.append(f"File path suggests author: {path_metadata['author']!r}")
+        has_path = True
     if path_metadata.get("title"):
         evidence_parts.append(f"File path title: {path_metadata['title']!r}")
+        has_path = True
     if path_metadata.get("series"):
         evidence_parts.append(f"File path series: {path_metadata['series']!r}")
+        has_path = True
     if path_metadata.get("position"):
         evidence_parts.append(f"File path position: {path_metadata['position']!r}")
+        has_path = True
 
     # Tag evidence
+    has_tags = False
     if tag_metadata.get("author"):
         evidence_parts.append(f"Embedded tags artist: {tag_metadata['author']!r}")
+        has_tags = True
     if tag_metadata.get("album"):
         evidence_parts.append(f"Tag album: {tag_metadata['album']!r}")
+        has_tags = True
     if tag_metadata.get("title"):
         evidence_parts.append(f"Tag title: {tag_metadata['title']!r}")
+        has_tags = True
 
     # Audible evidence
+    audible_count = len(audible_candidates) if audible_candidates else 0
     if audible_candidates:
         evidence_parts.append("\nAudible search results:")
         for i, cand in enumerate(audible_candidates[:5], 1):
@@ -116,6 +131,11 @@ def resolve(
             if cand.get("score"):
                 parts.append(f"[score: {cand['score']:.0f}]")
             evidence_parts.append(" ".join(parts))
+
+    logger.bind(stage="ai").debug(
+        f"Evidence sources: path={has_path}, tags={has_tags}, "
+        f"audible={audible_count} candidates"
+    )
 
     if not evidence_parts:
         return None
@@ -235,6 +255,7 @@ def _parse_resolve_response(content: str) -> dict | None:
 
     # Must have at least author to be useful
     if "author" not in result:
+        logger.bind(stage="ai").debug("AI parse failed: no author found in response")
         return None
 
     # Clean AI-produced title junk

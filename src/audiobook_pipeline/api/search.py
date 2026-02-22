@@ -7,7 +7,10 @@ the best metadata match for an audiobook file.
 import re
 from pathlib import Path
 
+from loguru import logger
 from rapidfuzz import fuzz
+
+log = logger.bind(stage="search")
 
 
 def score_results(
@@ -19,6 +22,8 @@ def score_results(
 
     Weights: title 60%, author 30%, position bonus 10%.
     """
+    log.debug(f"Scoring {len(results)} results against title={title_hint!r}")
+
     scored = []
     for idx, r in enumerate(results):
         title_score = fuzz.token_sort_ratio(
@@ -40,6 +45,11 @@ def score_results(
         scored.append({**r, "score": round(total, 1)})
 
     scored.sort(key=lambda x: x["score"], reverse=True)
+
+    if scored:
+        best = scored[0]
+        log.debug(f"Best match: {best['title']!r} score={best['score']:.0f}")
+
     return scored
 
 
@@ -48,6 +58,8 @@ def parse_source_path(source_path: str) -> dict:
 
     Returns dict with keys: title_hint, author_hint, query.
     """
+    log.debug(f"parse_source_path: source_path={source_path!r}")
+
     p = Path(source_path)
 
     basename = p.stem if p.is_file() or p.suffix else p.name
@@ -76,18 +88,25 @@ def parse_source_path(source_path: str) -> dict:
         author_hint_clean = re.sub(r"[\[\](){}]", "", author_hint_clean)
         author_hint = re.sub(r"\s+", " ", author_hint_clean).strip()
 
-    return {
+    result = {
         "title_hint": title_hint,
         "author_hint": author_hint,
         "query": f"{author_hint} {title_hint}".strip() if author_hint else title_hint,
     }
+    log.debug(f"parse_source_path: result={result}")
+    return result
 
 
 def _strip_series_numbers(s: str) -> str:
     """Strip series numbering patterns from a string."""
+    original = s
     s = re.sub(r"\[[0-9]+\]", "", s)
     s = re.sub(r"#[0-9]+-", "", s)
     s = re.sub(r"^[0-9]+\s*[-\u2013]?\s*", "", s)
     s = re.sub(r"\s[0-9]{1,3}\s", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
+
+    if s != original:
+        log.debug(f"_strip_series_numbers: {original!r} -> {s!r}")
+
     return s

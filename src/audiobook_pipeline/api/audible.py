@@ -23,6 +23,8 @@ def search(query: str, region: str = "com") -> list[dict]:
         "image_sizes": "100",
     }
 
+    logger.debug(f"Audible search: query={query!r} region={region}")
+
     try:
         resp = httpx.get(
             f"{api_base}/catalog/products",
@@ -50,4 +52,5 @@ def search(query: str, region: str = "com") -> list[dict]:
             "position": series_info.get("sequence", "") if series_info else "",
         })
 
+    logger.debug(f"Audible results: {len(results)} products")
     return results

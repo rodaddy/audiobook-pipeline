@@ -11,7 +11,11 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from ..sanitize import sanitize_filename
+
+log = logger.bind(stage="organize-ops")
 
 if TYPE_CHECKING:
     from ..library_index import LibraryIndex
@@ -38,6 +42,7 @@ def parse_path(source_path: str) -> dict:
     Returns dict with keys: author, title, series, position.
     Any field may be empty string if not determined.
     """
+    log.debug(f"parse_path: {source_path}")
     p = Path(source_path)
 
     # Get basename without extension, strip pipeline hash suffix
@@ -49,6 +54,7 @@ def parse_path(source_path: str) -> dict:
         parent_raw = _strip_hash(p.parent.name) if p.parent != Path("/") else ""
         if parent_raw and parent_raw.lower() not in _GENERIC_BASENAMES:
             basename = _strip_label_suffix(parent_raw)
+            log.debug(f"Pattern F: fallback to parent basename={basename}")
         else:
             gp_raw = (
                 _strip_hash(p.parent.parent.name)
@@ -57,6 +63,7 @@ def parse_path(source_path: str) -> dict:
             )
             if gp_raw:
                 basename = _strip_label_suffix(gp_raw)
+                log.debug(f"Pattern F: fallback to grandparent basename={basename}")
 
     # Parent and grandparent
     parent = p.parent
@@ -112,6 +119,7 @@ def parse_path(source_path: str) -> dict:
                 author = prefix.strip()
                 series = ""
 
+        log.debug(f"Pattern A matched: author={author} series={series} pos={position} title={title}")
         return _build_result(author, title, series, position)
 
     # Pattern B2: "Name N - Title" (e.g., "Deathgate Cycle 1 - Dragon Wing")
@@ -120,6 +128,7 @@ def parse_path(source_path: str) -> dict:
         series = match_b2.group(1).strip()
         position = match_b2.group(2).strip()
         title = match_b2.group(3).strip()
+        log.debug(f"Pattern B2 matched: author={author} series={series} pos={position} title={title}")
 
     # Pattern B: "SeriesName NN Title" (e.g., "The First Law 04 Best Served Cold")
     if not title:
@@ -132,6 +141,7 @@ def parse_path(source_path: str) -> dict:
                 series = potential_series
                 position = potential_pos
                 title = potential_title
+                log.debug(f"Pattern B matched: author={author} series={series} pos={position} title={title}")
 
     # Pattern G: "Series [NN] Title" (e.g., "Mistborn [01] The Final Empire")
     if not title:
@@ -140,6 +150,7 @@ def parse_path(source_path: str) -> dict:
             series = match_g.group(1).strip()
             position = match_g.group(2).strip()
             title = match_g.group(3).strip()
+            log.debug(f"Pattern G matched: author={author} series={series} pos={position} title={title}")
 
     # Pattern E: split "Author - Series" grandparents
     if gp_name and " - " in gp_name:
@@ -153,6 +164,7 @@ def parse_path(source_path: str) -> dict:
                     author = gp_author
                 if not series:
                     series = gp_series
+                log.debug(f"Pattern E: extracted author={gp_author} series={gp_series} from grandparent")
 
     # Pattern C: grandparent as author
     if parent_name == basename and gp_name:
@@ -160,13 +172,16 @@ def parse_path(source_path: str) -> dict:
             extracted = _extract_author(gp_name)
             if _looks_like_author(extracted):
                 author = extracted
+                log.debug(f"Pattern C: extracted author={author} from grandparent")
     elif gp_name and not author:
         if _looks_like_author(gp_name):
             author = _extract_author(gp_name)
+            log.debug(f"Pattern C: extracted author={author} from grandparent")
         elif ggp_name and _looks_like_author(ggp_name):
             author = _extract_author(ggp_name)
             if not series:
                 series = _clean_collection_suffix(gp_name)
+            log.debug(f"Pattern C: extracted author={author} from great-grandparent, series={series}")
 
     # Author-Title split from parent: "Author-Title" or "Author - Title"
     if not author and not series and "-" in parent_name and not title:
@@ -177,9 +192,11 @@ def parse_path(source_path: str) -> dict:
             if _looks_like_author(candidate_author) and len(candidate_title) >= 3:
                 author = candidate_author
                 title = candidate_title
+                log.debug(f"Author-Title dash split: author={author} title={title}")
 
     # Dedup: if author == series, the path didn't have a real author
     if author and series and author.lower() == series.lower():
+        log.debug(f"Clearing author (matches series: {series})")
         author = ""
 
     # Pattern D: clean up title from basename if not set
@@ -228,7 +245,9 @@ def parse_path(source_path: str) -> dict:
     if not title:
         title = _clean_title_fallback(basename)
 
-    return _build_result(author, title, series, position)
+    result = _build_result(author, title, series, position)
+    log.debug(f"parse_path result: {result}")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +271,7 @@ def build_plex_path(
     per-call iterdir() scans. Falls back to filesystem scan
     when index is None (single-file mode).
     """
+    log.debug(f"build_plex_path: metadata={metadata}")
     author = sanitize_filename(metadata["author"]) if metadata["author"] else ""
     title = sanitize_filename(metadata["title"]) if metadata["title"] else "Unknown"
     series_name = sanitize_filename(metadata["series"]) if metadata["series"] else ""
@@ -289,11 +309,13 @@ def build_plex_path(
         for parent, child in _path_components(nfs_output_dir, result):
             index.register_new_folder(parent, child)
 
+    log.debug(f"build_plex_path result: {result}")
     return result
 
 
 def _path_components(root: Path, dest: Path) -> list[tuple[Path, str]]:
     """Extract (parent, child) pairs between root and dest for index registration."""
+    log.debug(f"_path_components: root={root}, dest={dest}")
     try:
         relative = dest.relative_to(root)
     except ValueError:
@@ -326,8 +348,10 @@ def copy_to_library(
     if dest_file.exists():
         # Skip if same size (already copied)
         if dest_file.stat().st_size == source_file.stat().st_size:
+            log.debug(f"Skip copy (same size): {source_file.name}")
             return dest_file
 
+    log.info(f"Copy {source_file} -> {dest_file}")
     shutil.copy2(source_file, dest_file)
     return dest_file
 
@@ -349,8 +373,10 @@ def move_in_library(
         return dest_file
 
     if dest_file.exists() and dest_file.stat().st_size == source_file.stat().st_size:
+        log.debug(f"Skip move (same size): {source_file.name}")
         return dest_file
 
+    log.info(f"Move {source_file} -> {dest_file}")
     shutil.move(str(source_file), str(dest_file))
 
     # Clean up empty parent dirs left behind by the move
@@ -369,6 +395,7 @@ def _cleanup_empty_parents(directory: Path, stop_at: Path | None) -> None:
     while current != stop_at and current != current.parent:
         try:
             if current.is_dir() and not any(current.iterdir()):
+                log.debug(f"Removed empty dir: {current}")
                 current.rmdir()
             else:
                 break
@@ -420,6 +447,7 @@ def _reuse_existing(parent: Path, desired: str) -> str:
         if not existing.is_dir():
             continue
         if _normalize_for_compare(existing.name) == desired_norm:
+            log.debug(f"Near-match found: '{desired}' -> '{existing.name}'")
             return existing.name
     return desired
 
@@ -447,8 +475,12 @@ def _extract_author(name: str) -> str:
         parts = cleaned.split(" - ", 1)
         candidate = parts[0].strip()
         if not re.search(r"\d", candidate):
-            return candidate
-    return cleaned if cleaned else name
+            result = candidate
+            log.debug(f"_extract_author: name={name} -> result={result}")
+            return result
+    result = cleaned if cleaned else name
+    log.debug(f"_extract_author: name={name} -> result={result}")
+    return result
 
 
 def _looks_like_author(name: str) -> bool:
@@ -463,21 +495,28 @@ def _looks_like_author(name: str) -> bool:
     ]
     for word in collection_words:
         if word in lower:
+            log.debug(f"_looks_like_author: name={name} -> False (collection word: {word})")
             return False
     if re.search(r"\d", name):
+        log.debug(f"_looks_like_author: name={name} -> False (contains digit)")
         return False
     if len(name) > 50:
+        log.debug(f"_looks_like_author: name={name} -> False (too long)")
         return False
     # Reject titles masquerading as authors -- too many words
     words = name.split()
     if len(words) > 5:
+        log.debug(f"_looks_like_author: name={name} -> False (too many words: {len(words)})")
         return False
     # Reject names starting with articles (titles, not people)
     if lower.startswith(("the ", "a ", "an ")):
+        log.debug(f"_looks_like_author: name={name} -> False (starts with article)")
         return False
     # Single word is suspicious -- could be series name not author
     if len(words) == 1:
+        log.debug(f"_looks_like_author: name={name} -> False (single word)")
         return False
+    log.debug(f"_looks_like_author: name={name} -> True")
     return True
 
 
@@ -490,6 +529,7 @@ def _clean_collection_suffix(name: str) -> str:
 
 def _clean_title_fallback(basename: str) -> str:
     """Last-resort title cleaning."""
+    log.debug(f"_clean_title_fallback: basename={basename}")
     title = basename
     title = re.sub(r"\[\d+\]", "", title)
     title = re.sub(r"^\d+\s*[-\u2013]?\s*", "", title)
@@ -503,9 +543,11 @@ def _build_result(author: str, title: str, series: str, position: str) -> dict:
     # Normalize leading zeros: "01" -> "1", "003" -> "3"
     if pos and pos.isdigit():
         pos = str(int(pos))
-    return {
+    result = {
         "author": author.strip(),
         "title": title.strip().lstrip("- "),
         "series": series.strip().rstrip("- "),
         "position": pos,
     }
+    log.debug(f"_build_result: {result}")
+    return result

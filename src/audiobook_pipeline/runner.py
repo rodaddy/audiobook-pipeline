@@ -119,7 +119,7 @@ class PipelineRunner:
                 book_hash, f"stages.{stage.value}.status",
             )
             if stage_status == "completed" and not self.config.force:
-                log.debug(f"[{stage.value}] already completed, skipping")
+                click.echo(f"  SKIP {stage.value} -- already completed (use --force to redo)")
                 continue
 
             stage_runner = get_stage_runner(stage)
@@ -137,11 +137,25 @@ class PipelineRunner:
                 kwargs["reorganize"] = self.reorganize
             stage_runner(**kwargs)
 
+            # Check if stage failed (stages may set FAILED without raising)
+            post_status = self.manifest.read_field(
+                book_hash, f"stages.{stage.value}.status",
+            )
+            if post_status == StageStatus.FAILED.value:
+                raise RuntimeError(
+                    f"Stage '{stage.value}' failed for {source_path.name}"
+                )
+
     def run_cmd(
         self, args: list[str], check: bool = True,
     ) -> subprocess.CompletedProcess:
         """Run a subprocess command, respecting dry-run mode."""
+        args_str = " ".join(args)
+        if len(args_str) > 100:
+            args_str = args_str[:97] + "..."
+        log.debug(f"run_cmd args={args_str}")
         if self.config.dry_run:
+            log.debug("dry-run skip")
             return subprocess.CompletedProcess(
                 args=args, returncode=0, stdout="", stderr="",
             )

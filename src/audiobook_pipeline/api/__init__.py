@@ -1,6 +1,8 @@
 """External API clients for metadata resolution.
 
 Submodules:
-    audible -- Audible catalog search client
-    search  -- Fuzzy scoring and path hint extraction
+    audible -- Audible catalog search client. Logs query params, result counts,
+              and API warnings.
+    search  -- Fuzzy scoring and path hint extraction. Logs scoring details,
+              best match with score, and path parsing results.
 """

@@ -4,7 +4,11 @@ import hashlib
 import re
 from pathlib import Path
 
+from loguru import logger
+
 from .models import AUDIO_EXTENSIONS
+
+log = logger.bind(stage="sanitize")
 
 
 def sanitize_filename(filename: str) -> str:
@@ -13,6 +17,8 @@ def sanitize_filename(filename: str) -> str:
     Replaces unsafe chars with underscores, removes leading dots,
     collapses repeated underscores, truncates to 255 bytes preserving extension.
     """
+    log.debug(f"sanitize_filename(filename='{filename}')")
+
     # Replace unsafe characters
     sanitized = re.sub(r'[/\\:"*?<>|;]+', '_', filename)
     # Remove leading dots/underscores
@@ -23,7 +29,8 @@ def sanitize_filename(filename: str) -> str:
     sanitized = re.sub(r'__+', '_', sanitized)
 
     # Truncate to 255 bytes preserving extension
-    if len(sanitized.encode('utf-8')) > 255:
+    original_len = len(sanitized.encode('utf-8'))
+    if original_len > 255:
         p = Path(sanitized)
         ext = p.suffix
         stem = p.stem
@@ -34,12 +41,14 @@ def sanitize_filename(filename: str) -> str:
         else:
             while len(sanitized.encode('utf-8')) > 255 and sanitized:
                 sanitized = sanitized[:-1]
+        log.debug(f"Truncated filename from {original_len} to {len(sanitized.encode('utf-8'))} bytes: '{sanitized}'")
 
     return sanitized
 
 
 def sanitize_chapter_title(title: str) -> str:
     """Sanitize a chapter title (more permissive -- uses spaces)."""
+    log.debug(f"sanitize_chapter_title(title='{title}')")
     sanitized = re.sub(r'[/\\:"*?<>|;]+', ' ', title)
     sanitized = re.sub(r'  +', ' ', sanitized)
     return sanitized.strip()
@@ -51,6 +60,8 @@ def generate_book_hash(source_path: Path) -> str:
     For files: hash(path + file_size)
     For directories: hash(path + sorted audio file list)
     """
+    log.debug(f"generate_book_hash(source_path={source_path})")
+
     h = hashlib.sha256()
 
     if source_path.is_file():
@@ -65,4 +76,7 @@ def generate_book_hash(source_path: Path) -> str:
         for f in audio_files:
             h.update(f"{f}\n".encode())
 
-    return h.hexdigest()[:16]
+    result = h.hexdigest()[:16]
+    log.debug(f"Generated hash: {result}")
+
+    return result

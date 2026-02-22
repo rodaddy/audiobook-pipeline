@@ -4,9 +4,14 @@ import json
 import subprocess
 from pathlib import Path
 
+from loguru import logger
+
+log = logger.bind(stage="ffprobe")
+
 
 def _run_ffprobe(args: list[str]) -> subprocess.CompletedProcess:
     """Run ffprobe with common flags."""
+    log.debug(f"Running ffprobe with args: {args}")
     return subprocess.run(
         ["ffprobe", "-v", "error"] + args,
         capture_output=True,
@@ -23,8 +28,11 @@ def get_duration(file: Path) -> float:
     ])
     output = result.stdout.strip()
     if not output:
+        log.error(f"ffprobe returned empty duration for {file}")
         raise ValueError(f"ffprobe returned empty duration for {file}")
-    return float(output)
+    duration = float(output)
+    log.debug(f"Duration for {file.name}: {duration:.2f}s")
+    return duration
 
 
 def get_bitrate(file: Path) -> int:
@@ -36,8 +44,11 @@ def get_bitrate(file: Path) -> int:
     ])
     output = result.stdout.strip()
     if not output:
+        log.error(f"ffprobe returned empty bitrate for {file}")
         raise ValueError(f"ffprobe returned empty bitrate for {file}")
-    return int(output)
+    bitrate = int(output)
+    log.debug(f"Bitrate for {file.name}: {bitrate} bits/sec")
+    return bitrate
 
 
 def get_codec(file: Path) -> str:
@@ -48,7 +59,9 @@ def get_codec(file: Path) -> str:
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(file),
     ])
-    return result.stdout.strip()
+    codec = result.stdout.strip()
+    log.debug(f"Codec for {file.name}: {codec}")
+    return codec
 
 
 def get_channels(file: Path) -> int:
@@ -62,7 +75,9 @@ def get_channels(file: Path) -> int:
     output = result.stdout.strip()
     if not output:
         raise ValueError(f"ffprobe returned empty channel count for {file}")
-    return int(output)
+    channels = int(output)
+    log.debug(f"Channels for {file.name}: {channels}")
+    return channels
 
 
 def get_sample_rate(file: Path) -> int:
@@ -76,18 +91,24 @@ def get_sample_rate(file: Path) -> int:
     output = result.stdout.strip()
     if not output:
         raise ValueError(f"ffprobe returned empty sample rate for {file}")
-    return int(output)
+    sample_rate = int(output)
+    log.debug(f"Sample rate for {file.name}: {sample_rate} Hz")
+    return sample_rate
 
 
 def validate_audio_file(file: Path) -> bool:
     """Check if file is a valid audio file with at least one audio stream."""
     if not file.is_file():
+        log.debug(f"File not found: {file}")
         return False
     result = _run_ffprobe([str(file)])
     if result.returncode != 0:
+        log.debug(f"Invalid audio file (ffprobe failed): {file.name}")
         return False
     codec = get_codec(file)
-    return bool(codec)
+    valid = bool(codec)
+    log.debug(f"Audio validation for {file.name}: {'valid' if valid else 'invalid'}")
+    return valid
 
 
 def duration_to_timestamp(seconds: float) -> str:
@@ -116,8 +137,11 @@ def get_tags(file: Path) -> dict:
         data = json.loads(result.stdout)
         raw = data.get("format", {}).get("tags", {})
         # Normalize keys to lowercase
-        return {k.lower(): v for k, v in raw.items()}
-    except (json.JSONDecodeError, KeyError):
+        tags = {k.lower(): v for k, v in raw.items()}
+        log.debug(f"Extracted {len(tags)} tags from {file.name}")
+        return tags
+    except (json.JSONDecodeError, KeyError) as e:
+        log.warning(f"Failed to parse tags from {file.name}: {e}")
         return {}
 
 
@@ -135,7 +159,9 @@ def extract_author_from_tags(tags: dict) -> str:
             continue
         cleaned = _clean_author_tag(raw)
         if cleaned:
+            log.debug(f"Extracted author from {key}: {cleaned}")
             return cleaned
+    log.debug("No usable author found in tags")
     return ""
 
 
@@ -208,6 +234,8 @@ def count_chapters(file: Path) -> int:
         return 0
     try:
         data = json.loads(result.stdout)
-        return len(data.get("chapters", []))
+        count = len(data.get("chapters", []))
+        log.debug(f"Chapter count for {file.name}: {count}")
+        return count
     except (json.JSONDecodeError, KeyError):
         return 0

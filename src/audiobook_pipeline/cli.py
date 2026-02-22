@@ -4,10 +4,13 @@ import os
 from pathlib import Path
 
 import click
+from loguru import logger
 
 from .config import PipelineConfig
 from .models import PipelineMode
 from .runner import PipelineRunner
+
+log = logger.bind(stage="cli")
 
 
 def _find_config_file() -> Path | None:
@@ -91,13 +94,18 @@ def main(
             raise click.UsageError("--reorganize requires a directory path.")
         mode = "organize"
         ai_all = True
+        log.info("Reorganize mode: implies --mode organize --ai-all")
 
     # Load .env into environment before PipelineConfig reads env vars
     env_file = Path(config_file) if config_file else _find_config_file()
     if env_file and env_file.is_file():
         _load_env_file(env_file)
+        log.debug(f"Loaded env from {env_file}")
+    else:
+        log.debug("No .env found")
 
     # Auto-detect mode
+    auto_detected = mode is None
     if mode is None:
         if source.is_dir():
             mode = "convert"
@@ -107,6 +115,11 @@ def main(
             raise click.UsageError("Cannot auto-detect mode. Use --mode.")
 
     pipeline_mode = PipelineMode(mode)
+
+    if auto_detected:
+        log.debug(f"Mode: {mode} (auto-detected)")
+    else:
+        log.debug(f"Mode: {mode} (explicit)")
 
     # Pass CLI flags as kwargs to avoid env pollution
     config_kwargs = {
@@ -123,5 +136,10 @@ def main(
 
     runner = PipelineRunner(
         config=config, mode=pipeline_mode, reorganize=reorganize,
+    )
+
+    log.info(
+        f"Starting pipeline: source={source} mode={mode} "
+        f"dry_run={dry_run} force={force}"
     )
     runner.run(source_path=source, override_asin=asin, skip_lock=no_lock)

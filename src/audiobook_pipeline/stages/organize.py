@@ -216,19 +216,25 @@ def run(
 
 def _find_audio_file(source_path: Path) -> Path | None:
     """Find the primary audio file from a source path."""
+    log.debug(f"_find_audio_file: source_path={source_path}")
+
     if source_path.is_file():
+        log.debug(f"_find_audio_file: found file {source_path}")
         return source_path
 
     # Directory -- find .m4b first, then any audio file
     m4b_files = list(source_path.rglob("*.m4b"))
     if m4b_files:
+        log.debug(f"_find_audio_file: found m4b {m4b_files[0]}")
         return m4b_files[0]
 
     audio_files = [
         f for f in source_path.rglob("*")
         if f.suffix.lower() in AUDIO_EXTENSIONS
     ]
-    return audio_files[0] if audio_files else None
+    result = audio_files[0] if audio_files else None
+    log.debug(f"_find_audio_file: result={result}")
+    return result
 
 
 def _search_audible(
@@ -243,6 +249,11 @@ def _search_audible(
     When widen=True (AI available), cast a wider net with additional
     query combinations -- AI will filter the results in post.
     """
+    log.debug(
+        f"_search_audible: title={title!r} series={series!r} "
+        f"author={author!r} widen={widen}"
+    )
+
     queries = [title]
     if series:
         queries.append(series)
@@ -266,4 +277,5 @@ def _search_audible(
                 seen_asins.add(h["asin"])
                 all_results.append(h)
 
+    log.debug(f"_search_audible: found {len(all_results)} unique results")
     return all_results

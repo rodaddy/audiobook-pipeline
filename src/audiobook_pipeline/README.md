@@ -2,28 +2,42 @@
 
 Audiobook Pipeline -- convert, enrich, and organize audiobooks into tagged M4B files.
 
+All modules use loguru for structured debug logging (stage-tagged via logger.bind).
+Run with -v / --verbose for full DEBUG output tracing every function call.
+
 Core modules:
     config        -- Pipeline configuration via pydantic-settings (PIPELINE_LLM_* env vars)
     cli           -- Click CLI entry point with auto mode detection, --reorganize flag.
                      CLI flags passed as kwargs to PipelineConfig (no env pollution).
+                     Logs mode detection, env loading, and flag resolution.
     runner        -- Pipeline orchestration, stage execution, batch progress bar.
-                     Builds LibraryIndex once for batch organize mode.
+                     Builds LibraryIndex once for batch organize mode. Logs stage
+                     transitions, manifest skip reasons, and subprocess commands.
     library_index -- In-memory library index for O(1) folder/file lookups in batch mode.
                      Replaces per-call iterdir() with dict-based scans via os.walk().
                      Supports cross-source dedup, dynamic registration, reorganize detection.
     ai            -- AI-assisted metadata resolution via any OpenAI-compatible endpoint
                      (LiteLLM, OpenAI, Ollama). Includes cache-busting for semantic caches,
-                     conflict resolution, and Audible disambiguation.
-    manifest      -- JSON manifest state machine
-    ffprobe       -- Audio file inspection via ffprobe subprocess. Numeric functions raise
+                     conflict resolution, and Audible disambiguation. Logs evidence sources,
+                     resolution decisions, and parse failures.
+    manifest      -- JSON manifest state machine. Logs all state transitions, I/O
+                     operations, retries, and errors.
+    ffprobe       -- Audio file inspection via ffprobe subprocess. Logs every subprocess
+                     call, tag extraction, and parse result. Numeric functions raise
                      ValueError on empty ffprobe output (corrupt files, missing binary).
-    sanitize      -- Filename sanitization for filesystem safety
+    sanitize      -- Filename sanitization and book hash generation. Logs truncation
+                     events and hash results.
+    concurrency   -- File locking and disk space checks. Logs lock acquisition and
+                     space validation.
 
 Subpackages:
-    api        -- External API clients (Audible catalog search, fuzzy scoring)
-    stages     -- Pipeline stages (organize with index-aware early-skip, reorganize move)
-    ops        -- File operations (path parsing, Plex library building, dedup detection,
-                  move_in_library for reorganize mode with empty-dir cleanup)
+    api        -- External API clients (Audible catalog search with query/result logging,
+                  fuzzy scoring with match details)
+    stages     -- Pipeline stages (organize with index-aware early-skip, reorganize move,
+                  audio file discovery logging, Audible search strategy logging)
+    ops        -- File operations (path parsing with pattern match logging, Plex library
+                  building, dedup detection, move_in_library for reorganize mode with
+                  empty-dir cleanup, author heuristic rejection reasons)
     automation -- Cron scanner and queue processor (planned)
 
 ---

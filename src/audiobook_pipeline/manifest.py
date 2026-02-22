@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from .models import (
     PRE_COMPLETED_STAGES,
     STAGE_ORDER,
@@ -18,6 +20,8 @@ from .models import (
     ErrorCategory,
 )
 from .errors import ManifestError
+
+log = logger.bind(stage="manifest")
 
 
 def _utcnow() -> str:
@@ -48,8 +52,10 @@ class Manifest:
         if not p.exists():
             return None
         try:
+            log.debug(f"Reading manifest {book_hash}")
             return json.loads(p.read_text())
         except (json.JSONDecodeError, OSError) as exc:
+            log.error(f"Failed to read manifest {book_hash}: {exc}")
             raise ManifestError(f"Failed to read manifest {p}: {exc}") from exc
 
     def read_field(self, book_hash: str, field: str) -> Any:
@@ -77,13 +83,14 @@ class Manifest:
             with os.fdopen(fd, "w") as f:
                 json.dump(data, f, indent=2)
                 f.write("\n")
+            log.debug(f"Writing manifest {book_hash}")
             os.replace(tmp_path, target)
         except BaseException:
             # Clean up temp file on any failure
             try:
                 os.unlink(tmp_path)
-            except OSError:
-                pass
+            except OSError as cleanup_err:
+                log.warning(f"Failed to cleanup temp file {tmp_path}: {cleanup_err}")
             raise
 
     def create(
@@ -116,6 +123,7 @@ class Manifest:
 
         self.ensure_dir()
         self._atomic_write(book_hash, data)
+        log.info(f"Created manifest {book_hash} mode={mode}")
         return data
 
     def update(self, book_hash: str, updates: dict) -> None:
@@ -123,6 +131,7 @@ class Manifest:
         if data is None:
             raise ManifestError(f"Manifest not found for {book_hash}")
         data.update(updates)
+        log.debug(f"Updated manifest {book_hash}")
         self._atomic_write(book_hash, data)
 
     def set_stage(
@@ -132,6 +141,7 @@ class Manifest:
         if data is None:
             raise ManifestError(f"Manifest not found for {book_hash}")
 
+        log.debug(f"Stage {stage.value} -> {status} for {book_hash}")
         data["stages"][stage.value]["status"] = str(status)
         if status == StageStatus.COMPLETED:
             data["stages"][stage.value]["completed_at"] = _utcnow()
@@ -144,6 +154,7 @@ class Manifest:
         Returns "new" if no manifest exists, otherwise the status field value
         ("pending", "completed", "failed", "processing").
         """
+        log.debug(f"check_status book_hash={book_hash}")
         data = self.read(book_hash)
         if data is None:
             return "new"
@@ -156,6 +167,7 @@ class Manifest:
 
         Returns None if all stages for this mode are completed.
         """
+        log.debug(f"get_next_stage book_hash={book_hash} mode={mode}")
         data = self.read(book_hash)
         if data is None:
             raise ManifestError(f"Manifest not found for {book_hash}")
@@ -175,7 +187,9 @@ class Manifest:
         data = self.read(book_hash)
         if data is None:
             raise ManifestError(f"Manifest not found for {book_hash}")
-        data["retry_count"] = data.get("retry_count", 0) + 1
+        new_count = data.get("retry_count", 0) + 1
+        log.warning(f"increment_retry book_hash={book_hash} new_count={new_count}")
+        data["retry_count"] = new_count
         self._atomic_write(book_hash, data)
 
     def set_error(
@@ -186,6 +200,10 @@ class Manifest:
         category: ErrorCategory,
         message: str,
     ) -> None:
+        log.error(
+            f"set_error book_hash={book_hash} stage={stage} "
+            f"category={category} message={message}"
+        )
         data = self.read(book_hash)
         if data is None:
             raise ManifestError(f"Manifest not found for {book_hash}")
