@@ -75,10 +75,10 @@ src/audiobook_pipeline/
 
 ---
 
-**Last session:** 2026-02-22 -- PR Creation (f681e9e3)
-**Done:** Pushed feat/python-rewrite branch to origin | Created PR #5 with comprehensive test plan | All adversarial review findings fixed (78096ea)
-**PR:** https://github.com/rodaddy/audiobook-pipeline/pull/5
-**Stats:** 18 commits, 76 files changed, ~10,400 lines added
-**Blockers:** None
-**Carry-forward:** PR awaiting review | Consider LOW findings from adversarial review if desired (L1-L6, UI1-UI4) | Monitor for review feedback
-**Next:** Python rewrite formally proposed for merge to main
+**Last session:** 2026-02-22 -- Convert Mode with CPU-Aware Parallelism (ce5c2584)
+**Done:** Implemented full convert pipeline (validate, concat, convert stages) | Created ConvertOrchestrator for CPU-aware parallel batch processing | Fixed CPU monitoring (psutil blocking 1s sample) + dry-run flow | Created 26 tests | Launched batch conversion of 142 books from Original/ (~27+ completed)
+**Commits:** 99545f5, 4c31442, 5e0a0d4
+**PR:** https://github.com/rodaddy/audiobook-pipeline/pull/5 (awaiting review)
+**Blockers:** Batch conversion still running (background task b3e58c2)
+**Carry-forward:** Run NewBooks/ batch after Original/ completes | Review failed books and fix issues | Consider filtering parent dirs (no audio) earlier | Add ASIN/metadata stages for convert mode | PR #5 awaiting review
+**Next:** Monitor batch conversion progress, run NewBooks/ batch, fix any conversion issues

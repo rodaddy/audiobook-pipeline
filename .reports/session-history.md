@@ -69,3 +69,16 @@ Continuation from context compaction. Pushed feat/python-rewrite branch to origi
 **PR:** https://github.com/rodaddy/audiobook-pipeline/pull/5
 
 **Details:** `.reports/sessions/f681e9e3-032e-4521-aa4e-ee15eeb2ea33.md`
+
+---
+
+## 2026-02-22 -- Convert Mode with CPU-Aware Parallelism (ce5c2584)
+
+**Branch:** feat/python-rewrite
+**Type:** Feature -- convert mode implementation
+
+Implemented full convert pipeline (validate, concat, convert stages) wrapping ffmpeg/ffprobe, plus ConvertOrchestrator for CPU-aware parallel batch processing. Fixed CPU monitoring (psutil blocking 1s sample) and dry-run flow bugs. Launched batch conversion of 142 books from Original/ at ~60-70% CPU with 4 workers. Created 26 tests covering all new stages. Three commits: initial implementation, psutil monitoring fix, conservative worker tuning.
+
+**Commits:** 99545f5, 4c31442, 5e0a0d4
+
+**Details:** `.reports/sessions/ce5c2584-153c-45d0-b4d5-dd6e798f111b.md`
