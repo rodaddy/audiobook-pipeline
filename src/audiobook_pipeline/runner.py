@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,6 +20,33 @@ if TYPE_CHECKING:
     from .library_index import LibraryIndex
 
 log = logger.bind(stage="runner")
+
+
+def _find_book_directories(root: Path) -> list[Path]:
+    """Find leaf directories that contain audio files.
+
+    A "book directory" is any directory containing audio files where
+    no subdirectory also contains audio files. This groups multi-chapter
+    MP3 books as a single unit instead of processing each file separately.
+    """
+    book_dirs: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        has_audio = any(Path(f).suffix.lower() in AUDIO_EXTENSIONS for f in filenames)
+        if has_audio:
+            # Check if any child dir also has audio (making this a parent, not a leaf)
+            child_has_audio = False
+            for sub in dirnames:
+                sub_path = Path(dirpath) / sub
+                if any(
+                    f.suffix.lower() in AUDIO_EXTENSIONS
+                    for f in sub_path.rglob("*")
+                    if f.is_file()
+                ):
+                    child_has_audio = True
+                    break
+            if not child_has_audio:
+                book_dirs.append(Path(dirpath))
+    return sorted(book_dirs)
 
 
 class PipelineRunner:
@@ -49,38 +77,42 @@ class PipelineRunner:
         """
         # Batch mode: directory + organize = process all audiobooks inside
         if source_path.is_dir() and self.mode == PipelineMode.ORGANIZE:
-            audio_files = sorted(
-                f for f in source_path.rglob("*")
-                if f.suffix.lower() in AUDIO_EXTENSIONS
-            )
+            # Group by book directory -- each leaf dir with audio files
+            # is one book (handles both single .m4b and multi-chapter .mp3)
+            book_dirs = _find_book_directories(source_path)
 
-            total = len(audio_files)
+            total = len(book_dirs)
             label = "reorganize" if self.reorganize else "organize"
-            click.echo(
-                f"Batch {label}: {total} audiobooks in {source_path}"
-            )
+            click.echo(f"Batch {label}: {total} books in {source_path}")
             if self.config.dry_run:
                 click.echo("[DRY-RUN] No changes will be made")
 
             # Build library index once for the entire batch
             from .library_index import LibraryIndex
+
             index = LibraryIndex(self.config.nfs_output_dir)
 
             ok = 0
             errors = 0
             with click.progressbar(
-                audio_files, label=f"Processing", show_eta=True,
-                show_pos=True, item_show_func=lambda f: f.name if f else "",
+                book_dirs,
+                label=f"Processing",
+                show_eta=True,
+                show_pos=True,
+                item_show_func=lambda d: d.name if d else "",
             ) as bar:
-                for f in bar:
+                for d in bar:
                     try:
                         self._run_single(
-                            f, override_asin, skip_lock, index=index,
+                            d,
+                            override_asin,
+                            skip_lock,
+                            index=index,
                         )
                         ok += 1
                     except Exception as e:
                         errors += 1
-                        click.echo(f"  ERROR: {f.name}: {e}")
+                        click.echo(f"  ERROR: {d.name}: {e}")
 
             click.echo(f"\nBatch complete: {ok} succeeded, {errors} failed")
             return
@@ -101,8 +133,7 @@ class PipelineRunner:
         book_hash = generate_book_hash(source_path)
 
         click.echo(
-            f"\nPipeline: {source_path.name} "
-            f"(mode={self.mode}, hash={book_hash})"
+            f"\nPipeline: {source_path.name} " f"(mode={self.mode}, hash={book_hash})"
         )
 
         log.debug(f"Stages: {' -> '.join(s.value for s in stages)}")
@@ -116,10 +147,13 @@ class PipelineRunner:
         # Execute each stage in order
         for stage in stages:
             stage_status = self.manifest.read_field(
-                book_hash, f"stages.{stage.value}.status",
+                book_hash,
+                f"stages.{stage.value}.status",
             )
             if stage_status == "completed" and not self.config.force:
-                click.echo(f"  SKIP {stage.value} -- already completed (use --force to redo)")
+                click.echo(
+                    f"  SKIP {stage.value} -- already completed (use --force to redo)"
+                )
                 continue
 
             stage_runner = get_stage_runner(stage)
@@ -139,7 +173,8 @@ class PipelineRunner:
 
             # Check if stage failed (stages may set FAILED without raising)
             post_status = self.manifest.read_field(
-                book_hash, f"stages.{stage.value}.status",
+                book_hash,
+                f"stages.{stage.value}.status",
             )
             if post_status == StageStatus.FAILED.value:
                 raise RuntimeError(
@@ -147,7 +182,9 @@ class PipelineRunner:
                 )
 
     def run_cmd(
-        self, args: list[str], check: bool = True,
+        self,
+        args: list[str],
+        check: bool = True,
     ) -> subprocess.CompletedProcess:
         """Run a subprocess command, respecting dry-run mode."""
         args_str = " ".join(args)
@@ -157,7 +194,10 @@ class PipelineRunner:
         if self.config.dry_run:
             log.debug("dry-run skip")
             return subprocess.CompletedProcess(
-                args=args, returncode=0, stdout="", stderr="",
+                args=args,
+                returncode=0,
+                stdout="",
+                stderr="",
             )
         result = subprocess.run(args, capture_output=True, text=True)
         if check and result.returncode != 0:

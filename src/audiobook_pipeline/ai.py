@@ -57,7 +57,9 @@ def needs_resolution(
 
     # Conflict: multiple different non-empty authors
     if len(authors) > 1:
-        logger.bind(stage="ai").debug(f"Resolution needed: author conflict ({len(authors)} different)")
+        logger.bind(stage="ai").debug(
+            f"Resolution needed: author conflict ({len(authors)} different)"
+        )
         return True
     # All empty: no author found anywhere
     if len(authors) == 0:
@@ -74,6 +76,7 @@ def resolve(
     model: str,
     client,
     source_filename: str = "",
+    source_directory: str = "",
 ) -> dict | None:
     """Resolve ALL metadata (author, title, series, position) using AI.
 
@@ -89,6 +92,8 @@ def resolve(
     # Source file identification -- leads the prompt to defeat semantic caching
     if source_filename:
         evidence_parts.append(f"Source filename: {source_filename!r}")
+    if source_directory:
+        evidence_parts.append(f"Source directory path: {source_directory!r}")
 
     # Path evidence
     has_path = False
@@ -168,8 +173,10 @@ def resolve(
             max_tokens=150,
             temperature=0.1,
             extra_headers={"Cache-Control": "no-cache"},
+            extra_body={"cache": {"no-cache": True}},
         )
         content = response.choices[0].message.content.strip()
+        logger.bind(stage="ai").debug(f"AI response: {content}")
         return _parse_resolve_response(content)
 
     except Exception as e:
@@ -213,6 +220,7 @@ def disambiguate(
             max_tokens=10,
             temperature=0,
             extra_headers={"Cache-Control": "no-cache"},
+            extra_body={"cache": {"no-cache": True}},
         )
         content = response.choices[0].message.content.strip()
 
@@ -261,11 +269,15 @@ def _parse_resolve_response(content: str) -> dict | None:
     # Clean AI-produced title junk
     if "title" in result:
         result["title"] = re.sub(
-            r"\s*\((?:The\s+)?Audio\s*Book\)", "", result["title"],
+            r"\s*\((?:The\s+)?Audio\s*Book\)",
+            "",
+            result["title"],
             flags=re.IGNORECASE,
         )
         result["title"] = re.sub(
-            r"\s*\(Unabridged\)", "", result["title"],
+            r"\s*\(Unabridged\)",
+            "",
+            result["title"],
             flags=re.IGNORECASE,
         )
         result["title"] = result["title"].strip()

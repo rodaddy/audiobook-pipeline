@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -58,12 +59,23 @@ def run(
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
         return
 
-    # Parse path into metadata
-    metadata = parse_path(str(source_file))
+    # Parse path into metadata -- construct path with book dir as parent
+    # so parse_path sees the directory name (rich metadata context)
+    # even when the audio file is nested in a subdirectory
+    if source_path.is_dir():
+        parse_target = source_path / source_file.name
+    else:
+        parse_target = source_file
+    metadata = parse_path(str(parse_target))
 
-    # Gather evidence from all sources
-    tags = get_tags(source_file)
-    tag_author = extract_author_from_tags(tags)
+    # Gather evidence from all sources (graceful on empty/corrupt files)
+    try:
+        tags = get_tags(source_file)
+        tag_author = extract_author_from_tags(tags)
+    except Exception as e:
+        log.warning(f"Failed to read tags from {source_file.name}: {e}")
+        tags = {}
+        tag_author = ""
     tag_metadata = {
         "author": tag_author or "",
         "title": tags.get("title", ""),
@@ -77,7 +89,9 @@ def run(
 
     # Search Audible for candidates -- widen the net when AI is available
     audible_candidates = _search_audible(
-        metadata["title"], metadata["series"], config,
+        metadata["title"],
+        metadata["series"],
+        config,
         author=metadata.get("author", ""),
         widen=bool(config.pipeline_llm_base_url),
     )
@@ -97,13 +111,20 @@ def run(
                 "series": best.get("series", ""),
                 "position": best.get("position", ""),
             }
-            log.debug(f"Audible match: {best['author_str']!r} (score={best['score']:.0f})")
+            log.debug(
+                f"Audible match: {best['author_str']!r} (score={best['score']:.0f})"
+            )
         elif has_ai:
             # AI available -- let it pick from all candidates in post
-            client = get_client(config.pipeline_llm_base_url, config.pipeline_llm_api_key)
+            client = get_client(
+                config.pipeline_llm_base_url, config.pipeline_llm_api_key
+            )
             ai_pick = disambiguate(
-                scored[:5], metadata["title"], "",
-                config.pipeline_llm_model, client,
+                scored[:5],
+                metadata["title"],
+                "",
+                config.pipeline_llm_model,
+                client,
             )
             if ai_pick:
                 audible_result = {
@@ -117,15 +138,21 @@ def run(
 
     # Decide if AI should resolve metadata
     should_resolve = config.ai_all or needs_resolution(
-        metadata, tag_metadata, audible_result,
+        metadata,
+        tag_metadata,
+        audible_result,
     )
 
     if should_resolve:
         client = get_client(config.pipeline_llm_base_url, config.pipeline_llm_api_key)
         ai_metadata = resolve(
-            metadata, tag_metadata,
-            audible_candidates, config.pipeline_llm_model, client,
+            metadata,
+            tag_metadata,
+            audible_candidates,
+            config.pipeline_llm_model,
+            client,
             source_filename=source_file.name,
+            source_directory=str(source_path),
         )
         if ai_metadata:
             # Apply AI-resolved fields (only override non-empty values)
@@ -153,42 +180,47 @@ def run(
 
     # Build destination
     dest_dir = build_plex_path(config.nfs_output_dir, metadata, index=index)
+    book_dir = source_file.parent if source_path.is_dir() else None
+
+    # Reorganize mode: check if source dir is already the correct dest
+    if reorganize and book_dir:
+        if book_dir.resolve() == dest_dir.resolve():
+            click.echo(f"  OK {book_dir.name}/ -- already correctly placed")
+            manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
+            return
+
+    # For single-file mode, check individual file
     dest_file_path = dest_dir / source_file.name
-
-    # Reorganize mode: check if already in correct location
-    if reorganize and index and index.is_correctly_placed(source_file, dest_file_path):
-        click.echo(f"  OK {source_file.name} -- already correctly placed")
-        manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
-        return
-
-    # Check if file already exists at destination
-    if index:
-        already_exists = index.file_exists(dest_dir, source_file.name)
-    else:
-        already_exists = dest_file_path.exists()
-
-    if already_exists:
-        click.echo(f"  SKIPPED {source_file.name} -- already exists at")
-        click.echo(f"          {dest_file_path}")
-        manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
-        return
+    if not reorganize:
+        if index:
+            already_exists = index.file_exists(dest_dir, source_file.name)
+        else:
+            already_exists = dest_file_path.exists()
+        if already_exists:
+            click.echo(f"  SKIPPED {source_file.name} -- already exists at")
+            click.echo(f"          {dest_file_path}")
+            manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
+            return
 
     # Determine action: move (reorganize) or copy
     if reorganize:
         action_label = "Moving" if not dry_run else "[DRY-RUN] Would move"
+        display_name = f"{book_dir.name}/" if book_dir else source_file.name
     else:
         action_label = "Copying" if not dry_run else "[DRY-RUN] Would copy"
+        display_name = source_file.name
+
+    click.echo(f"  {action_label} {display_name}")
+    click.echo(f"       -> {dest_dir}")
 
     if dry_run:
-        click.echo(f"  {action_label} {source_file.name}")
-        click.echo(f"         -> {dest_file_path}")
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
         return
 
-    click.echo(f"  {action_label} {source_file.name}")
-    click.echo(f"       -> {dest_file_path}")
-
-    if reorganize:
+    if reorganize and book_dir:
+        # Move all files from source dir to dest dir
+        dest_file = _move_book_directory(book_dir, dest_dir)
+    elif reorganize:
         dest_file = move_in_library(source_file, dest_dir, dry_run=False)
     else:
         dest_file = copy_to_library(source_file, dest_dir, dry_run=False)
@@ -202,16 +234,45 @@ def run(
     if data:
         data["stages"]["organize"]["output_file"] = str(dest_file)
         data["stages"]["organize"]["dest_dir"] = str(dest_dir)
-        data["metadata"].update({
-            "parsed_author": metadata["author"],
-            "parsed_title": metadata["title"],
-            "parsed_series": metadata["series"],
-            "parsed_position": metadata["position"],
-        })
+        data["metadata"].update(
+            {
+                "parsed_author": metadata["author"],
+                "parsed_title": metadata["title"],
+                "parsed_series": metadata["series"],
+                "parsed_position": metadata["position"],
+            }
+        )
         manifest.update(book_hash, data)
 
     manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
     click.echo(f"  Organized: {dest_dir.relative_to(config.nfs_output_dir)}")
+
+
+def _move_book_directory(source_dir: Path, dest_dir: Path) -> Path:
+    """Move all files from source_dir into dest_dir.
+
+    Handles multi-chapter books (many MP3s in one dir) and single-file
+    books alike. Cleans up the empty source directory after moving.
+    Returns the destination directory path.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for item in sorted(source_dir.iterdir()):
+        if item.is_file():
+            dest_file = dest_dir / item.name
+            if dest_file.exists() and dest_file.stat().st_size == item.stat().st_size:
+                log.debug(f"Skip (same size): {item.name}")
+                continue
+            shutil.move(str(item), str(dest_file))
+            moved += 1
+    log.info(f"Moved {moved} files: {source_dir.name} -> {dest_dir}")
+
+    # Clean up empty source dir and parents
+    from ..ops.organize import _cleanup_empty_parents
+
+    _cleanup_empty_parents(source_dir, stop_at=None)
+
+    return dest_dir
 
 
 def _find_audio_file(source_path: Path) -> Path | None:
@@ -229,8 +290,7 @@ def _find_audio_file(source_path: Path) -> Path | None:
         return m4b_files[0]
 
     audio_files = [
-        f for f in source_path.rglob("*")
-        if f.suffix.lower() in AUDIO_EXTENSIONS
+        f for f in source_path.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS
     ]
     result = audio_files[0] if audio_files else None
     log.debug(f"_find_audio_file: result={result}")
