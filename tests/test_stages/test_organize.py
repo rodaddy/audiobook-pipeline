@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from audiobook_pipeline.config import PipelineConfig
+from audiobook_pipeline.library_index import LibraryIndex
 from audiobook_pipeline.manifest import Manifest
 from audiobook_pipeline.models import PipelineMode, Stage, StageStatus
 from audiobook_pipeline.stages.organize import _find_audio_file, _search_audible, run
@@ -658,3 +659,167 @@ class TestOrganizeStage:
         # Verify Audible author is used directly (no AI involvement, else branch)
         data = mock_manifest.read(book_hash)
         assert data["metadata"]["parsed_author"] == "Audible Author"
+
+
+class TestOrganizeWithIndex:
+    """Test organize stage with LibraryIndex for batch operations."""
+
+    @patch("audiobook_pipeline.stages.organize.build_plex_path")
+    @patch("audiobook_pipeline.stages.organize.get_tags")
+    @patch("audiobook_pipeline.stages.organize.extract_author_from_tags")
+    @patch("audiobook_pipeline.stages.organize.search")
+    @patch("audiobook_pipeline.stages.organize.copy_to_library")
+    def test_index_early_skip_existing_file(
+        self,
+        mock_copy,
+        mock_search,
+        mock_extract_author,
+        mock_get_tags,
+        mock_build_path,
+        tmp_path,
+        mock_config,
+        mock_manifest,
+    ):
+        """File existence detected via index skips expensive API/AI work."""
+        # Create source and pre-existing destination
+        source_file = tmp_path / "Great Book.m4b"
+        source_file.write_text("fake audio")
+
+        # Build a library with the file already present
+        lib = mock_config.nfs_output_dir
+        dest_dir = lib / "_unsorted" / "Great Book"
+        dest_dir.mkdir(parents=True)
+        (dest_dir / "Great Book.m4b").write_text("fake audio")
+
+        # Mock build_plex_path to return the dest_dir
+        mock_build_path.return_value = dest_dir
+
+        index = LibraryIndex(lib)
+
+        mock_get_tags.return_value = {"title": "Great Book"}
+        mock_extract_author.return_value = ""
+        mock_search.return_value = []
+
+        book_hash = "testhash123"
+        mock_manifest.create(book_hash, str(source_file), PipelineMode.ORGANIZE)
+
+        run(source_file, book_hash, mock_config, mock_manifest,
+            dry_run=False, index=index)
+
+        data = mock_manifest.read(book_hash)
+        assert data["stages"]["organize"]["status"] == StageStatus.COMPLETED.value
+        mock_copy.assert_not_called()
+
+    @patch("audiobook_pipeline.stages.organize.get_tags")
+    @patch("audiobook_pipeline.stages.organize.extract_author_from_tags")
+    def test_cross_source_dedup(
+        self,
+        mock_extract_author,
+        mock_get_tags,
+        tmp_path,
+        mock_config,
+        mock_manifest,
+    ):
+        """Same file stem processed twice in a batch is skipped."""
+        lib = mock_config.nfs_output_dir
+        lib.mkdir(parents=True, exist_ok=True)
+        index = LibraryIndex(lib)
+
+        source_file = tmp_path / "book.m4b"
+        source_file.write_text("fake audio")
+
+        # First call marks it as processed
+        index.mark_processed("book")
+
+        mock_get_tags.return_value = {}
+        mock_extract_author.return_value = ""
+
+        book_hash = "testhash123"
+        mock_manifest.create(book_hash, str(source_file), PipelineMode.ORGANIZE)
+
+        # Second call should skip
+        run(source_file, book_hash, mock_config, mock_manifest,
+            dry_run=False, index=index)
+
+        data = mock_manifest.read(book_hash)
+        assert data["stages"]["organize"]["status"] == StageStatus.COMPLETED.value
+
+
+class TestOrganizeReorganize:
+    """Test reorganize mode (move instead of copy)."""
+
+    @patch("audiobook_pipeline.stages.organize.get_tags")
+    @patch("audiobook_pipeline.stages.organize.extract_author_from_tags")
+    @patch("audiobook_pipeline.stages.organize.search")
+    @patch("audiobook_pipeline.stages.organize.move_in_library")
+    def test_reorganize_uses_move(
+        self,
+        mock_move,
+        mock_search,
+        mock_extract_author,
+        mock_get_tags,
+        tmp_path,
+        mock_config,
+        mock_manifest,
+    ):
+        """Reorganize mode calls move_in_library instead of copy_to_library."""
+        lib = mock_config.nfs_output_dir
+        lib.mkdir(parents=True, exist_ok=True)
+
+        source_file = tmp_path / "John Smith - Great Book.m4b"
+        source_file.write_text("fake audio")
+
+        index = LibraryIndex(lib)
+
+        mock_get_tags.return_value = {"title": "Great Book"}
+        mock_extract_author.return_value = "John Smith"
+        mock_search.return_value = []
+
+        dest_file = lib / "John Smith" / "Great Book" / source_file.name
+        mock_move.return_value = dest_file
+
+        book_hash = "testhash123"
+        mock_manifest.create(book_hash, str(source_file), PipelineMode.ORGANIZE)
+
+        run(source_file, book_hash, mock_config, mock_manifest,
+            dry_run=False, index=index, reorganize=True)
+
+        mock_move.assert_called_once()
+        data = mock_manifest.read(book_hash)
+        assert data["stages"]["organize"]["status"] == StageStatus.COMPLETED.value
+
+    @patch("audiobook_pipeline.stages.organize.get_tags")
+    @patch("audiobook_pipeline.stages.organize.extract_author_from_tags")
+    @patch("audiobook_pipeline.stages.organize.search")
+    def test_reorganize_skips_correctly_placed(
+        self,
+        mock_search,
+        mock_extract_author,
+        mock_get_tags,
+        tmp_path,
+        mock_config,
+        mock_manifest,
+    ):
+        """Reorganize mode skips files already in the correct location."""
+        lib = mock_config.nfs_output_dir
+
+        # Create a properly placed file
+        dest = lib / "_unsorted" / "book"
+        dest.mkdir(parents=True)
+        source_file = dest / "book.m4b"
+        source_file.write_text("fake audio")
+
+        index = LibraryIndex(lib)
+
+        mock_get_tags.return_value = {"title": "book"}
+        mock_extract_author.return_value = ""
+        mock_search.return_value = []
+
+        book_hash = "testhash123"
+        mock_manifest.create(book_hash, str(source_file), PipelineMode.ORGANIZE)
+
+        run(source_file, book_hash, mock_config, mock_manifest,
+            dry_run=False, index=index, reorganize=True)
+
+        data = mock_manifest.read(book_hash)
+        assert data["stages"]["organize"]["status"] == StageStatus.COMPLETED.value

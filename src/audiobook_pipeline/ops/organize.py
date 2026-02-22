@@ -4,11 +4,17 @@ Absorbs python/path_builder.py logic into the pipeline package.
 Handles copying/moving files to NFS output with proper Author/Series/Title layout.
 """
 
+from __future__ import annotations
+
 import re
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..sanitize import sanitize_filename
+
+if TYPE_CHECKING:
+    from ..library_index import LibraryIndex
 
 # Label suffixes that are not real series names (e.g., "Title - Audiobook")
 _LABEL_SUFFIXES = frozenset({
@@ -232,6 +238,7 @@ def parse_path(source_path: str) -> dict:
 def build_plex_path(
     nfs_output_dir: Path,
     metadata: dict,
+    index: LibraryIndex | None = None,
 ) -> Path:
     """Build the Plex-compatible destination path.
 
@@ -241,8 +248,9 @@ def build_plex_path(
       - No author, with series: Series/Title/
       - No author, no series: _unsorted/Title/
 
-    Checks for existing near-duplicate folders and reuses them
-    to prevent duplicates like "Food A Love Story" vs "Food- A Love Story".
+    When index is provided, uses O(1) dict lookups instead of
+    per-call iterdir() scans. Falls back to filesystem scan
+    when index is None (single-file mode).
     """
     author = sanitize_filename(metadata["author"]) if metadata["author"] else ""
     title = sanitize_filename(metadata["title"]) if metadata["title"] else "Unknown"
@@ -252,27 +260,51 @@ def build_plex_path(
     if series_name and series_name.lower() == title.lower():
         series_name = ""
 
+    reuse = index.reuse_existing if index else _reuse_existing
+
     # Top level is always author. No author = _unsorted.
     if author and series_name:
         base = nfs_output_dir / author
-        series_name = _reuse_existing(base, series_name)
+        series_name = reuse(base, series_name)
         title_dir = base / series_name
-        title = _reuse_existing(title_dir, title)
-        return title_dir / title
+        title = reuse(title_dir, title)
+        result = title_dir / title
     elif author:
         base = nfs_output_dir / author
-        title = _reuse_existing(base, title)
-        return base / title
+        title = reuse(base, title)
+        result = base / title
     elif series_name:
         base = nfs_output_dir / "_unsorted"
-        series_name = _reuse_existing(base, series_name)
+        series_name = reuse(base, series_name)
         title_dir = base / series_name
-        title = _reuse_existing(title_dir, title)
-        return title_dir / title
+        title = reuse(title_dir, title)
+        result = title_dir / title
     else:
         base = nfs_output_dir / "_unsorted"
-        title = _reuse_existing(base, title)
-        return base / title
+        title = reuse(base, title)
+        result = base / title
+
+    # Register new path components in the index
+    if index:
+        for parent, child in _path_components(nfs_output_dir, result):
+            index.register_new_folder(parent, child)
+
+    return result
+
+
+def _path_components(root: Path, dest: Path) -> list[tuple[Path, str]]:
+    """Extract (parent, child) pairs between root and dest for index registration."""
+    try:
+        relative = dest.relative_to(root)
+    except ValueError:
+        return []
+    parts = relative.parts
+    pairs = []
+    current = root
+    for part in parts:
+        pairs.append((current, part))
+        current = current / part
+    return pairs
 
 
 def copy_to_library(
@@ -298,6 +330,51 @@ def copy_to_library(
 
     shutil.copy2(source_file, dest_file)
     return dest_file
+
+
+def move_in_library(
+    source_file: Path,
+    dest_dir: Path,
+    dry_run: bool = False,
+) -> Path:
+    """Move an audiobook file within the library (for reorganize mode).
+
+    Moves the file to dest_dir and cleans up empty parent directories
+    left behind. Returns the destination file path.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_file = dest_dir / source_file.name
+
+    if dry_run:
+        return dest_file
+
+    if dest_file.exists() and dest_file.stat().st_size == source_file.stat().st_size:
+        return dest_file
+
+    shutil.move(str(source_file), str(dest_file))
+
+    # Clean up empty parent dirs left behind by the move
+    _cleanup_empty_parents(source_file.parent, stop_at=None)
+
+    return dest_file
+
+
+def _cleanup_empty_parents(directory: Path, stop_at: Path | None) -> None:
+    """Remove empty parent directories after a file move.
+
+    Walks up from directory, removing each empty dir until
+    reaching stop_at or a non-empty directory.
+    """
+    current = directory
+    while current != stop_at and current != current.parent:
+        try:
+            if current.is_dir() and not any(current.iterdir()):
+                current.rmdir()
+            else:
+                break
+        except OSError:
+            break
+        current = current.parent
 
 
 # ---------------------------------------------------------------------------

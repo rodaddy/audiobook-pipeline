@@ -1,6 +1,9 @@
 """Stage 07: Organize -- copy/move audiobook to Plex-compatible NFS library."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 from loguru import logger
@@ -12,7 +15,10 @@ from ..config import PipelineConfig
 from ..ffprobe import extract_author_from_tags, get_tags
 from ..manifest import Manifest
 from ..models import AUDIO_EXTENSIONS, Stage, StageStatus
-from ..ops.organize import build_plex_path, copy_to_library, parse_path
+from ..ops.organize import build_plex_path, copy_to_library, move_in_library, parse_path
+
+if TYPE_CHECKING:
+    from ..library_index import LibraryIndex
 
 log = logger.bind(stage="organize")
 
@@ -24,15 +30,18 @@ def run(
     manifest: Manifest,
     dry_run: bool = False,
     verbose: bool = False,
+    index: LibraryIndex | None = None,
+    reorganize: bool = False,
 ) -> None:
     """Organize an audiobook into the NFS library.
 
     1. Parse the source path into author/title/series metadata
-    2. Gather evidence from tags + Audible search
-    3. Use AI to resolve conflicts (or validate all if ai_all=True)
-    4. Build the Plex-compatible destination path
-    5. Copy the file to the library
-    6. Update the manifest with the destination path
+    2. Early-skip if file already exists at expected destination (index mode)
+    3. Gather evidence from tags + Audible search
+    4. Use AI to resolve conflicts (or validate all if ai_all=True)
+    5. Build the Plex-compatible destination path
+    6. Copy (or move in reorganize mode) the file to the library
+    7. Update the manifest with the destination path
     """
     manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.RUNNING)
 
@@ -41,6 +50,12 @@ def run(
     if source_file is None:
         click.echo(f"  ERROR: No audio files found in {source_path}")
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.FAILED)
+        return
+
+    # Cross-source dedup: skip if same stem already processed in this batch
+    if index and index.mark_processed(source_file.stem):
+        click.echo(f"  SKIPPED {source_file.name} -- already processed in batch")
+        manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
         return
 
     # Parse path into metadata
@@ -137,25 +152,50 @@ def run(
     )
 
     # Build destination
-    dest_dir = build_plex_path(config.nfs_output_dir, metadata)
+    dest_dir = build_plex_path(config.nfs_output_dir, metadata, index=index)
     dest_file_path = dest_dir / source_file.name
 
-    # Check if file already exists in library
-    if dest_file_path.exists():
+    # Reorganize mode: check if already in correct location
+    if reorganize and index and index.is_correctly_placed(source_file, dest_file_path):
+        click.echo(f"  OK {source_file.name} -- already correctly placed")
+        manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
+        return
+
+    # Check if file already exists at destination
+    if index:
+        already_exists = index.file_exists(dest_dir, source_file.name)
+    else:
+        already_exists = dest_file_path.exists()
+
+    if already_exists:
         click.echo(f"  SKIPPED {source_file.name} -- already exists at")
         click.echo(f"          {dest_file_path}")
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
         return
 
+    # Determine action: move (reorganize) or copy
+    if reorganize:
+        action_label = "Moving" if not dry_run else "[DRY-RUN] Would move"
+    else:
+        action_label = "Copying" if not dry_run else "[DRY-RUN] Would copy"
+
     if dry_run:
-        click.echo(f"  [DRY-RUN] Would copy {source_file.name}")
+        click.echo(f"  {action_label} {source_file.name}")
         click.echo(f"         -> {dest_file_path}")
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
         return
 
-    click.echo(f"  Copying {source_file.name}")
+    click.echo(f"  {action_label} {source_file.name}")
     click.echo(f"       -> {dest_file_path}")
-    dest_file = copy_to_library(source_file, dest_dir, dry_run=False)
+
+    if reorganize:
+        dest_file = move_in_library(source_file, dest_dir, dry_run=False)
+    else:
+        dest_file = copy_to_library(source_file, dest_dir, dry_run=False)
+
+    # Register the new file in the index
+    if index:
+        index.register_new_file(dest_dir, source_file.name)
 
     # Update manifest
     data = manifest.read(book_hash)

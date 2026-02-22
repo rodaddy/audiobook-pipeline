@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from audiobook_pipeline.library_index import LibraryIndex
 from audiobook_pipeline.ops.organize import (
     _extract_author,
     _looks_like_author,
@@ -12,6 +13,7 @@ from audiobook_pipeline.ops.organize import (
     _strip_label_suffix,
     build_plex_path,
     copy_to_library,
+    move_in_library,
     parse_path,
 )
 
@@ -538,3 +540,141 @@ class TestExtractAuthor:
     def test_no_special_chars_unchanged(self):
         """Plain author name returned as-is"""
         assert _extract_author("Brandon Sanderson") == "Brandon Sanderson"
+
+
+class TestBuildPlexPathWithIndex:
+    """Test build_plex_path using LibraryIndex for O(1) lookups."""
+
+    def test_index_reuses_existing_folder(self, tmp_path):
+        """Index provides O(1) folder reuse instead of iterdir()"""
+        # Create library structure
+        (tmp_path / "Brandon Sanderson" / "Mistborn").mkdir(parents=True)
+        index = LibraryIndex(tmp_path)
+
+        metadata = {
+            "author": "Brandon Sanderson",
+            "series": "Mistborn",
+            "title": "The Final Empire",
+            "position": "1",
+        }
+        result = build_plex_path(tmp_path, metadata, index=index)
+        assert result == tmp_path / "Brandon Sanderson" / "Mistborn" / "The Final Empire"
+
+    def test_index_near_match_reuses(self, tmp_path):
+        """Index near-match detection works like filesystem fallback"""
+        unsorted = tmp_path / "_unsorted"
+        unsorted.mkdir()
+        (unsorted / "Food A Love Story").mkdir()
+        index = LibraryIndex(tmp_path)
+
+        metadata = {
+            "author": "",
+            "series": "",
+            "title": "Food- A Love Story",
+            "position": "",
+        }
+        result = build_plex_path(tmp_path, metadata, index=index)
+        assert result == tmp_path / "_unsorted" / "Food A Love Story"
+
+    def test_index_registers_new_folders(self, tmp_path):
+        """build_plex_path registers new path components in the index"""
+        index = LibraryIndex(tmp_path)
+
+        metadata = {
+            "author": "New Author",
+            "series": "New Series",
+            "title": "New Book",
+            "position": "",
+        }
+        build_plex_path(tmp_path, metadata, index=index)
+
+        # Subsequent call should find the registered folders
+        assert index.reuse_existing(tmp_path, "New Author") == "New Author"
+
+    def test_none_index_falls_back_to_filesystem(self, tmp_path):
+        """index=None uses _reuse_existing (filesystem scan)"""
+        metadata = {
+            "author": "Author",
+            "series": "",
+            "title": "Title",
+            "position": "",
+        }
+        result = build_plex_path(tmp_path, metadata, index=None)
+        assert result == tmp_path / "Author" / "Title"
+
+
+class TestMoveInLibrary:
+    """Test moving files within the library for reorganize mode."""
+
+    def test_moves_file_to_destination(self, tmp_path):
+        source_dir = tmp_path / "old_location"
+        source_dir.mkdir()
+        source_file = source_dir / "audio.m4b"
+        source_file.write_text("audiobook content")
+
+        dest_dir = tmp_path / "new_location"
+
+        result = move_in_library(source_file, dest_dir)
+
+        assert result == dest_dir / "audio.m4b"
+        assert result.exists()
+        assert result.read_text() == "audiobook content"
+        assert not source_file.exists()
+
+    def test_dry_run_skips_move(self, tmp_path):
+        source_dir = tmp_path / "old_location"
+        source_dir.mkdir()
+        source_file = source_dir / "audio.m4b"
+        source_file.write_text("audiobook content")
+
+        dest_dir = tmp_path / "new_location"
+
+        result = move_in_library(source_file, dest_dir, dry_run=True)
+
+        assert result == dest_dir / "audio.m4b"
+        assert source_file.exists()  # Not moved
+        assert not result.exists()
+
+    def test_cleans_empty_parent_dirs(self, tmp_path):
+        """Empty parent dirs cleaned up after move"""
+        deep = tmp_path / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        source_file = deep / "audio.m4b"
+        source_file.write_text("audio")
+
+        dest_dir = tmp_path / "dest"
+
+        move_in_library(source_file, dest_dir)
+
+        # All empty parents should be cleaned
+        assert not deep.exists()
+        assert not (tmp_path / "a" / "b").exists()
+        assert not (tmp_path / "a").exists()
+
+    def test_skips_same_size_existing(self, tmp_path):
+        """Existing file with same size is not overwritten"""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        source_file = source_dir / "audio.m4b"
+        source_file.write_text("content")
+
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir(parents=True)
+        dest_file = dest_dir / "audio.m4b"
+        dest_file.write_text("content")
+
+        result = move_in_library(source_file, dest_dir)
+        assert result == dest_file
+
+    def test_creates_dest_dir(self, tmp_path):
+        """Destination directory created if it doesn't exist"""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        source_file = source_dir / "audio.m4b"
+        source_file.write_text("audio")
+
+        dest_dir = tmp_path / "deep" / "nested" / "dir"
+
+        result = move_in_library(source_file, dest_dir)
+        assert dest_dir.exists()
+        assert result.exists()

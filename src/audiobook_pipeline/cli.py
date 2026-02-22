@@ -62,6 +62,10 @@ def _load_env_file(env_file: Path) -> None:
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 @click.option("--ai-all", is_flag=True, help="Run AI validation on all books, not just conflicts.")
 @click.option(
+    "--reorganize", is_flag=True,
+    help="Reorganize library in-place: move (not copy) misplaced books. Implies --ai-all.",
+)
+@click.option(
     "-c", "--config", "config_file",
     type=click.Path(exists=True), default=None,
     help="Path to .env file.",
@@ -75,10 +79,18 @@ def main(
     no_lock: bool,
     verbose: bool,
     ai_all: bool,
+    reorganize: bool,
     config_file: str | None,
 ) -> None:
     """Convert, enrich, and organize audiobooks into tagged M4B files."""
     source = Path(source_path).resolve()
+
+    # --reorganize requires a directory and implies organize mode + ai-all
+    if reorganize:
+        if not source.is_dir():
+            raise click.UsageError("--reorganize requires a directory path.")
+        mode = "organize"
+        ai_all = True
 
     # Load .env into environment before PipelineConfig reads env vars
     env_file = Path(config_file) if config_file else _find_config_file()
@@ -109,5 +121,7 @@ def main(
     config = PipelineConfig(**config_kwargs)
     config.setup_logging()
 
-    runner = PipelineRunner(config=config, mode=pipeline_mode)
+    runner = PipelineRunner(
+        config=config, mode=pipeline_mode, reorganize=reorganize,
+    )
     runner.run(source_path=source, override_asin=asin, skip_lock=no_lock)

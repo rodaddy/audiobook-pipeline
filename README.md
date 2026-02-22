@@ -315,6 +315,43 @@ METADATA_SOURCE=audnexus bin/audiobook-convert /path/to/book.m4b
 AUDIBLE_REGION=co.uk METADATA_SOURCE=audible bin/audiobook-convert /path/to/book/
 ```
 
+### Large library processing
+
+For large batches (hundreds or thousands of books), the pipeline builds an in-memory index of your library once at startup, replacing per-file directory scans with O(1) dict lookups.
+
+**Add new books to an existing library:**
+
+```bash
+# Organize a staging directory into your library
+audiobook-pipeline /path/to/new/books --mode organize --dry-run
+
+# Verify the dry-run output, then run for real
+audiobook-pipeline /path/to/new/books --mode organize
+```
+
+**Reorganize an existing library in-place:**
+
+```bash
+# Dry-run first -- see what would move
+audiobook-pipeline /Volumes/media_files/AudioBooks --reorganize --dry-run
+
+# Verify moves look correct, then run
+audiobook-pipeline /Volumes/media_files/AudioBooks --reorganize
+```
+
+The `--reorganize` flag:
+- Implies `--mode organize` and `--ai-all` (every book gets AI metadata verification)
+- Moves files instead of copying (avoids doubling library size)
+- Detects books already in the correct location and skips them
+- Cleans up empty directories left behind after moves
+- Deduplicates across source directories within a batch
+
+**Recommended workflow:**
+1. Always start with `--dry-run` to verify decisions
+2. Review the output for any unexpected moves
+3. Run without `--dry-run` when satisfied
+4. Test on a known subset before processing a full library
+
 ### Batch processing
 
 ```bash
