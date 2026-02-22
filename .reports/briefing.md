@@ -72,3 +72,12 @@ src/audiobook_pipeline/
 - `stages/organize.py` uses `ai` + `api` modules (no sys.path hack)
 - `--ai-all` flag forces AI validation on every book (default: only conflicts)
 - `ops/organize.py` has duplicate detection via `_reuse_existing()` at every dir level
+
+---
+
+**Last session:** 2026-02-21 -- Fix Reorganize Pipeline
+**Done:** Fixed parse_path() directory context | Added ffprobe error handling | Added source_directory to AI resolve | Fixed LiteLLM cache bypass | Fixed type-check hook | Validated 9/9 acceptance criteria
+**Decisions:** parse_path() uses synthetic paths | LiteLLM cache bypass via extra_body | Type-check hook uses snake_case fields | Claude Code hooks use snake_case not camelCase
+**Blockers:** None
+**Carry-forward:** Merge feat/python-rewrite to main via PR | Consider improvements for known issues (SRoST junk, subseries vs unified, filename cleanup) | Add test cases for edge patterns
+**Next:** Reorganize mode fully functional | Type-check hook working | Cache bypass mechanism confirmed

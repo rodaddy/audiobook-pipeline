@@ -23,3 +23,36 @@ Continued Python rewrite recovery. Fixed multiple organize edge cases discovered
 Restructured audiobook pipeline from legacy Python scripts to proper app. Added loguru logging, openai SDK for AI, consolidated api/ layer (audible.py, search.py). Completed tasks 1-7 of 13-task plan. Tasks 9-13 remain (cli.py update, runner.py loguru migration, pre-commit hooks, python/ deletion, verification).
 
 **Details:** `.reports/sessions/session-2026-02-21-restructure.md`
+
+---
+
+## 2026-02-21 -- Fix Reorganize Pipeline (f681e9e3)
+
+### Done
+- Fixed parse_path() directory context loss via synthetic paths
+- Added graceful ffprobe failure handling (empty/corrupt audio files)
+- Added source_directory parameter to AI resolve() for better evidence
+- Fixed LiteLLM semantic cache staleness via extra_body cache bypass
+- Fixed cleanup.py type error (update_stage -> set_stage with enums)
+- Fixed type-check hook (snake_case fields, process.exit(2) blocking)
+- Created test sandbox, validated 9/9 acceptance criteria
+- Wrote validation report to .reports/reorganize-pipeline.md
+
+### Decisions
+- parse_path() receives synthetic path `source_path / source_file.name` to preserve hierarchy
+- LiteLLM cache bypass uses `extra_body={"cache": {"no-cache": True}}`
+- Type-check hook uses process.exit(2) + stderr (matching security-validator)
+- Claude Code hook input is snake_case (tool_name/tool_input), not camelCase
+
+### Files Changed
+- src/audiobook_pipeline/stages/organize.py -- parse_path fix, ffprobe handling, source_directory
+- src/audiobook_pipeline/ai.py -- source_directory param, cache bypass, debug logging
+- src/audiobook_pipeline/runner.py -- batch processing refactor
+- src/audiobook_pipeline/stages/__init__.py, cleanup.py -- type error fixes
+- ~/.claude/hooks/safety/pre-bash-type-check.ts -- snake_case fields, exit blocking
+- .reports/reorganize-pipeline.md -- validation report
+
+### Known Issues
+None. All 9 acceptance criteria met.
+
+**Commit:** 8a43b5e
