@@ -20,7 +20,7 @@ def search(query: str, region: str = "com") -> list[dict]:
         "num_results": "10",
         "products_sort_by": "Relevance",
         "response_groups": "contributors,media,product_desc,product_attrs,series",
-        "image_sizes": "100",
+        "image_sizes": "500,1024",
     }
 
     logger.debug(f"Audible search: query={query!r} region={region}")
@@ -43,14 +43,21 @@ def search(query: str, region: str = "com") -> list[dict]:
     for p in products:
         authors = [a.get("name", "") for a in (p.get("authors") or [])]
         series_info = (p.get("series") or [None])[0]
-        results.append({
-            "asin": p.get("asin", ""),
-            "title": p.get("title", ""),
-            "authors": authors,
-            "author_str": ", ".join(authors),
-            "series": series_info.get("title", "") if series_info else "",
-            "position": series_info.get("sequence", "") if series_info else "",
-        })
+        # Extract cover art URL -- prefer larger sizes
+        images = p.get("product_images") or {}
+        cover_url = images.get("1024", images.get("500", ""))
+
+        results.append(
+            {
+                "asin": p.get("asin", ""),
+                "title": p.get("title", ""),
+                "authors": authors,
+                "author_str": ", ".join(authors),
+                "series": series_info.get("title", "") if series_info else "",
+                "position": series_info.get("sequence", "") if series_info else "",
+                "cover_url": cover_url,
+            }
+        )
 
     logger.debug(f"Audible results: {len(results)} products")
     return results

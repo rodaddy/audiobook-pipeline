@@ -2,6 +2,8 @@
 
 Stage registry -- maps Stage enum values to run functions.
 
+Pipeline order: validate -> concat -> convert -> asin -> metadata -> organize -> cleanup
+
 Stages:
     validate -- Verify source directory of audio files and prepare conversion
                 metadata. Discovers audio files (excludes .m4b since we convert
@@ -22,13 +24,28 @@ Stages:
                output codec, format, and chapter count (for multi-file books).
                Supports dry-run mode and thread control via kwargs. Updates
                manifest with output_file, codec, and bitrate.
-    organize -- Copy/move audiobooks to Plex-compatible NFS library. Accepts
-                optional LibraryIndex for O(1) batch lookups and reorganize flag
-                for in-place library cleanup (move instead of copy). Logs audio
-                file discovery, Audible search strategies, AI resolution decisions,
-                cross-source dedup, correctly-placed detection, and
-                progress bar with ETA for batch operations. Supports
-                batch and single-file modes.
+    asin -- Resolve audiobook metadata via Audible catalog search, AI
+            disambiguation, embedded tags, and path parsing. Searches Audible
+            with multiple query strategies, scores with fuzzy matching, uses
+            AI when scores are low or sources conflict. Writes parsed_author,
+            parsed_title, parsed_series, parsed_position, parsed_asin, and
+            cover_url to manifest. Runs before metadata tagging so files are
+            tagged before landing in the library. Can run in dry-run mode.
+    metadata -- Tag M4B files with artist, album_artist, album, title, genre,
+                ASIN, and cover art via ffmpeg -c copy (no re-encode). Preserves
+                chapters with -map_chapters 0. Downloads cover art from Audible
+                and embeds as attached_pic. Reads parsed metadata from manifest
+                (set by ASIN stage). Reads output file from convert stage
+                (work_dir). Album is "Series, Book N" when series exists,
+                otherwise title. Writes to temp file with atomic replace.
+                Cover download failure is non-fatal. Supports dry-run mode.
+    organize -- Pure file-mover. Reads pre-resolved metadata from manifest
+                (set by ASIN stage) and tagged file from metadata stage output.
+                Builds Plex-compatible destination path, copies or moves file
+                to NFS library. Accepts optional LibraryIndex for O(1) batch
+                lookups and reorganize flag for in-place library cleanup.
+                Handles cross-source dedup. Supports batch and single-file modes.
+    cleanup -- Remove temporary work directory after conversion.
 
 ---
 *Auto-generated from `__init__.py` docstring by `scripts/gen-readme.py`.*

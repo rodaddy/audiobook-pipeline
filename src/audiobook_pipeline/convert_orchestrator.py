@@ -161,18 +161,25 @@ class ConvertOrchestrator:
             self.manifest.create(book_hash, str(source_path), PipelineMode.CONVERT)
             log.debug(f"Created manifest for {source_path.name}")
 
-        # MVP stages only (skip ASIN, METADATA, ARCHIVE)
+        # MVP stages (skip ARCHIVE)
         mvp_stages = [
             Stage.VALIDATE,
             Stage.CONCAT,
             Stage.CONVERT,
+            Stage.ASIN,
+            Stage.METADATA,
             Stage.ORGANIZE,
             Stage.CLEANUP,
         ]
 
         for stage in mvp_stages:
-            # In dry-run, skip organize and cleanup (no output file to place)
-            if self.config.dry_run and stage in (Stage.ORGANIZE, Stage.CLEANUP):
+            # In dry-run, skip metadata/organize/cleanup (no output file)
+            # ASIN can run in dry-run (metadata-only, no file changes)
+            if self.config.dry_run and stage in (
+                Stage.METADATA,
+                Stage.ORGANIZE,
+                Stage.CLEANUP,
+            ):
                 log.debug(f"Skipping {stage.value} in dry-run mode")
                 continue
 
@@ -205,18 +212,6 @@ class ConvertOrchestrator:
                 log.debug(
                     f"Convert stage for {source_path.name} using {threads} threads"
                 )
-
-            # Pass organize stage the output file path from convert
-            if stage == Stage.ORGANIZE:
-                data = self.manifest.read(book_hash)
-                output_file = (
-                    data.get("metadata", {}).get("output_file") if data else None
-                )
-                if output_file:
-                    kwargs["source_path"] = Path(output_file)
-                    log.debug(
-                        f"Organize stage for {source_path.name} using {output_file}"
-                    )
 
             # Run stage
             log.info(f"Running {stage.value} for {source_path.name}")

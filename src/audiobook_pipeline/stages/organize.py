@@ -1,4 +1,10 @@
-"""Stage 07: Organize -- copy/move audiobook to Plex-compatible NFS library."""
+"""Stage 06: Organize -- copy/move audiobook to Plex-compatible NFS library.
+
+Pure file-mover stage. Reads pre-resolved metadata (author, title, series,
+position) from the manifest (set by ASIN stage). Reads the tagged file path
+from the metadata stage output. Handles dedup, destination building, copy
+vs move (reorganize mode), and library index registration.
+"""
 
 from __future__ import annotations
 
@@ -9,14 +15,10 @@ from typing import TYPE_CHECKING
 import click
 from loguru import logger
 
-from ..ai import disambiguate, get_client, needs_resolution, resolve
-from ..api.audible import search
-from ..api.search import score_results
 from ..config import PipelineConfig
-from ..ffprobe import extract_author_from_tags, get_tags
 from ..manifest import Manifest
 from ..models import AUDIO_EXTENSIONS, Stage, StageStatus
-from ..ops.organize import build_plex_path, copy_to_library, move_in_library, parse_path
+from ..ops.organize import build_plex_path, copy_to_library, move_in_library
 
 if TYPE_CHECKING:
     from ..library_index import LibraryIndex
@@ -33,28 +35,43 @@ def run(
     verbose: bool = False,
     index: LibraryIndex | None = None,
     reorganize: bool = False,
+    **kwargs,
 ) -> None:
     """Organize an audiobook into the NFS library.
 
-    1. Parse the source path into author/title/series metadata
-    2. Early-skip if file already exists at expected destination (index mode)
-    3. Gather evidence from tags + Audible search
-    4. Use AI to resolve conflicts (or validate all if ai_all=True)
-    5. Build the Plex-compatible destination path
-    6. Copy (or move in reorganize mode) the file to the library
-    7. Update the manifest with the destination path
+    1. Read pre-resolved metadata from manifest (set by ASIN stage)
+    2. Find the audio file to copy (metadata output > convert output > source)
+    3. Early-skip if file already exists at expected destination
+    4. Build the Plex-compatible destination path
+    5. Copy (or move in reorganize mode) the file to the library
+    6. Update the manifest with the destination path
     """
     manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.RUNNING)
 
-    # Find the actual audio file to copy
-    source_file = _find_audio_file(source_path)
+    # Read pre-resolved metadata from manifest
+    data = manifest.read(book_hash)
+    if not data:
+        click.echo(f"  ERROR: No manifest data for {book_hash}")
+        manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.FAILED)
+        return
+
+    meta = data.get("metadata", {})
+    metadata = {
+        "author": meta.get("parsed_author", ""),
+        "title": meta.get("parsed_title", ""),
+        "series": meta.get("parsed_series", ""),
+        "position": meta.get("parsed_position", ""),
+    }
+
+    # Find the audio file to organize
+    # Priority: metadata stage output (tagged file) > convert output > source
+    source_file = _find_source_file(data, source_path)
     if source_file is None:
-        click.echo(f"  ERROR: No audio files found in {source_path}")
+        click.echo(f"  ERROR: No audio files found for {source_path}")
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.FAILED)
         return
 
     # Cross-source dedup: scope by book directory to avoid collisions
-    # on common filenames like "audiobook.m4b" or "01.mp3"
     dedup_key = (
         f"{source_path.name}/{source_file.stem}"
         if source_path.is_dir()
@@ -65,131 +82,8 @@ def run(
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
         return
 
-    # Parse path into metadata -- construct path with book dir as parent
-    # so parse_path sees the directory name (rich metadata context)
-    # even when the audio file is nested in a subdirectory
-    if source_path.is_dir():
-        parse_target = source_path / source_file.name
-    else:
-        parse_target = source_file
-    metadata = parse_path(str(parse_target))
-
-    # Gather evidence from all sources (graceful on empty/corrupt files)
-    try:
-        tags = get_tags(source_file)
-        tag_author = extract_author_from_tags(tags)
-    except FileNotFoundError:
-        raise  # ffprobe missing or file disappeared -- fail fast
-    except Exception as e:
-        log.warning(f"Failed to read tags from {source_file.name}: {e}")
-        tags = {}
-        tag_author = ""
-    tag_metadata = {
-        "author": tag_author or "",
-        "title": tags.get("title", ""),
-        "album": tags.get("album", ""),
-    }
-
-    # Use tag title if path title looks like junk (matches filename stem)
-    if tag_metadata["title"] and len(tag_metadata["title"]) > 3:
-        if metadata["title"] == source_file.stem:
-            metadata["title"] = tag_metadata["title"]
-
-    # Search Audible for candidates -- widen the net when AI is available
-    audible_candidates = _search_audible(
-        metadata["title"],
-        metadata["series"],
-        config,
-        author=metadata.get("author", ""),
-        widen=bool(config.pipeline_llm_base_url),
-    )
-
-    # Pick best Audible match via fuzzy scoring
-    audible_result = None
-    has_ai = bool(config.pipeline_llm_base_url)
-    if audible_candidates:
-        scored = score_results(audible_candidates, metadata["title"], "")
-        best = scored[0]
-
-        if best["score"] >= config.asin_search_threshold:
-            audible_result = {
-                "author": best["author_str"],
-                "asin": best["asin"],
-                "title": best["title"],
-                "series": best.get("series", ""),
-                "position": best.get("position", ""),
-            }
-            log.debug(
-                f"Audible match: {best['author_str']!r} (score={best['score']:.0f})"
-            )
-        elif has_ai:
-            # AI available -- let it pick from all candidates in post
-            client = get_client(
-                config.pipeline_llm_base_url, config.pipeline_llm_api_key
-            )
-            ai_pick = disambiguate(
-                scored[:5],
-                metadata["title"],
-                "",
-                config.pipeline_llm_model,
-                client,
-            )
-            if ai_pick:
-                audible_result = {
-                    "author": ai_pick["author_str"],
-                    "asin": ai_pick["asin"],
-                    "title": ai_pick["title"],
-                    "series": ai_pick.get("series", ""),
-                    "position": ai_pick.get("position", ""),
-                }
-                log.debug(f"AI disambiguated: {ai_pick['author_str']!r}")
-
-    # Decide if AI should resolve metadata
-    should_resolve = config.ai_all or needs_resolution(
-        metadata,
-        tag_metadata,
-        audible_result,
-    )
-
-    if should_resolve:
-        client = get_client(config.pipeline_llm_base_url, config.pipeline_llm_api_key)
-        ai_metadata = resolve(
-            metadata,
-            tag_metadata,
-            audible_candidates,
-            config.pipeline_llm_model,
-            client,
-            source_filename=source_file.name,
-            source_directory=str(source_path),
-        )
-        if ai_metadata:
-            # Apply AI-resolved fields (only override non-empty values)
-            for key in ("author", "title", "series", "position"):
-                if key in ai_metadata and ai_metadata[key]:
-                    metadata[key] = ai_metadata[key]
-            log.info(f"AI resolved: author={ai_metadata.get('author', '?')!r}")
-        elif audible_result and audible_result.get("author"):
-            metadata["author"] = audible_result["author"]
-            log.debug(f"Using Audible author: {audible_result['author']!r}")
-        elif tag_author:
-            metadata["author"] = tag_author
-            log.debug(f"Using tag author: {tag_author!r}")
-    else:
-        # No AI needed -- use best available source
-        if audible_result and audible_result.get("author"):
-            metadata["author"] = audible_result["author"]
-        elif tag_author:
-            metadata["author"] = tag_author
-
-    log.debug(
-        f"Final: author={metadata['author']!r} title={metadata['title']!r} "
-        f"series={metadata['series']!r} pos={metadata['position']!r}"
-    )
-
     # Build destination
     dest_dir = build_plex_path(config.nfs_output_dir, metadata, index=index)
-    # Use source_path (the runner-identified book dir), not source_file.parent
-    # which may be a nested subdir (e.g., Book/CD1/ instead of Book/)
     book_dir = source_path if source_path.is_dir() else None
 
     # Reorganize mode: check if source dir is already the correct dest
@@ -228,7 +122,6 @@ def run(
         return
 
     if reorganize and book_dir:
-        # Move all files from source dir to dest dir
         dest_file = _move_book_directory(
             book_dir, dest_dir, stop_at=config.nfs_output_dir
         )
@@ -248,18 +141,38 @@ def run(
     if data:
         data["stages"]["organize"]["output_file"] = str(dest_file)
         data["stages"]["organize"]["dest_dir"] = str(dest_dir)
-        data["metadata"].update(
-            {
-                "parsed_author": metadata["author"],
-                "parsed_title": metadata["title"],
-                "parsed_series": metadata["series"],
-                "parsed_position": metadata["position"],
-            }
-        )
         manifest.update(book_hash, data)
 
     manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
     click.echo(f"  Organized: {dest_dir.relative_to(config.nfs_output_dir)}")
+
+
+def _find_source_file(data: dict, source_path: Path) -> Path | None:
+    """Find the audio file to organize.
+
+    Priority:
+    1. Metadata stage output (tagged file in work_dir)
+    2. Convert stage output (untagged file in work_dir)
+    3. Source path audio file discovery
+    """
+    stages = data.get("stages", {})
+
+    # Check metadata stage output (tagged file)
+    meta_output = stages.get("metadata", {}).get("output_file", "")
+    if meta_output:
+        p = Path(meta_output)
+        if p.is_file():
+            return p
+
+    # Check convert stage output
+    convert_output = stages.get("convert", {}).get("output_file", "")
+    if convert_output:
+        p = Path(convert_output)
+        if p.is_file():
+            return p
+
+    # Fall back to source path discovery
+    return _find_audio_file(source_path)
 
 
 def _move_book_directory(
@@ -277,7 +190,6 @@ def _move_book_directory(
     for item in sorted(source_dir.rglob("*")):
         if not item.is_file():
             continue
-        # Preserve subdirectory structure (e.g., CD1/track01.mp3)
         rel = item.relative_to(source_dir)
         dest_file = dest_dir / rel
         dest_file.parent.mkdir(parents=True, exist_ok=True)
@@ -288,7 +200,6 @@ def _move_book_directory(
         moved += 1
     log.info(f"Moved {moved} files: {source_dir.name} -> {dest_dir}")
 
-    # Clean up empty source dir and parents (bounded to library root)
     from ..ops.organize import _cleanup_empty_parents
 
     _cleanup_empty_parents(source_dir, stop_at=stop_at)
@@ -304,7 +215,6 @@ def _find_audio_file(source_path: Path) -> Path | None:
         log.debug(f"_find_audio_file: found file {source_path}")
         return source_path
 
-    # Directory -- find .m4b first, then any audio file
     m4b_files = list(source_path.rglob("*.m4b"))
     if m4b_files:
         log.debug(f"_find_audio_file: found m4b {m4b_files[0]}")
@@ -316,47 +226,3 @@ def _find_audio_file(source_path: Path) -> Path | None:
     result = audio_files[0] if audio_files else None
     log.debug(f"_find_audio_file: result={result}")
     return result
-
-
-def _search_audible(
-    title: str,
-    series: str,
-    config: PipelineConfig,
-    author: str = "",
-    widen: bool = False,
-) -> list[dict]:
-    """Search Audible with multiple query strategies, dedupe by ASIN.
-
-    When widen=True (AI available), cast a wider net with additional
-    query combinations -- AI will filter the results in post.
-    """
-    log.debug(
-        f"_search_audible: title={title!r} series={series!r} "
-        f"author={author!r} widen={widen}"
-    )
-
-    queries = [title]
-    if series:
-        queries.append(series)
-        queries.append(f"{series} {title}")
-    if widen and author:
-        queries.append(f"{author} {title}")
-        if series:
-            queries.append(f"{author} {series}")
-
-    seen_asins: set[str] = set()
-    all_results: list[dict] = []
-    for query in queries:
-        if not query:
-            continue
-        try:
-            hits = search(query, config.audible_region)
-        except Exception:
-            continue
-        for h in hits:
-            if h["asin"] not in seen_asins:
-                seen_asins.add(h["asin"])
-                all_results.append(h)
-
-    log.debug(f"_search_audible: found {len(all_results)} unique results")
-    return all_results
