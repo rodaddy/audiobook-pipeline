@@ -68,6 +68,22 @@ class PipelineRunner:
         each audiobook file found. Builds a LibraryIndex once for batch
         mode to enable O(1) lookups instead of per-file iterdir() scans.
         """
+        # Batch mode: directory + convert = parallel conversion
+        if source_path.is_dir() and self.mode == PipelineMode.CONVERT:
+            from .convert_orchestrator import ConvertOrchestrator
+
+            book_dirs = _find_book_directories(source_path)
+            click.echo(f"Batch convert: {len(book_dirs)} books in {source_path}")
+            if self.config.dry_run:
+                click.echo("[DRY-RUN] No changes will be made")
+
+            orchestrator = ConvertOrchestrator(self.config)
+            result = orchestrator.run_batch(book_dirs)
+
+            if result.failed > 0:
+                log.warning(f"Batch had {result.failed} failures out of {result.total}")
+            return
+
         # Batch mode: directory + organize = process all audiobooks inside
         if source_path.is_dir() and self.mode == PipelineMode.ORGANIZE:
             # Group by book directory -- each leaf dir with audio files
@@ -162,6 +178,9 @@ class PipelineRunner:
             if stage == Stage.ORGANIZE:
                 kwargs["index"] = index
                 kwargs["reorganize"] = self.reorganize
+            # Pass threads to convert stage (0 = all cores for single book)
+            if stage == Stage.CONVERT:
+                kwargs["threads"] = 0
             stage_runner(**kwargs)
 
             # Check if stage failed (stages may set FAILED without raising)

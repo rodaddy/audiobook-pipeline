@@ -44,6 +44,10 @@ class PipelineConfig(BaseSettings):
     file_mode: str = "644"
     dir_mode: str = "755"
 
+    # -- Parallel conversion --
+    max_parallel_converts: int = 0  # 0 = auto (CPU-based)
+    cpu_ceiling: float = 85.0
+
     # -- Behavior --
     dry_run: bool = False
     force: bool = False
@@ -91,8 +95,12 @@ class PipelineConfig(BaseSettings):
     def ensure_dirs(self) -> None:
         """Create all required directories if they don't exist."""
         for d in (
-            self.work_dir, self.manifest_dir, self.output_dir,
-            self.log_dir, self.archive_dir, self.lock_dir,
+            self.work_dir,
+            self.manifest_dir,
+            self.output_dir,
+            self.log_dir,
+            self.archive_dir,
+            self.lock_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
 

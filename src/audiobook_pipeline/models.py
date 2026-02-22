@@ -1,5 +1,6 @@
 """Core enums, constants, and type definitions for the audiobook pipeline."""
 
+from dataclasses import dataclass
 from enum import StrEnum
 
 
@@ -36,15 +37,25 @@ class Stage(StrEnum):
 # Which stages run for each mode
 STAGE_ORDER: dict[PipelineMode, list[Stage]] = {
     PipelineMode.CONVERT: [
-        Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT,
-        Stage.ASIN, Stage.METADATA, Stage.ORGANIZE,
-        Stage.ARCHIVE, Stage.CLEANUP,
+        Stage.VALIDATE,
+        Stage.CONCAT,
+        Stage.CONVERT,
+        Stage.ASIN,
+        Stage.METADATA,
+        Stage.ORGANIZE,
+        Stage.ARCHIVE,
+        Stage.CLEANUP,
     ],
     PipelineMode.ENRICH: [
-        Stage.ASIN, Stage.METADATA, Stage.ORGANIZE, Stage.CLEANUP,
+        Stage.ASIN,
+        Stage.METADATA,
+        Stage.ORGANIZE,
+        Stage.CLEANUP,
     ],
     PipelineMode.METADATA: [
-        Stage.ASIN, Stage.METADATA, Stage.CLEANUP,
+        Stage.ASIN,
+        Stage.METADATA,
+        Stage.CLEANUP,
     ],
     PipelineMode.ORGANIZE: [
         Stage.ORGANIZE,
@@ -56,11 +67,30 @@ PRE_COMPLETED_STAGES: dict[PipelineMode, list[Stage]] = {
     PipelineMode.ENRICH: [Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT],
     PipelineMode.METADATA: [Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT],
     PipelineMode.ORGANIZE: [
-        Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT,
-        Stage.ASIN, Stage.METADATA,
+        Stage.VALIDATE,
+        Stage.CONCAT,
+        Stage.CONVERT,
+        Stage.ASIN,
+        Stage.METADATA,
     ],
 }
 
-AUDIO_EXTENSIONS: frozenset[str] = frozenset({
-    ".mp3", ".m4a", ".m4b", ".flac", ".ogg", ".wma",
-})
+AUDIO_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".mp3",
+        ".m4a",
+        ".m4b",
+        ".flac",
+        ".ogg",
+        ".wma",
+    }
+)
+
+
+@dataclass
+class BatchResult:
+    """Result summary from a parallel batch conversion run."""
+
+    completed: int = 0
+    failed: int = 0
+    total: int = 0

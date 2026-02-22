@@ -21,11 +21,15 @@ def _run_ffprobe(args: list[str]) -> subprocess.CompletedProcess:
 
 def get_duration(file: Path) -> float:
     """Get duration in seconds."""
-    result = _run_ffprobe([
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(file),
-    ])
+    result = _run_ffprobe(
+        [
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(file),
+        ]
+    )
     output = result.stdout.strip()
     if not output:
         log.error(f"ffprobe returned empty duration for {file}")
@@ -37,11 +41,15 @@ def get_duration(file: Path) -> float:
 
 def get_bitrate(file: Path) -> int:
     """Get bitrate in bits/sec."""
-    result = _run_ffprobe([
-        "-show_entries", "format=bit_rate",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(file),
-    ])
+    result = _run_ffprobe(
+        [
+            "-show_entries",
+            "format=bit_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(file),
+        ]
+    )
     output = result.stdout.strip()
     if not output:
         log.error(f"ffprobe returned empty bitrate for {file}")
@@ -53,12 +61,17 @@ def get_bitrate(file: Path) -> int:
 
 def get_codec(file: Path) -> str:
     """Get audio codec name."""
-    result = _run_ffprobe([
-        "-select_streams", "a:0",
-        "-show_entries", "stream=codec_name",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(file),
-    ])
+    result = _run_ffprobe(
+        [
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(file),
+        ]
+    )
     codec = result.stdout.strip()
     log.debug(f"Codec for {file.name}: {codec}")
     return codec
@@ -66,12 +79,17 @@ def get_codec(file: Path) -> str:
 
 def get_channels(file: Path) -> int:
     """Get audio channel count."""
-    result = _run_ffprobe([
-        "-select_streams", "a:0",
-        "-show_entries", "stream=channels",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(file),
-    ])
+    result = _run_ffprobe(
+        [
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=channels",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(file),
+        ]
+    )
     output = result.stdout.strip()
     if not output:
         raise ValueError(f"ffprobe returned empty channel count for {file}")
@@ -82,12 +100,17 @@ def get_channels(file: Path) -> int:
 
 def get_sample_rate(file: Path) -> int:
     """Get sample rate in Hz."""
-    result = _run_ffprobe([
-        "-select_streams", "a:0",
-        "-show_entries", "stream=sample_rate",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(file),
-    ])
+    result = _run_ffprobe(
+        [
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=sample_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(file),
+        ]
+    )
     output = result.stdout.strip()
     if not output:
         raise ValueError(f"ffprobe returned empty sample rate for {file}")
@@ -127,9 +150,18 @@ def get_tags(file: Path) -> dict:
     title, album, genre, date, comment.
     """
     result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format_tags",
-         "-of", "json", str(file)],
-        capture_output=True, text=True,
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format_tags",
+            "-of",
+            "json",
+            str(file),
+        ],
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         return {}
@@ -166,11 +198,23 @@ def extract_author_from_tags(tags: dict) -> str:
 
 
 # Role/credit indicators that mean the rest isn't the author
-_ROLE_WORDS = frozenset({
-    "introduction", "narrator", "narrated", "read", "performed",
-    "foreword", "afterword", "translated", "edited", "abridged",
-    "unabridged", "producer", "director",
-})
+_ROLE_WORDS = frozenset(
+    {
+        "introduction",
+        "narrator",
+        "narrated",
+        "read",
+        "performed",
+        "foreword",
+        "afterword",
+        "translated",
+        "edited",
+        "abridged",
+        "unabridged",
+        "producer",
+        "director",
+    }
+)
 
 
 def _clean_author_tag(raw: str) -> str:
@@ -221,6 +265,22 @@ def _clean_author_tag(raw: str) -> str:
         return ""
 
     return name
+
+
+def get_format_name(file: Path) -> str:
+    """Get container format name (e.g. 'mov,mp4,m4a,3gp,3g2,mj2')."""
+    result = _run_ffprobe(
+        [
+            "-show_entries",
+            "format=format_name",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(file),
+        ]
+    )
+    fmt = result.stdout.strip()
+    log.debug(f"Format for {file.name}: {fmt}")
+    return fmt
 
 
 def count_chapters(file: Path) -> int:
