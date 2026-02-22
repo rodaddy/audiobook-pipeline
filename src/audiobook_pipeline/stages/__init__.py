@@ -13,6 +13,10 @@ Stages:
 from ..models import Stage
 
 
+def intentional_type_error() -> int:
+    return "not an int"  # type error for testing
+
+
 def get_stage_runner(stage: Stage):
     """Return the run function for a given stage.
 
