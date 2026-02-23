@@ -1,0 +1,422 @@
+2026-02-22 22:44:30.165 | INFO     | audiobook_pipeline.cli:main:118 - Reorganize mode: implies --mode organize --ai-all
+2026-02-22 22:44:30.165 | DEBUG    | audiobook_pipeline.cli:main:124 - Loaded env from /Volumes/ThunderBolt/Development/audiobook-pipeline/.env
+2026-02-22 22:44:30.165 | DEBUG    | audiobook_pipeline.cli:main:143 - Mode: organize (explicit)
+2026-02-22T22:44:30-05:00 | INFO     | cli          | Starting pipeline: source=/Volumes/media_files/AudioBooks mode=organize dry_run=False force=False resume=False
+Batch reorganize: 556 books in /Volumes/media_files/AudioBooks
+2026-02-22T22:44:33-05:00 | INFO     | runner       | Cleaned 21 stale manifests
+2026-02-22T22:44:34-05:00 | INFO     | index        | Library index built: 759 folders, 1693 files under /Volumes/media_files/AudioBooks
+Processing
+
+Pipeline: Alastair Reynolds (mode=organize, hash=abaad921f366ea5a)
+2026-02-22T22:44:34-05:00 | INFO     | manifest     | Created manifest abaad921f366ea5a mode=organize
+2026-02-22T22:44:36-05:00 | INFO     | asin         | AI resolved: author='Alastair Reynolds'
+  ASIN resolved: 'Alastair Reynolds' - 'Pushing Ice'
+2026-02-22T22:44:37-05:00 | INFO     | metadata     | Cover art downloaded: 100405 bytes
+  Tagged: Book - Pushing Ice.m4b (artist='Alastair Reynolds' +cover)
+  Moving Alastair Reynolds/
+       -> /Volumes/media_files/AudioBooks/Alastair Reynolds/Pushing Ice
+2026-02-22T22:44:42-05:00 | INFO     | organize     | Moved 3 files: Alastair Reynolds -> /Volumes/media_files/AudioBooks/Alastair Reynolds/Pushing Ice
+  Organized: Alastair Reynolds/Pushing Ice
+
+Pipeline: On the Shoulders of Titans (mode=organize, hash=b33a928b786f645c)
+2026-02-22T22:44:42-05:00 | INFO     | manifest     | Created manifest b33a928b786f645c mode=organize
+2026-02-22T22:44:44-05:00 | INFO     | asin         | AI resolved: author='Andrew Rowe'
+  ASIN resolved: 'Andrew Rowe' - 'On the Shoulders of Titans'
+2026-02-22T22:44:44-05:00 | INFO     | metadata     | Cover art downloaded: 187014 bytes
+  Tagged: Book 2 - On the Shoulders of Titans.m4b (artist='Andrew Rowe' +cover)
+  OK On the Shoulders of Titans/ -- already correctly placed
+
+Pipeline: Sufficiently Advanced Magic (mode=organize, hash=248a696a783ff24c)
+2026-02-22T22:44:51-05:00 | INFO     | manifest     | Created manifest 248a696a783ff24c mode=organize
+2026-02-22T22:44:53-05:00 | INFO     | asin         | AI resolved: author='Andrew Rowe'
+  ASIN resolved: 'Andrew Rowe' - 'Sufficiently Advanced Magic'
+2026-02-22T22:44:53-05:00 | INFO     | metadata     | Cover art downloaded: 188808 bytes
+  Tagged: Book 1 - Sufficiently Advanced Magic.m4b (artist='Andrew Rowe' +cover)
+  OK Sufficiently Advanced Magic/ -- already correctly placed
+
+Pipeline: The Silence of Unworthy Gods (mode=organize, hash=93115e7986317323)
+2026-02-22T22:44:57-05:00 | INFO     | manifest     | Created manifest 93115e7986317323 mode=organize
+2026-02-22T22:44:59-05:00 | INFO     | asin         | AI resolved: author='Andrew Rowe'
+  ASIN resolved: 'Andrew Rowe' - 'The Silence of Unworthy Gods'
+2026-02-22T22:45:00-05:00 | INFO     | metadata     | Cover art downloaded: 168893 bytes
+  Tagged: Book 4 - The Silence of Unworthy Gods.m4b (artist='Andrew Rowe' +cover)
+  OK The Silence of Unworthy Gods/ -- already correctly placed
+
+Pipeline: The Torch That Ignites the Stars (mode=organize, hash=981be20a3b1c5934)
+2026-02-22T22:45:09-05:00 | INFO     | manifest     | Created manifest 981be20a3b1c5934 mode=organize
+2026-02-22T22:45:11-05:00 | INFO     | asin         | AI resolved: author='Andrew Rowe'
+  ASIN resolved: 'Andrew Rowe' - 'The Torch That Ignites the Stars'
+2026-02-22T22:45:11-05:00 | INFO     | metadata     | Cover art downloaded: 190386 bytes
+  ERROR: The Torch That Ignites the Stars: Manifest not found for 981be20a3b1c5934
+
+Pipeline: When Wizards Follow Fools Arcane Ascension, Book 5 (mode=organize, hash=180e38f3c9081406)
+2026-02-22T22:45:20-05:00 | INFO     | manifest     | Created manifest 180e38f3c9081406 mode=organize
+2026-02-22T22:45:22-05:00 | INFO     | asin         | AI resolved: author='Andrew Rowe'
+  ASIN resolved: 'Andrew Rowe' - 'When Wizards Follow Fools'
+2026-02-22T22:45:22-05:00 | INFO     | metadata     | Cover art downloaded: 166152 bytes
+  Tagged: Book 5 - When Wizards Follow Fools Arcane Ascension, Book 5.m4b (artist='Andrew Rowe' +cover)
+  Moving When Wizards Follow Fools Arcane Ascension, Book 5/
+       -> /Volumes/media_files/AudioBooks/Andrew Rowe/Arcane Ascension/When Wizards Follow Fools
+2026-02-22T22:45:31-05:00 | INFO     | organize     | Moved 3 files: When Wizards Follow Fools Arcane Ascension, Book 5 -> /Volumes/media_files/AudioBooks/Andrew Rowe/Arcane Ascension/When Wizards Follow Fools
+  Organized: Andrew Rowe/Arcane Ascension/When Wizards Follow Fools
+
+Pipeline: Baptism of Fire (mode=organize, hash=31a0214372d8e997)
+2026-02-22T22:45:31-05:00 | INFO     | manifest     | Created manifest 31a0214372d8e997 mode=organize
+2026-02-22T22:45:33-05:00 | INFO     | asin         | AI resolved: author='Andrzej Sapkowski'
+  ASIN resolved: 'Andrzej Sapkowski' - 'Baptism of Fire'
+2026-02-22T22:45:34-05:00 | INFO     | metadata     | Cover art downloaded: 167192 bytes
+  Tagged: Book 3 - Baptism of Fire.m4b (artist='Andrzej Sapkowski' +cover)
+  OK Baptism of Fire/ -- already correctly placed
+
+Pipeline: Blood of Elves (mode=organize, hash=ffc4ef2d9b5dfd3d)
+2026-02-22T22:45:36-05:00 | INFO     | manifest     | Created manifest ffc4ef2d9b5dfd3d mode=organize
+2026-02-22T22:45:38-05:00 | INFO     | asin         | AI resolved: author='Andrzej Sapkowski'
+  ASIN resolved: 'Andrzej Sapkowski' - 'Blood of Elves'
+2026-02-22T22:45:39-05:00 | INFO     | metadata     | Cover art downloaded: 125900 bytes
+  Tagged: Book 1 - Blood of Elves.m4b (artist='Andrzej Sapkowski' +cover)
+  OK Blood of Elves/ -- already correctly placed
+
+Pipeline: Book - The Last Wish (mode=organize, hash=c5de4968ae96f60f)
+2026-02-22T22:45:41-05:00 | INFO     | manifest     | Created manifest c5de4968ae96f60f mode=organize
+2026-02-22T22:45:43-05:00 | INFO     | asin         | AI resolved: author='Andrzej Sapkowski'
+  ASIN resolved: 'Andrzej Sapkowski' - 'The Last Wish'
+2026-02-22T22:45:44-05:00 | INFO     | metadata     | Cover art downloaded: 103875 bytes
+  Tagged: Book - The Last Wish.m4b (artist='Andrzej Sapkowski' +cover)
+2026-02-22T22:45:46-05:00 | INFO     | organize     | Renamed: Book - The Last Wish.m4b -> Book 1 - Book - The Last Wish.m4b
+  Renamed Book - The Last Wish.m4b -> Book 1 - Book - The Last Wish.m4b
+
+Pipeline: Lady of the Lake (mode=organize, hash=b67b05c8a2e2b062)
+2026-02-22T22:45:46-05:00 | INFO     | manifest     | Created manifest b67b05c8a2e2b062 mode=organize
+2026-02-22T22:45:49-05:00 | INFO     | asin         | AI resolved: author='Andrzej Sapkowski'
+  ASIN resolved: 'Andrzej Sapkowski' - 'The Lady of the Lake'
+2026-02-22T22:45:50-05:00 | INFO     | metadata     | Cover art downloaded: 135188 bytes
+  Tagged: Book 5 - Lady of the Lake.m4b (artist='Andrzej Sapkowski' +cover)
+  OK Lady of the Lake/ -- already correctly placed
+
+Pipeline: Season of Storms (mode=organize, hash=954cfe219caab41c)
+2026-02-22T22:45:58-05:00 | INFO     | manifest     | Created manifest 954cfe219caab41c mode=organize
+2026-02-22T22:46:00-05:00 | INFO     | asin         | AI resolved: author='Andrzej Sapkowski'
+  ASIN resolved: 'Andrzej Sapkowski' - 'Season of Storms'
+2026-02-22T22:46:00-05:00 | INFO     | metadata     | Cover art downloaded: 122104 bytes
+  Tagged: Book 6 - Season of Storms.m4b (artist='Andrzej Sapkowski' +cover)
+  OK Season of Storms/ -- already correctly placed
+
+Pipeline: Sword of Destiny (mode=organize, hash=81d896fd3cf83c05)
+2026-02-22T22:46:04-05:00 | INFO     | manifest     | Created manifest 81d896fd3cf83c05 mode=organize
+2026-02-22T22:46:06-05:00 | INFO     | asin         | AI resolved: author='Andrzej Sapkowski'
+  ASIN resolved: 'Andrzej Sapkowski' - 'Sword of Destiny'
+2026-02-22T22:46:06-05:00 | INFO     | metadata     | Cover art downloaded: 115930 bytes
+  Tagged: Book 7 - Sword of Destiny.m4b (artist='Andrzej Sapkowski' +cover)
+2026-02-22T22:46:09-05:00 | INFO     | organize     | Renamed: Book 7 - Sword of Destiny.m4b -> Book 2 - Sword of Destiny.m4b
+  Renamed Book 7 - Sword of Destiny.m4b -> Book 2 - Sword of Destiny.m4b
+
+Pipeline: The Time of Contempt (mode=organize, hash=31691235b5478ab4)
+2026-02-22T22:46:09-05:00 | INFO     | manifest     | Created manifest 31691235b5478ab4 mode=organize
+2026-02-22T22:46:10-05:00 | INFO     | asin         | AI resolved: author='Andrzej Sapkowski'
+  ASIN resolved: 'Andrzej Sapkowski' - 'The Time of Contempt'
+2026-02-22T22:46:10-05:00 | INFO     | metadata     | Cover art downloaded: 95555 bytes
+  Tagged: Book 2 - The Time of Contempt.m4b (artist='Andrzej Sapkowski' +cover)
+  OK The Time of Contempt/ -- already correctly placed
+
+Pipeline: The Tower of Swallows (mode=organize, hash=a72043b37f27e475)
+2026-02-22T22:46:13-05:00 | INFO     | manifest     | Created manifest a72043b37f27e475 mode=organize
+2026-02-22T22:46:14-05:00 | INFO     | asin         | AI resolved: author='Andrzej Sapkowski'
+  ASIN resolved: 'Andrzej Sapkowski' - 'The Tower of Swallows'
+2026-02-22T22:46:15-05:00 | INFO     | metadata     | Cover art downloaded: 118200 bytes
+  Tagged: Book 4 - The Tower of Swallows.m4b (artist='Andrzej Sapkowski' +cover)
+  OK The Tower of Swallows/ -- already correctly placed
+
+Pipeline: Project Hail Mary (mode=organize, hash=1abd2608fda1ebbb)
+2026-02-22T22:46:29-05:00 | INFO     | manifest     | Created manifest 1abd2608fda1ebbb mode=organize
+2026-02-22T22:46:31-05:00 | INFO     | asin         | AI resolved: author='Andy Weir'
+  ASIN resolved: 'Andy Weir' - 'Project Hail Mary'
+2026-02-22T22:46:31-05:00 | INFO     | metadata     | Cover art downloaded: 145688 bytes
+  Tagged: Andy Weir - Project Hail Mary.m4b (artist='Andy Weir' +cover)
+  ERROR: No audio files found for /Volumes/media_files/AudioBooks/Andy Weir/Project Hail Mary
+  ERROR: Project Hail Mary: Stage 'organize' failed for Project Hail Mary
+
+Pipeline: Ann Leckie - The Raven Tower (mode=organize, hash=e64ca8a3559d3e50)
+2026-02-22T22:46:43-05:00 | INFO     | manifest     | Created manifest e64ca8a3559d3e50 mode=organize
+2026-02-22T22:46:44-05:00 | INFO     | asin         | AI resolved: author='Ann Leckie'
+  ASIN resolved: 'Ann Leckie' - 'The Raven Tower'
+2026-02-22T22:46:44-05:00 | INFO     | metadata     | Cover art downloaded: 101017 bytes
+  ERROR: Failed to replace Ann Leckie - The Raven Tower.m4b: [Errno 2] No such file or directory: '/Volumes/media_files/AudioBooks/Ann Leckie/Ann Leckie - The Raven Tower/Ann Leckie - The Raven Tower.m4b.tmp' -> '/Volumes/media_files/AudioBooks/Ann Leckie/Ann Leckie - The Raven Tower/Ann Leckie - The Raven Tower.m4b'
+  ERROR: Ann Leckie - The Raven Tower: Stage 'metadata' failed for Ann Leckie - The Raven Tower
+
+Pipeline: Blackwood Farm (mode=organize, hash=c23faa61bd3b3d42)
+2026-02-22T22:46:49-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'Blackwood Farm'
+2026-02-22T22:46:50-05:00 | INFO     | metadata     | Cover art downloaded: 109498 bytes
+  Tagged: Book 9 - Blackwood Farm.m4b (artist='Anne Rice' +cover)
+  ERROR: No audio files found for /Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/Blackwood Farm
+  ERROR: Blackwood Farm: Stage 'organize' failed for Blackwood Farm
+
+Pipeline: Blood Canticle (mode=organize, hash=72a8b2f8da4c15db)
+2026-02-22T22:47:02-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'Blood Canticle'
+2026-02-22T22:47:02-05:00 | INFO     | metadata     | Cover art downloaded: 79498 bytes
+  ERROR: Failed to replace Book 10 - Blood Canticle.m4b: [Errno 2] No such file or directory: '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/Blood Canticle/Book 10 - Blood Canticle.m4b.tmp' -> '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/Blood Canticle/Book 10 - Blood Canticle.m4b'
+  ERROR: Blood Canticle: Stage 'metadata' failed for Blood Canticle
+
+Pipeline: Blood Communion (mode=organize, hash=781d1609c15205ee)
+2026-02-22T22:47:08-05:00 | INFO     | manifest     | Created manifest 781d1609c15205ee mode=organize
+2026-02-22T22:47:10-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'Blood Communion'
+2026-02-22T22:47:10-05:00 | INFO     | metadata     | Cover art downloaded: 90212 bytes
+  ERROR: Failed to replace Book 13 - Blood Communion.m4b: [Errno 2] No such file or directory: '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/Blood Communion/Book 13 - Blood Communion.m4b.tmp' -> '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/Blood Communion/Book 13 - Blood Communion.m4b'
+  ERROR: Blood Communion: Stage 'metadata' failed for Blood Communion
+
+Pipeline: Blood and Gold (mode=organize, hash=e1be5679d77e9ffb)
+2026-02-22T22:47:15-05:00 | INFO     | manifest     | Created manifest e1be5679d77e9ffb mode=organize
+2026-02-22T22:47:17-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'Blood and Gold'
+2026-02-22T22:47:17-05:00 | INFO     | metadata     | Cover art downloaded: 101749 bytes
+  Tagged: Book 8 - Blood and Gold.m4b (artist='Anne Rice' +cover)
+  OK Blood and Gold/ -- already correctly placed
+
+Pipeline: Interview with the Vampire (mode=organize, hash=98f957564fa9106d)
+2026-02-22T22:47:28-05:00 | INFO     | manifest     | Created manifest 98f957564fa9106d mode=organize
+2026-02-22T22:47:30-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'Interview with the Vampire'
+2026-02-22T22:47:31-05:00 | INFO     | metadata     | Cover art downloaded: 139982 bytes
+  Tagged: Book 1 - Interview with the Vampire.m4b (artist='Anne Rice' +cover)
+  OK Interview with the Vampire/ -- already correctly placed
+
+Pipeline: Memnoch the Devil (mode=organize, hash=a9535a3e8ca19949)
+2026-02-22T22:47:41-05:00 | INFO     | manifest     | Created manifest a9535a3e8ca19949 mode=organize
+2026-02-22T22:47:43-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'Memnoch the Devil'
+2026-02-22T22:47:43-05:00 | INFO     | metadata     | Cover art downloaded: 63315 bytes
+  Tagged: Book 5 - Memnoch the Devil.m4b (artist='Anne Rice' +cover)
+  OK Memnoch the Devil/ -- already correctly placed
+
+Pipeline: Merrick (mode=organize, hash=923b1cf6408693a8)
+2026-02-22T22:47:44-05:00 | INFO     | manifest     | Created manifest 923b1cf6408693a8 mode=organize
+2026-02-22T22:47:45-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'Merrick'
+2026-02-22T22:47:47-05:00 | INFO     | metadata     | Cover art downloaded: 103286 bytes
+  Tagged: Book 7 - Merrick.m4b (artist='Anne Rice' +cover)
+  OK Merrick/ -- already correctly placed
+
+Pipeline: Prince Lestat (mode=organize, hash=f5f961e430ac5070)
+2026-02-22T22:47:54-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'Prince Lestat'
+2026-02-22T22:47:55-05:00 | INFO     | metadata     | Cover art downloaded: 48712 bytes
+  ERROR: Failed to replace Book 11 - Prince Lestat.m4b: [Errno 2] No such file or directory: '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/Prince Lestat/Book 11 - Prince Lestat.m4b.tmp' -> '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/Prince Lestat/Book 11 - Prince Lestat.m4b'
+  ERROR: Prince Lestat: Stage 'metadata' failed for Prince Lestat
+
+Pipeline: Prince Lestat and the Realms of Atlantis (mode=organize, hash=42b55bd4be6a8f6d)
+2026-02-22T22:48:03-05:00 | INFO     | manifest     | Created manifest 42b55bd4be6a8f6d mode=organize
+2026-02-22T22:48:04-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'Prince Lestat and the Realms of Atlantis'
+2026-02-22T22:48:05-05:00 | INFO     | metadata     | Cover art downloaded: 57702 bytes
+  ERROR: Failed to replace Book 12 - Prince Lestat and the Realms of Atlantis.m4b: [Errno 2] No such file or directory: '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/Prince Lestat and the Realms of Atlantis/Book 12 - Prince Lestat and the Realms of Atlantis.m4b.tmp' -> '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/Prince Lestat and the Realms of Atlantis/Book 12 - Prince Lestat and the Realms of Atlantis.m4b'
+  ERROR: Prince Lestat and the Realms of Atlantis: Stage 'metadata' failed for Prince Lestat and the Realms of Atlantis
+
+Pipeline: The Queen of the Damned (mode=organize, hash=2b8c5748b13f4212)
+2026-02-22T22:48:10-05:00 | INFO     | manifest     | Created manifest 2b8c5748b13f4212 mode=organize
+2026-02-22T22:48:12-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'The Queen of the Damned'
+2026-02-22T22:48:12-05:00 | INFO     | metadata     | Cover art downloaded: 197403 bytes
+  Tagged: Book 3 - The Queen of the Damned.m4b (artist='Anne Rice' +cover)
+  OK The Queen of the Damned/ -- already correctly placed
+
+Pipeline: The Tale of the Body Thief (mode=organize, hash=f5e6a3909f2eb5b6)
+2026-02-22T22:48:25-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'The Tale of the Body Thief'
+2026-02-22T22:48:26-05:00 | INFO     | metadata     | Cover art downloaded: 250412 bytes
+  ERROR: Failed to replace Book 4 - The Tale of the Body Thief.m4b: [Errno 16] Resource busy: '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/The Tale of the Body Thief/Book 4 - The Tale of the Body Thief.m4b.tmp' -> '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/The Tale of the Body Thief/Book 4 - The Tale of the Body Thief.m4b'
+  ERROR: The Tale of the Body Thief: Stage 'metadata' failed for The Tale of the Body Thief
+
+Pipeline: The Vampire Armand (mode=organize, hash=bb7f5aa2a4598062)
+2026-02-22T22:48:38-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'The Vampire Armand'
+2026-02-22T22:48:38-05:00 | INFO     | metadata     | Cover art downloaded: 109204 bytes
+  Tagged: Book 6 - The Vampire Armand.m4b (artist='Anne Rice' +cover)
+  OK The Vampire Armand/ -- already correctly placed
+
+Pipeline: The Vampire Lestat (mode=organize, hash=3f5aa4c0285cbec4)
+2026-02-22T22:48:47-05:00 | INFO     | asin         | AI resolved: author='Anne Rice'
+  ASIN resolved: 'Anne Rice' - 'The Vampire Lestat'
+2026-02-22T22:48:47-05:00 | INFO     | metadata     | Cover art downloaded: 144052 bytes
+  ERROR: Failed to replace Book 2 - The Vampire Lestat.m4b: [Errno 2] No such file or directory: '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/The Vampire Lestat/Book 2 - The Vampire Lestat.m4b.tmp' -> '/Volumes/media_files/AudioBooks/Anne Rice/The Vampire Chronicles/The Vampire Lestat/Book 2 - The Vampire Lestat.m4b'
+  ERROR: The Vampire Lestat: Stage 'metadata' failed for The Vampire Lestat
+
+Pipeline: Anthony Bourdain (mode=organize, hash=1d24d37c072a1a91)
+2026-02-22T22:48:58-05:00 | INFO     | manifest     | Created manifest 1d24d37c072a1a91 mode=organize
+2026-02-22T22:49:01-05:00 | INFO     | asin         | AI resolved: author='Anthony Bourdain'
+  ASIN resolved: 'Anthony Bourdain' - 'Kitchen Confidential'
+2026-02-22T22:49:01-05:00 | INFO     | metadata     | Cover art downloaded: 90020 bytes
+  ERROR: Failed to replace Kitchen Confidential.m4b: [Errno 2] No such file or directory: '/Volumes/media_files/AudioBooks/Anthony Bourdain/Kitchen Confidential.m4b.tmp' -> '/Volumes/media_files/AudioBooks/Anthony Bourdain/Kitchen Confidential.m4b'
+  ERROR: Anthony Bourdain: Stage 'metadata' failed for Anthony Bourdain
+
+Pipeline: B. T. Narro - The Rhythm of Rivalry, Book 1 - Bastial Energy (mode=organize, hash=2d93ac7af3ff394f)
+2026-02-22T22:49:09-05:00 | INFO     | manifest     | Created manifest 2d93ac7af3ff394f mode=organize
+2026-02-22T22:49:11-05:00 | INFO     | asin         | AI resolved: author='B. T. Narro'
+  ASIN resolved: 'B. T. Narro' - 'Bastial Energy'
+2026-02-22T22:49:12-05:00 | INFO     | metadata     | Cover art downloaded: 120857 bytes
+  Tagged: B. T. Narro - The Rhythm of Rivalry, Book 1 - Bastial Energy.m4b (artist='B. T. Narro' +cover)
+  Moving B. T. Narro - The Rhythm of Rivalry, Book 1 - Bastial Energy/
+       -> /Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/Bastial Energy
+2026-02-22T22:49:16-05:00 | INFO     | organize     | Renamed: B. T. Narro - The Rhythm of Rivalry, Book 1 - Bastial Energy.m4b -> Book 1 - B. T. Narro - The Rhythm of Rivalry, Book 1 - Bastial Energy.m4b
+2026-02-22T22:49:16-05:00 | INFO     | organize     | Moved 3 files: B. T. Narro - The Rhythm of Rivalry, Book 1 - Bastial Energy -> /Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/Bastial Energy
+  Organized: B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/Bastial Energy
+
+Pipeline: B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage (mode=organize, hash=19a0d2ca743f1dca)
+2026-02-22T22:49:16-05:00 | INFO     | manifest     | Created manifest 19a0d2ca743f1dca mode=organize
+2026-02-22T22:49:18-05:00 | INFO     | asin         | AI resolved: author='B. T. Narro'
+  ASIN resolved: 'B. T. Narro' - 'Bastial Energy'
+  Tagged: B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage.m4b (artist='B. T. Narro')
+  Moving B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/
+       -> /Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/Bastial Energy
+2026-02-22T22:49:21-05:00 | INFO     | organize     | Renamed: B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage.m4b -> Book 1 - B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage.m4b
+2026-02-22T22:49:21-05:00 | INFO     | organize     | Moved 6 files: B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage -> /Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/Bastial Energy
+  Organized: B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/Bastial Energy
+
+Pipeline: B. T. Narro - The Rhythm of Rivalry, Book 2 - Bastial Steel (mode=organize, hash=9373a9fc267ddb74)
+2026-02-22T22:49:23-05:00 | INFO     | asin         | AI resolved: author='B. T. Narro'
+  ASIN resolved: 'B. T. Narro' - 'Bastial Steel'
+2026-02-22T22:49:23-05:00 | INFO     | metadata     | Cover art downloaded: 85622 bytes
+  ERROR: Failed to replace B. T. Narro - The Rhythm of Rivalry, Book 2 - Bastial Steel.m4b: [Errno 16] Resource busy: '/Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 2 - Bastial Steel/B. T. Narro - The Rhythm of Rivalry, Book 2 - Bastial Steel.m4b.tmp' -> '/Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 2 - Bastial Steel/B. T. Narro - The Rhythm of Rivalry, Book 2 - Bastial Steel.m4b'
+  ERROR: B. T. Narro - The Rhythm of Rivalry, Book 2 - Bastial Steel: Stage 'metadata' failed for B. T. Narro - The Rhythm of Rivalry, Book 2 - Bastial Steel
+
+Pipeline: B. T. Narro - The Rhythm of Rivalry, Book 3 - Bastial Explosion (mode=organize, hash=8f04e26c5ce8872a)
+2026-02-22T22:49:26-05:00 | INFO     | manifest     | Created manifest 8f04e26c5ce8872a mode=organize
+2026-02-22T22:49:28-05:00 | INFO     | asin         | AI resolved: author='B. T. Narro'
+  ASIN resolved: 'B. T. Narro' - 'Bastial Explosion'
+2026-02-22T22:49:28-05:00 | INFO     | metadata     | Cover art downloaded: 199099 bytes
+  Tagged: B. T. Narro - The Rhythm of Rivalry, Book 3 - Bastial Explosion.m4b (artist='B. T. Narro' +cover)
+  Moving B. T. Narro - The Rhythm of Rivalry, Book 3 - Bastial Explosion/
+       -> /Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/Bastial Explosion
+2026-02-22T22:49:31-05:00 | INFO     | organize     | Renamed: B. T. Narro - The Rhythm of Rivalry, Book 3 - Bastial Explosion.m4b -> Book 3 - B. T. Narro - The Rhythm of Rivalry, Book 3 - Bastial Explosion.m4b
+2026-02-22T22:49:31-05:00 | INFO     | organize     | Moved 3 files: B. T. Narro - The Rhythm of Rivalry, Book 3 - Bastial Explosion -> /Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/Bastial Explosion
+  Organized: B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 1.5 - The Sartious Mage/Bastial Explosion
+
+Pipeline: B. T. Narro - The Rhythm of Rivalry, Book 4 - Bastial Frenzy (mode=organize, hash=04a26932df24e7ed)
+2026-02-22T22:49:32-05:00 | INFO     | asin         | AI resolved: author='B. T. Narro'
+  ASIN resolved: 'B. T. Narro' - 'Bastial Frenzy'
+2026-02-22T22:49:33-05:00 | INFO     | metadata     | Cover art downloaded: 131567 bytes
+  ERROR: Failed to replace B. T. Narro - The Rhythm of Rivalry, Book 4 - Bastial Frenzy.m4b: [Errno 16] Resource busy: '/Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 4 - Bastial Frenzy/B. T. Narro - The Rhythm of Rivalry, Book 4 - Bastial Frenzy.m4b.tmp' -> '/Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 4 - Bastial Frenzy/B. T. Narro - The Rhythm of Rivalry, Book 4 - Bastial Frenzy.m4b'
+  ERROR: B. T. Narro - The Rhythm of Rivalry, Book 4 - Bastial Frenzy: [Errno 16] Resource busy: '/Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 4 - Bastial Frenzy/_cover.jpg'
+
+Pipeline: B. T. Narro - The Rhythm of Rivalry, Book 5 - Bastial Sentinels (mode=organize, hash=ac3cd48c6625ad7a)
+2026-02-22T22:49:39-05:00 | INFO     | asin         | AI resolved: author='B.T. Narro'
+2026-02-22T22:49:40-05:00 | INFO     | index        | Author alias saved: 'B.T. Narro' -> 'B. T. Narro'
+  ASIN resolved: 'B. T. Narro' - 'Bastial Sentinels'
+2026-02-22T22:49:40-05:00 | INFO     | metadata     | Cover art downloaded: 92648 bytes
+  ERROR: Failed to replace B. T. Narro - The Rhythm of Rivalry, Book 5 - Bastial Sentinels.m4b: [Errno 2] No such file or directory: '/Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 5 - Bastial Sentinels/B. T. Narro - The Rhythm of Rivalry, Book 5 - Bastial Sentinels.m4b.tmp' -> '/Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 5 - Bastial Sentinels/B. T. Narro - The Rhythm of Rivalry, Book 5 - Bastial Sentinels.m4b'
+  ERROR: B. T. Narro - The Rhythm of Rivalry, Book 5 - Bastial Sentinels: [Errno 16] Resource busy: '/Volumes/media_files/AudioBooks/B. T. Narro/B. T. Narro - The Rhythm of Rivalry, Book 5 - Bastial Sentinels/_cover.jpg'
+
+Pipeline: What This Comedian Said Will Shock You (mode=organize, hash=e630f9394841bc03)
+2026-02-22T22:49:44-05:00 | INFO     | manifest     | Created manifest e630f9394841bc03 mode=organize
+2026-02-22T22:49:46-05:00 | INFO     | asin         | AI resolved: author='Bill Maher'
+  ASIN resolved: 'Bill Maher' - 'What This Comedian Said Will Shock You'
+2026-02-22T22:49:46-05:00 | INFO     | metadata     | Cover art downloaded: 104726 bytes
+  Tagged: What This Comedian Said Will Shock You.m4b (artist='Bill Maher' +cover)
+  OK What This Comedian Said Will Shock You/ -- already correctly placed
+
+Pipeline: Mistborn [Collected Tales] (mode=organize, hash=883061b229ae1920)
+2026-02-22T22:49:56-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'Mistborn [Collected Tales]'
+  Tagged: Mistborn [Collected Tales].m4b (artist='Brandon Sanderson')
+  OK Mistborn [Collected Tales]/ -- already correctly placed
+
+Pipeline: Shadows Of Self (mode=organize, hash=3d414375282e1615)
+2026-02-22T22:50:00-05:00 | INFO     | manifest     | Created manifest 3d414375282e1615 mode=organize
+2026-02-22T22:50:02-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'Shadows of Self'
+2026-02-22T22:50:02-05:00 | INFO     | metadata     | Cover art downloaded: 190721 bytes
+  Tagged: Mistborn [05] Shadows Of Self.m4b (artist='Brandon Sanderson' +cover)
+  Moving Shadows Of Self/
+       -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Wax and Wayne/Shadows of Self
+2026-02-22T22:50:05-05:00 | INFO     | organize     | Renamed: Mistborn [05] Shadows Of Self.m4b -> Book 2 - Mistborn [05] Shadows Of Self.m4b
+2026-02-22T22:50:05-05:00 | INFO     | organize     | Moved 1 files: Shadows Of Self -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Wax and Wayne/Shadows of Self
+  Organized: Brandon Sanderson/Wax and Wayne/Shadows of Self
+
+Pipeline: The Alloy Of Law (mode=organize, hash=11d298ea1bf36a32)
+2026-02-22T22:50:05-05:00 | INFO     | manifest     | Created manifest 11d298ea1bf36a32 mode=organize
+2026-02-22T22:50:06-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'The Alloy of Law'
+2026-02-22T22:50:06-05:00 | INFO     | metadata     | Cover art downloaded: 185297 bytes
+  Tagged: Mistborn [04] The Alloy Of Law.m4b (artist='Brandon Sanderson' +cover)
+2026-02-22T22:50:10-05:00 | INFO     | organize     | Renamed: Mistborn [04] The Alloy Of Law.m4b -> Book 4 - Mistborn [04] The Alloy Of Law.m4b
+  Renamed Mistborn [04] The Alloy Of Law.m4b -> Book 4 - Mistborn [04] The Alloy Of Law.m4b
+
+Pipeline: The Bands Of Mourning [01] (mode=organize, hash=24cfeae860f5903f)
+2026-02-22T22:50:10-05:00 | INFO     | manifest     | Created manifest 24cfeae860f5903f mode=organize
+2026-02-22T22:50:11-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'The Bands of Mourning'
+2026-02-22T22:50:12-05:00 | INFO     | metadata     | Cover art downloaded: 186944 bytes
+  Tagged: Mistborn [06] The Bands Of Mourning [01].m4b (artist='Brandon Sanderson' +cover)
+  Moving The Bands Of Mourning [01]/
+       -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Mistborn/The Bands Of Mourning [02]
+2026-02-22T22:50:15-05:00 | INFO     | organize     | Renamed: Mistborn [06] The Bands Of Mourning [01].m4b -> Book 6 - Mistborn [06] The Bands Of Mourning [01].m4b
+2026-02-22T22:50:15-05:00 | INFO     | organize     | Moved 1 files: The Bands Of Mourning [01] -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Mistborn/The Bands Of Mourning [02]
+  Organized: Brandon Sanderson/Mistborn/The Bands Of Mourning [02]
+
+Pipeline: The Bands Of Mourning [02] (mode=organize, hash=f78abec3604f08fc)
+2026-02-22T22:50:15-05:00 | INFO     | manifest     | Created manifest f78abec3604f08fc mode=organize
+2026-02-22T22:50:16-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'The Bands of Mourning'
+2026-02-22T22:50:16-05:00 | INFO     | metadata     | Cover art downloaded: 186944 bytes
+  Tagged: Mistborn [06] The Bands Of Mourning [02].m4b (artist='Brandon Sanderson' +cover)
+2026-02-22T22:50:19-05:00 | INFO     | organize     | Renamed: Mistborn [06] The Bands Of Mourning [02].m4b -> Book 6 - Mistborn [06] The Bands Of Mourning [02].m4b
+  Renamed Mistborn [06] The Bands Of Mourning [02].m4b -> Book 6 - Mistborn [06] The Bands Of Mourning [02].m4b
+
+Pipeline: The Final Empire (mode=organize, hash=466bb5a141a4ca75)
+2026-02-22T22:50:19-05:00 | INFO     | manifest     | Created manifest 466bb5a141a4ca75 mode=organize
+2026-02-22T22:50:20-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'The Final Empire'
+2026-02-22T22:50:20-05:00 | INFO     | metadata     | Cover art downloaded: 208680 bytes
+  Tagged: Mistborn [01] The Final Empire.m4b (artist='Brandon Sanderson' +cover)
+  Moving The Final Empire/
+       -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Mistborn Saga/The Final Empire
+2026-02-22T22:50:27-05:00 | INFO     | organize     | Renamed: Mistborn [01] The Final Empire.m4b -> Book 1 - Mistborn [01] The Final Empire.m4b
+2026-02-22T22:50:27-05:00 | INFO     | organize     | Moved 1 files: The Final Empire -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Mistborn Saga/The Final Empire
+  Organized: Brandon Sanderson/Mistborn Saga/The Final Empire
+
+Pipeline: The Hero Of Ages (mode=organize, hash=c9e02031ee9dc41c)
+2026-02-22T22:50:27-05:00 | INFO     | manifest     | Created manifest c9e02031ee9dc41c mode=organize
+2026-02-22T22:50:28-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'The Hero of Ages'
+2026-02-22T22:50:28-05:00 | INFO     | metadata     | Cover art downloaded: 143787 bytes
+  Tagged: Mistborn [03] The Hero Of Ages.m4b (artist='Brandon Sanderson' +cover)
+2026-02-22T22:50:36-05:00 | INFO     | organize     | Renamed: Mistborn [03] The Hero Of Ages.m4b -> Book 3 - Mistborn [03] The Hero Of Ages.m4b
+  Renamed Mistborn [03] The Hero Of Ages.m4b -> Book 3 - Mistborn [03] The Hero Of Ages.m4b
+
+Pipeline: The Well Of Ascension (mode=organize, hash=11523d1525ed825e)
+2026-02-22T22:50:36-05:00 | INFO     | manifest     | Created manifest 11523d1525ed825e mode=organize
+2026-02-22T22:50:37-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'The Well of Ascension'
+2026-02-22T22:50:37-05:00 | INFO     | metadata     | Cover art downloaded: 191853 bytes
+  Tagged: Mistborn [02] The Well Of Ascension.m4b (artist='Brandon Sanderson' +cover)
+2026-02-22T22:50:46-05:00 | INFO     | organize     | Renamed: Mistborn [02] The Well Of Ascension.m4b -> Book 2 - Mistborn [02] The Well Of Ascension.m4b
+  Renamed Mistborn [02] The Well Of Ascension.m4b -> Book 2 - Mistborn [02] The Well Of Ascension.m4b
+
+Pipeline: Mistborn Shadows Of Self (mode=organize, hash=266bb03e0fe0badd)
+2026-02-22T22:50:46-05:00 | INFO     | manifest     | Created manifest 266bb03e0fe0badd mode=organize
+2026-02-22T22:50:48-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'Shadows of Self'
+2026-02-22T22:50:48-05:00 | INFO     | metadata     | Cover art downloaded: 190721 bytes
+  Tagged: Mistborn [05] Shadows Of Self.m4b (artist='Brandon Sanderson' +cover)
+  Moving Mistborn Shadows Of Self/
+       -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Wax and Wayne/Shadows of Self
+2026-02-22T22:50:52-05:00 | INFO     | organize     | Moved 0 files: Mistborn Shadows Of Self -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Wax and Wayne/Shadows of Self
+  Organized: Brandon Sanderson/Wax and Wayne/Shadows of Self
+
+Pipeline: Mistborn The Alloy Of Law (mode=organize, hash=382be946d5a5981d)
+2026-02-22T22:50:52-05:00 | INFO     | manifest     | Created manifest 382be946d5a5981d mode=organize
+2026-02-22T22:50:54-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'The Alloy of Law'
+2026-02-22T22:50:54-05:00 | INFO     | metadata     | Cover art downloaded: 185297 bytes
+  Tagged: Mistborn [04] The Alloy Of Law.m4b (artist='Brandon Sanderson' +cover)
+  Moving Mistborn The Alloy Of Law/
+       -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Mistborn/The Alloy Of Law
+2026-02-22T22:50:57-05:00 | INFO     | organize     | Moved 0 files: Mistborn The Alloy Of Law -> /Volumes/media_files/AudioBooks/Brandon Sanderson/Mistborn/The Alloy Of Law
+  Organized: Brandon Sanderson/Mistborn/The Alloy Of Law
+
+Pipeline: Mistborn The Bands Of Mourning (mode=organize, hash=40f5969e228542ba)
+2026-02-22T22:50:57-05:00 | INFO     | manifest     | Created manifest 40f5969e228542ba mode=organize
+2026-02-22T22:50:59-05:00 | INFO     | asin         | AI resolved: author='Brandon Sanderson'
+  ASIN resolved: 'Brandon Sanderson' - 'The Bands of Mourning'
+2026-02-22T22:50:59-05:00 | INFO     | metadata     | Cover art downloaded: 186944 bytes

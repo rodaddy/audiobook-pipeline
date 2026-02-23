@@ -11,7 +11,7 @@ import pytest
 
 from audiobook_pipeline.config import PipelineConfig
 from audiobook_pipeline.library_index import LibraryIndex
-from audiobook_pipeline.manifest import Manifest
+from audiobook_pipeline.pipeline_db import PipelineDB
 from audiobook_pipeline.models import STAGE_ORDER, PipelineMode, Stage, StageStatus
 from audiobook_pipeline.stages.organize import _find_audio_file, run
 
@@ -22,7 +22,6 @@ def mock_config(tmp_path):
         _env_file=None,
         nfs_output_dir=tmp_path / "library",
         work_dir=tmp_path / "work",
-        manifest_dir=tmp_path / "manifests",
         pipeline_llm_base_url="",
         pipeline_llm_api_key="",
     )
@@ -30,9 +29,9 @@ def mock_config(tmp_path):
 
 @pytest.fixture
 def mock_manifest(tmp_path):
-    manifest_dir = tmp_path / "manifests"
-    manifest_dir.mkdir(parents=True, exist_ok=True)
-    return Manifest(manifest_dir)
+    db_path = tmp_path / "work" / "pipeline.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return PipelineDB(db_path)
 
 
 def _setup_manifest_with_metadata(

@@ -13,6 +13,11 @@ manifests/
 # Personal config (use .env.example as template)
 .env
 
+# Database (contains book metadata, cover art, author aliases)
+*.db
+*.db-wal
+*.db-shm
+
 # macOS
 .DS_Store
 
@@ -24,3 +29,7 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+
+# OMC / PRD session artifacts
+.omc/
+.prd/
