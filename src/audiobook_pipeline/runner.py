@@ -32,6 +32,7 @@ log = logger.bind(stage="runner")
 def _find_book_directories(
     root: Path,
     extensions: frozenset[str] = AUDIO_EXTENSIONS,
+    include_chaptered_m4b: bool = False,
 ) -> list[Path]:
     """Find book root directories that contain matching audio files.
 
@@ -43,12 +44,19 @@ def _find_book_directories(
         root: Root directory to search
         extensions: File extensions to match (default: all audio types).
             Use CONVERTIBLE_EXTENSIONS to skip dirs with only .m4b files.
+        include_chaptered_m4b: When True (used with CONVERTIBLE_EXTENSIONS),
+            also include directories with multiple .m4b files (chaptered
+            books that need concatenation).
 
     Single-pass O(n) -- no redundant rglob calls.
     """
     book_dirs: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         has_audio = any(Path(f).suffix.lower() in extensions for f in filenames)
+        # Also detect chaptered m4b: multiple .m4b files = needs concat
+        if not has_audio and include_chaptered_m4b:
+            m4b_count = sum(1 for f in filenames if f.lower().endswith(".m4b"))
+            has_audio = m4b_count > 1
         if has_audio:
             book_dirs.append(Path(dirpath))
             # Prune children so os.walk doesn't descend into subdirs
@@ -90,7 +98,9 @@ class PipelineRunner:
             from .convert_orchestrator import ConvertOrchestrator
 
             book_dirs = _find_book_directories(
-                source_path, extensions=CONVERTIBLE_EXTENSIONS
+                source_path,
+                extensions=CONVERTIBLE_EXTENSIONS,
+                include_chaptered_m4b=True,
             )
             click.echo(f"Batch convert: {len(book_dirs)} books in {source_path}")
             if self.config.dry_run:

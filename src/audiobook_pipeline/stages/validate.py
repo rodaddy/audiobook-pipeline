@@ -60,6 +60,18 @@ def run(
         if f.is_file() and f.suffix.lower() in valid_extensions
     ]
 
+    # If no convertible files found, check for chaptered m4b (multiple
+    # m4b files that need concatenation into a single m4b)
+    if not all_files:
+        m4b_files = [
+            f
+            for f in source_path.rglob("*")
+            if f.is_file() and f.suffix.lower() == ".m4b"
+        ]
+        if len(m4b_files) > 1:
+            log.info(f"Chaptered m4b detected: {len(m4b_files)} files")
+            all_files = m4b_files
+
     if not all_files:
         log.error(f"No audio files found in {source_path}")
         manifest.set_stage(book_hash, Stage.VALIDATE, StageStatus.FAILED)
