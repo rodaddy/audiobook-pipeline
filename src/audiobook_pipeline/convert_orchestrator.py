@@ -5,6 +5,7 @@ monitoring CPU load and dynamically allocating resources across parallel jobs.
 """
 
 import os
+import shutil
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
@@ -43,6 +44,30 @@ class ConvertOrchestrator:
         """
         self.config = config
         self.manifest = Manifest(config.manifest_dir)
+
+    def clean_state(self, book_dirs: list[Path]) -> None:
+        """Remove manifests and work dirs for books in the batch.
+
+        Called by default before each run so books process from scratch.
+        Use --resume to skip this and pick up where a previous run left off.
+        """
+        cleaned_manifests = 0
+        cleaned_work = 0
+        for book_path in book_dirs:
+            book_hash = generate_book_hash(book_path)
+            manifest_file = self.config.manifest_dir / f"{book_hash}.json"
+            if manifest_file.exists():
+                manifest_file.unlink()
+                cleaned_manifests += 1
+            work_dir = self.config.work_dir / book_hash
+            if work_dir.exists():
+                shutil.rmtree(work_dir, ignore_errors=True)
+                cleaned_work += 1
+        if cleaned_manifests or cleaned_work:
+            log.info(
+                f"Cleaned state: {cleaned_manifests} manifests, "
+                f"{cleaned_work} work dirs"
+            )
 
     def run_batch(self, book_dirs: list[Path]) -> BatchResult:
         """Process a list of book directories in parallel with CPU monitoring.
@@ -147,8 +172,6 @@ class ConvertOrchestrator:
             book_hash = generate_book_hash(source_path)
             work_dir = self.config.work_dir / book_hash
             if work_dir.exists():
-                import shutil
-
                 shutil.rmtree(work_dir, ignore_errors=True)
                 log.debug(f"Cleaned up work dir for failed: {source_path.name}")
             return False
@@ -184,12 +207,12 @@ class ConvertOrchestrator:
         ]
 
         for stage in mvp_stages:
-            # In dry-run, skip metadata/organize/cleanup (no output file)
+            # In dry-run, skip metadata/organize (no output file)
             # ASIN can run in dry-run (metadata-only, no file changes)
+            # Cleanup still runs to remove work dirs created by validate/concat
             if self.config.dry_run and stage in (
                 Stage.METADATA,
                 Stage.ORGANIZE,
-                Stage.CLEANUP,
             ):
                 log.debug(f"Skipping {stage.value} in dry-run mode")
                 continue
@@ -396,13 +419,19 @@ class ConvertOrchestrator:
             f"(artist={metadata['author']!r})"
         )
 
-        # Mark organize+cleanup as completed (skipped)
+        # Mark organize as completed (skipped -- file already at destination)
         data = self.manifest.read(book_hash)
         if data:
             data["stages"]["organize"]["output_file"] = str(existing_file)
             data["stages"]["organize"]["dest_dir"] = str(dest_dir)
             self.manifest.update(book_hash, data)
         self.manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
+
+        # Clean up work dir (would normally be done by cleanup stage)
+        work_dir = self.config.work_dir / book_hash
+        if work_dir.exists() and self.config.cleanup_work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            log.debug(f"Cleaned work dir after retag: {source_path.name}")
         self.manifest.set_stage(book_hash, Stage.CLEANUP, StageStatus.COMPLETED)
         return True
 
@@ -417,7 +446,9 @@ class ConvertOrchestrator:
             max_workers = self.config.max_parallel_converts
             log.debug(f"Using configured max_parallel_converts: {max_workers}")
         else:
-            max_workers = max(1, min(4, cpu_count // 3))  # auto: conservative
+            # Balance workers vs threads: enough parallelism to keep CPU busy
+            # but enough threads per worker for ffmpeg to work efficiently
+            max_workers = max(1, min(4, cpu_count // 3))
             log.debug(
                 f"Auto-calculated max_workers: {max_workers} "
                 f"(cpu_count={cpu_count})"

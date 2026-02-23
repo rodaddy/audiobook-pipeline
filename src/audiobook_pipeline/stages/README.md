@@ -39,6 +39,8 @@ Stages:
                 (work_dir). Album is "Series, Book N" when series exists,
                 otherwise title. Writes to temp file with atomic replace.
                 Cover download failure is non-fatal. Supports dry-run mode.
+                Uses try/finally guards for _cover.jpg and .m4b.tmp cleanup
+                to prevent orphaned temp files on any error path.
     organize -- Pure file-mover. Reads pre-resolved metadata from manifest
                 (set by ASIN stage) and tagged file from metadata stage output.
                 Builds Plex-compatible destination path, copies or moves file

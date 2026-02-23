@@ -117,15 +117,16 @@ def run(
 
     # Download cover art (non-fatal on failure)
     cover_path = None
-    if cover_url:
-        cover_path = _download_cover(cover_url, output_file.parent)
+    try:
+        if cover_url:
+            cover_path = _download_cover(cover_url, output_file.parent)
 
-    # Write tags via ffmpeg
-    success = _write_tags(output_file, tags, cover_path=cover_path)
-
-    # Clean up cover temp file
-    if cover_path and cover_path.exists():
-        cover_path.unlink(missing_ok=True)
+        # Write tags via ffmpeg
+        success = _write_tags(output_file, tags, cover_path=cover_path)
+    finally:
+        # Always clean up cover temp file, even on unexpected exceptions
+        if cover_path and cover_path.exists():
+            cover_path.unlink(missing_ok=True)
 
     if not success:
         manifest.set_stage(book_hash, Stage.METADATA, StageStatus.FAILED)
@@ -265,21 +266,24 @@ def _write_tags(
         )
     except subprocess.TimeoutExpired:
         click.echo(f"  ERROR: ffmpeg timed out tagging {filepath.name}")
-        temp_file.unlink(missing_ok=True)
         return False
+    except Exception:
+        # Unexpected error (e.g. OSError) -- ensure temp cleanup
+        raise
+    else:
+        if result.returncode != 0:
+            click.echo(f"  ERROR: ffmpeg failed tagging {filepath.name}")
+            log.error(f"ffmpeg stderr: {result.stderr[-500:]}")
+            return False
 
-    if result.returncode != 0:
-        click.echo(f"  ERROR: ffmpeg failed tagging {filepath.name}")
-        log.error(f"ffmpeg stderr: {result.stderr[-500:]}")
+        # Atomic replace
+        try:
+            temp_file.replace(filepath)
+        except OSError as e:
+            click.echo(f"  ERROR: Failed to replace {filepath.name}: {e}")
+            return False
+
+        return True
+    finally:
+        # Always clean up temp file if it still exists
         temp_file.unlink(missing_ok=True)
-        return False
-
-    # Atomic replace
-    try:
-        temp_file.replace(filepath)
-    except OSError as e:
-        click.echo(f"  ERROR: Failed to replace {filepath.name}: {e}")
-        temp_file.unlink(missing_ok=True)
-        return False
-
-    return True

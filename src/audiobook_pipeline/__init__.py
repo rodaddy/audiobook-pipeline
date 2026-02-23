@@ -60,7 +60,9 @@ Core modules:
                            Manages ThreadPoolExecutor with dynamic thread allocation,
                            CPU load monitoring via psutil.cpu_percent(), and per-book
                            stage sequencing (validate -> concat -> convert -> asin ->
-                           metadata -> organize -> cleanup). Returns BatchResult summary.
+                           metadata -> organize -> cleanup). Cleans work dirs on
+                           retag-in-place early exit and in dry-run mode. Returns
+                           BatchResult summary.
     library_index       -- In-memory library index for O(1) folder/file lookups in batch mode.
                            Replaces per-call iterdir() with dict-based scans via os.walk().
                            Supports cross-source dedup, dynamic registration, reorganize detection.
