@@ -23,7 +23,9 @@ class TestParsePath:
 
     def test_pattern_a_author_series_position_title(self):
         """Pattern A: Author-Series-#N-Title (parent directory pattern)"""
-        result = parse_path("/media/Brandon Sanderson-Mistborn-#1-The Final Empire/audio.m4b")
+        result = parse_path(
+            "/media/Brandon Sanderson-Mistborn-#1-The Final Empire/audio.m4b"
+        )
         assert result["author"] == "Brandon Sanderson"
         assert result["series"] == "Mistborn"
         assert result["position"] == "1"
@@ -72,12 +74,16 @@ class TestParsePath:
 
     def test_pattern_c_grandparent_as_author(self):
         """Pattern C: grandparent directory is author"""
-        result = parse_path("/media/Brandon Sanderson/Mistborn Era 1/The Final Empire.m4b")
+        result = parse_path(
+            "/media/Brandon Sanderson/Mistborn Era 1/The Final Empire.m4b"
+        )
         assert result["author"] == "Brandon Sanderson"
 
     def test_pattern_e_author_dash_series_grandparent(self):
         """Pattern E: grandparent split on ' - ' into Author - Series"""
-        result = parse_path("/media/Brandon Sanderson - Mistborn/Book 1/The Final Empire.m4b")
+        result = parse_path(
+            "/media/Brandon Sanderson - Mistborn/Book 1/The Final Empire.m4b"
+        )
         assert result["author"] == "Brandon Sanderson"
         assert result["series"] == "Mistborn"
 
@@ -153,7 +159,9 @@ class TestParsePath:
 
     def test_pipeline_hash_stripped(self):
         """Pipeline hash suffix stripped before parsing"""
-        result = parse_path("/media/Author-Series-#1-Title - a7edd490030561fb/audio.m4b")
+        result = parse_path(
+            "/media/Author-Series-#1-Title - a7edd490030561fb/audio.m4b"
+        )
         assert result["title"] == "Title"
 
     def test_no_metadata_extracted(self):
@@ -298,7 +306,10 @@ class TestBuildPlexPath:
             "position": "1",
         }
         result = build_plex_path(tmp_path, metadata)
-        assert result == tmp_path / "Brandon Sanderson" / "Mistborn" / "The Final Empire"
+        assert (
+            result
+            == tmp_path / "Brandon Sanderson" / "Mistborn" / "Book 1 - The Final Empire"
+        )
 
     def test_author_no_series(self, tmp_path):
         """Structure: Author/Title/"""
@@ -320,7 +331,9 @@ class TestBuildPlexPath:
             "position": "1",
         }
         result = build_plex_path(tmp_path, metadata)
-        assert result == tmp_path / "_unsorted" / "Mistborn" / "The Final Empire"
+        assert (
+            result == tmp_path / "_unsorted" / "Mistborn" / "Book 1 - The Final Empire"
+        )
 
     def test_no_author_no_series(self, tmp_path):
         """Structure: _unsorted/Title/"""
@@ -357,7 +370,9 @@ class TestBuildPlexPath:
         # Verify each component is sanitized
         assert result.parts[-3] == "Author_Name"  # author folder (/ becomes _)
         assert result.parts[-2] == "Series_Name"  # series folder (: becomes _)
-        assert result.parts[-1] == "Title_Name"   # title folder (<> becomes __, collapsed to _)
+        assert (
+            result.parts[-1] == "Title_Name"
+        )  # title folder (<> becomes __, collapsed to _)
 
     def test_unknown_fallback_for_empty_title(self, tmp_path):
         """Empty title falls back to 'Unknown'"""
@@ -558,7 +573,10 @@ class TestBuildPlexPathWithIndex:
             "position": "1",
         }
         result = build_plex_path(tmp_path, metadata, index=index)
-        assert result == tmp_path / "Brandon Sanderson" / "Mistborn" / "The Final Empire"
+        assert (
+            result
+            == tmp_path / "Brandon Sanderson" / "Mistborn" / "Book 1 - The Final Empire"
+        )
 
     def test_index_near_match_reuses(self, tmp_path):
         """Index near-match detection works like filesystem fallback"""

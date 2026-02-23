@@ -51,7 +51,7 @@ def search(query: str, region: str = "com") -> list[dict]:
     results = []
     for p in products:
         authors = [a.get("name", "") for a in (p.get("authors") or [])]
-        series_info = (p.get("series") or [None])[0]
+        series_info = _pick_best_series(p.get("series") or [])
         # Extract cover art URL -- prefer larger sizes
         images = p.get("product_images") or {}
         cover_url = images.get("1024", images.get("500", ""))
@@ -66,6 +66,13 @@ def search(query: str, region: str = "com") -> list[dict]:
         raw_summary = p.get("publisher_summary", "") or ""
         publisher_summary = _strip_html(raw_summary)
 
+        # Store all series for AI evidence (helps prefer sub-series over umbrella)
+        all_series = [
+            {"name": s.get("title", ""), "position": s.get("sequence", "")}
+            for s in (p.get("series") or [])
+            if s.get("title")
+        ]
+
         results.append(
             {
                 "asin": p.get("asin", ""),
@@ -77,6 +84,7 @@ def search(query: str, region: str = "com") -> list[dict]:
                 "narrator_str": ", ".join(narrators),
                 "series": series_info.get("title", "") if series_info else "",
                 "position": series_info.get("sequence", "") if series_info else "",
+                "all_series": all_series,
                 "release_date": release_date,
                 "year": release_date[:4] if release_date else "",
                 "cover_url": cover_url,
@@ -90,6 +98,36 @@ def search(query: str, region: str = "com") -> list[dict]:
 
     logger.debug(f"Audible results: {len(results)} products")
     return results
+
+
+def _pick_best_series(series_list: list[dict]) -> dict | None:
+    """Pick the most specific series when Audible returns multiple.
+
+    Audible often lists both a specific sub-series (e.g., "Liveship Traders")
+    and an umbrella super-series (e.g., "Realms of the Elderlings"). The
+    sub-series has a lower position number (Book 2) while the super-series
+    has a high one (Book 5). Prefer the lowest position to get the specific
+    series.
+    """
+    if not series_list:
+        return None
+    if len(series_list) == 1:
+        return series_list[0]
+
+    def _sort_key(s: dict) -> float:
+        seq = s.get("sequence", "") or ""
+        try:
+            return float(seq)
+        except (ValueError, TypeError):
+            return 999.0
+
+    best = min(series_list, key=_sort_key)
+    if len(series_list) > 1:
+        logger.debug(
+            f"Multi-series: picked '{best.get('title')}' #{best.get('sequence')} "
+            f"from {[s.get('title') for s in series_list]}"
+        )
+    return best
 
 
 def _extract_genre(category_ladders: list[dict]) -> str:

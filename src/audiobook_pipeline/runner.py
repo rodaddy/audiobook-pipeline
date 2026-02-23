@@ -12,7 +12,7 @@ from loguru import logger
 
 from .config import PipelineConfig
 from .errors import ExternalToolError
-from .manifest import Manifest
+from .pipeline_db import PipelineDB
 from .models import (
     AUDIO_EXTENSIONS,
     CONVERTIBLE_EXTENSIONS,
@@ -65,13 +65,11 @@ class PipelineRunner:
         config: PipelineConfig,
         mode: PipelineMode,
         reorganize: bool = False,
-        resume: bool = False,
     ) -> None:
         self.config = config
         self.mode = mode
         self.reorganize = reorganize
-        self.resume = resume
-        self.manifest = Manifest(config.manifest_dir)
+        self.db = PipelineDB(config.db_path)
 
     def run(
         self,
@@ -97,8 +95,6 @@ class PipelineRunner:
                 click.echo("[DRY-RUN] No changes will be made")
 
             orchestrator = ConvertOrchestrator(self.config)
-            if not self.resume:
-                orchestrator.clean_state(book_dirs)
             result = orchestrator.run_batch(book_dirs)
 
             if result.failed > 0:
@@ -107,8 +103,6 @@ class PipelineRunner:
 
         # Batch mode: directory + organize = process all audiobooks inside
         if source_path.is_dir() and self.mode == PipelineMode.ORGANIZE:
-            # Group by book directory -- each leaf dir with audio files
-            # is one book (handles both single .m4b and multi-chapter .mp3)
             book_dirs = _find_book_directories(source_path)
 
             total = len(book_dirs)
@@ -117,38 +111,44 @@ class PipelineRunner:
             if self.config.dry_run:
                 click.echo("[DRY-RUN] No changes will be made")
 
-            # Clean stale manifests unless resuming
-            if not self.resume:
-                self._clean_manifests(book_dirs)
+            # Acquire reorganize lock for batch operations
+            if self.reorganize and not skip_lock:
+                if not self.db.acquire_reorganize_lock():
+                    click.echo("ERROR: Another reorganize is already running")
+                    return
 
-            # Build library index once for the entire batch
-            from .library_index import LibraryIndex
+            try:
+                # Build library index once for the entire batch
+                from .library_index import LibraryIndex
 
-            index = LibraryIndex(self.config.nfs_output_dir)
+                index = LibraryIndex(self.config.nfs_output_dir, db=self.db)
 
-            ok = 0
-            errors = 0
-            with click.progressbar(
-                book_dirs,
-                label=f"Processing",
-                show_eta=True,
-                show_pos=True,
-                item_show_func=lambda d: d.name if d else "",
-            ) as bar:
-                for d in bar:
-                    try:
-                        self._run_single(
-                            d,
-                            override_asin,
-                            skip_lock,
-                            index=index,
-                        )
-                        ok += 1
-                    except Exception as e:
-                        errors += 1
-                        click.echo(f"  ERROR: {d.name}: {e}")
+                ok = 0
+                errors = 0
+                with click.progressbar(
+                    book_dirs,
+                    label="Processing",
+                    show_eta=True,
+                    show_pos=True,
+                    item_show_func=lambda d: d.name if d else "",
+                ) as bar:
+                    for d in bar:
+                        try:
+                            self._run_single(
+                                d,
+                                override_asin,
+                                skip_lock,
+                                index=index,
+                            )
+                            ok += 1
+                        except Exception as e:
+                            errors += 1
+                            click.echo(f"  ERROR: {d.name}: {e}")
 
-            click.echo(f"\nBatch complete: {ok} succeeded, {errors} failed")
+                click.echo(f"\nBatch complete: {ok} succeeded, {errors} failed")
+            finally:
+                if self.reorganize and not skip_lock:
+                    self.db.release_reorganize_lock()
             return
 
         self._run_single(source_path, override_asin, skip_lock)
@@ -163,7 +163,26 @@ class PipelineRunner:
         """Run the pipeline for a single source file/directory."""
         from .sanitize import generate_book_hash
 
-        stages = STAGE_ORDER.get(self.mode, [])
+        effective_mode = self.mode
+
+        # Auto-promote: organize mode dirs with convertible audio but no .m4b
+        # need the full convert pipeline (validate -> concat -> convert -> ...)
+        if effective_mode == PipelineMode.ORGANIZE and source_path.is_dir():
+            has_m4b = any(source_path.rglob("*.m4b"))
+            if not has_m4b:
+                has_convertible = any(
+                    f
+                    for f in source_path.rglob("*")
+                    if f.is_file() and f.suffix.lower() in CONVERTIBLE_EXTENSIONS
+                )
+                if has_convertible:
+                    effective_mode = PipelineMode.CONVERT
+                    log.info(
+                        f"Auto-promote to convert: {source_path.name} "
+                        f"(has convertible audio, no .m4b)"
+                    )
+
+        stages = STAGE_ORDER.get(effective_mode, [])
         book_hash = generate_book_hash(source_path)
 
         click.echo(
@@ -173,14 +192,14 @@ class PipelineRunner:
         log.debug(f"Stages: {' -> '.join(s.value for s in stages)}")
         log.debug(f"nfs_output_dir: {self.config.nfs_output_dir}")
 
-        # Create or load manifest
-        existing = self.manifest.read(book_hash)
+        # Create or load book record
+        existing = self.db.read(book_hash)
         if existing is None:
-            self.manifest.create(book_hash, str(source_path), self.mode)
+            self.db.create(book_hash, str(source_path), self.mode)
 
         # Execute each stage in order
         for stage in stages:
-            stage_status = self.manifest.read_field(
+            stage_status = self.db.read_field(
                 book_hash,
                 f"stages.{stage.value}.status",
             )
@@ -190,12 +209,16 @@ class PipelineRunner:
                 )
                 continue
 
-            stage_runner = get_stage_runner(stage)
+            try:
+                stage_runner = get_stage_runner(stage)
+            except NotImplementedError:
+                log.debug(f"Skipping unimplemented stage: {stage.value}")
+                continue
             kwargs = {
                 "source_path": source_path,
                 "book_hash": book_hash,
                 "config": self.config,
-                "manifest": self.manifest,
+                "manifest": self.db,
                 "dry_run": self.config.dry_run,
                 "verbose": self.config.verbose,
             }
@@ -210,7 +233,7 @@ class PipelineRunner:
             stage_runner(**kwargs)
 
             # Check if stage failed (stages may set FAILED without raising)
-            post_status = self.manifest.read_field(
+            post_status = self.db.read_field(
                 book_hash,
                 f"stages.{stage.value}.status",
             )
@@ -218,24 +241,6 @@ class PipelineRunner:
                 raise RuntimeError(
                     f"Stage '{stage.value}' failed for {source_path.name}"
                 )
-
-    def _clean_manifests(self, book_dirs: list[Path]) -> None:
-        """Remove stale manifests for books in a batch.
-
-        Mirrors ConvertOrchestrator.clean_state() but only cleans manifests
-        (no work dirs for organize mode).
-        """
-        from .sanitize import generate_book_hash
-
-        cleaned = 0
-        for book_path in book_dirs:
-            book_hash = generate_book_hash(book_path)
-            manifest_file = self.config.manifest_dir / f"{book_hash}.json"
-            if manifest_file.exists():
-                manifest_file.unlink()
-                cleaned += 1
-        if cleaned:
-            log.info(f"Cleaned {cleaned} stale manifests")
 
     def run_cmd(
         self,

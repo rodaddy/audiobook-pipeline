@@ -14,14 +14,12 @@ class TestConvertOrchestrator:
         return PipelineConfig(
             _env_file=None,
             work_dir=tmp_path / "work",
-            manifest_dir=tmp_path / "manifests",
             nfs_output_dir=tmp_path / "output",
             dry_run=True,
         )
 
     def test_empty_batch(self, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
         orch = ConvertOrchestrator(config)
         result = orch.run_batch([])
         assert result.total == 0

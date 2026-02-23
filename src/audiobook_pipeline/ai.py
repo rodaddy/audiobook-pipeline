@@ -131,7 +131,15 @@ def resolve(
         evidence_parts.append("\nAudible search results:")
         for i, cand in enumerate(audible_candidates[:5], 1):
             parts = [f'{i}. "{cand["title"]}" by {cand["author_str"]}']
-            if cand.get("series"):
+            # Show all series if available, otherwise fall back to primary
+            all_series = cand.get("all_series", [])
+            if all_series and len(all_series) > 1:
+                series_strs = [
+                    f"{s['name']} #{s['position']}" if s.get("position") else s["name"]
+                    for s in all_series
+                ]
+                parts.append(f"(Series: {' / '.join(series_strs)})")
+            elif cand.get("series"):
                 parts.append(f"(Series: {cand['series']}")
                 if cand.get("position"):
                     parts[-1] += f" #{cand['position']}"
@@ -158,8 +166,11 @@ def resolve(
         "Determine the correct audiobook metadata from the evidence above.\n"
         "- Author: real person's first and last name (not series/brand names)\n"
         "- Title: the specific book title (not the series name)\n"
-        "- Series: series name if applicable, otherwise NONE\n"
-        "- Position: book number in series if applicable, otherwise NONE\n\n"
+        "- Series: the SPECIFIC sub-series name, NOT an umbrella/universe name. "
+        "When a book belongs to multiple series (e.g., 'Liveship Traders #2' AND "
+        "'Realms of the Elderlings #5'), always pick the specific trilogy/series "
+        "(Liveship Traders), not the overarching universe/world name. NONE if no series.\n"
+        "- Position: book number within the chosen series, otherwise NONE\n\n"
         "Reply in this exact format (one per line, no extra text):\n"
         "AUTHOR: <name>\n"
         "TITLE: <title>\n"

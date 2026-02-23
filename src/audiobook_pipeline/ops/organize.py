@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from ..models import AUDIO_EXTENSIONS
 from ..sanitize import sanitize_filename
 
 log = logger.bind(stage="organize-ops")
@@ -55,11 +56,14 @@ _GENERIC_BASENAMES = frozenset(
 # ---------------------------------------------------------------------------
 
 
-def parse_path(source_path: str) -> dict:
+def parse_path(source_path: str, source_dir: Path | None = None) -> dict:
     """Parse a source path into structured metadata components.
 
     Returns dict with keys: author, title, series, position.
     Any field may be empty string if not determined.
+
+    When source_dir is provided and title == author, uses the first audio
+    filename (minus year prefix) as title fallback.
     """
     log.debug(f"parse_path: {source_path}")
     p = Path(source_path)
@@ -280,6 +284,23 @@ def parse_path(source_path: str) -> dict:
     if not title:
         title = _clean_title_fallback(basename)
 
+    # Author-only fallback: when title looks like an author name (not a real
+    # book title), try the first audio filename instead.  Triggers when:
+    #   - title == author (dirname used as both), OR
+    #   - title == parent dirname AND that dirname passes _looks_like_author()
+    if source_dir and title:
+        _is_author_title = author and title.strip() == author.strip()
+        _is_dirname_title = title.strip() == parent_name.strip() and _looks_like_author(
+            title
+        )
+        if _is_author_title or _is_dirname_title:
+            audio_title = _title_from_audio_file(source_dir)
+            if audio_title:
+                log.debug(f"Author-only fallback: title={title} -> {audio_title}")
+                if not author and _is_dirname_title:
+                    author = title  # promote the dirname to author
+                title = audio_title
+
     result = _build_result(author, title, series, position)
     log.debug(f"parse_path result: {result}")
     return result
@@ -329,13 +350,25 @@ def build_plex_path(
 
     reuse = index.reuse_existing if index else _reuse_existing
 
+    # Prefix title folder with "Book N -" when in a series with a position
+    has_book_prefix = bool(
+        series_name and position and not re.fullmatch(r"\d{4}", position)
+    )
+    if has_book_prefix:
+        title_folder = f"Book {position} - {title}"
+    else:
+        title_folder = title
+
     # Top level is always author. No author = _unsorted.
     if author and series_name:
         base = nfs_output_dir / author
         series_name = reuse(base, series_name)
         title_dir = base / series_name
-        title = reuse(title_dir, title)
-        result = title_dir / title
+        # Skip near-match reuse when title has "Book N -" prefix -- this is an
+        # intentional rename and we don't want to match old un-numbered folders
+        if not has_book_prefix:
+            title_folder = reuse(title_dir, title_folder)
+        result = title_dir / title_folder
     elif author:
         base = nfs_output_dir / author
         title = reuse(base, title)
@@ -344,8 +377,9 @@ def build_plex_path(
         base = nfs_output_dir / "_unsorted"
         series_name = reuse(base, series_name)
         title_dir = base / series_name
-        title = reuse(title_dir, title)
-        result = title_dir / title
+        if not has_book_prefix:
+            title_folder = reuse(title_dir, title_folder)
+        result = title_dir / title_folder
     else:
         base = nfs_output_dir / "_unsorted"
         title = reuse(base, title)
@@ -386,14 +420,18 @@ def copy_to_library(
     source_file: Path,
     dest_dir: Path,
     dry_run: bool = False,
+    dest_filename: str | None = None,
 ) -> Path:
     """Copy an audiobook file to its library destination.
 
     Creates the destination directory tree and copies the file.
     Returns the destination file path.
+
+    When dest_filename is provided, uses it instead of source_file.name.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_file = dest_dir / source_file.name
+    filename = dest_filename if dest_filename else source_file.name
+    dest_file = dest_dir / filename
 
     if dry_run:
         return dest_file
@@ -401,7 +439,7 @@ def copy_to_library(
     if dest_file.exists():
         # Skip if same size (already copied)
         if dest_file.stat().st_size == source_file.stat().st_size:
-            log.debug(f"Skip copy (same size): {source_file.name}")
+            log.debug(f"Skip copy (same size): {filename}")
             return dest_file
 
     log.info(f"Copy {source_file} -> {dest_file}")
@@ -414,20 +452,24 @@ def move_in_library(
     dest_dir: Path,
     dry_run: bool = False,
     library_root: Path | None = None,
+    dest_filename: str | None = None,
 ) -> Path:
     """Move an audiobook file within the library (for reorganize mode).
 
     Moves the file to dest_dir and cleans up empty parent directories
     left behind. Returns the destination file path.
+
+    When dest_filename is provided, uses it instead of source_file.name.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_file = dest_dir / source_file.name
+    filename = dest_filename if dest_filename else source_file.name
+    dest_file = dest_dir / filename
 
     if dry_run:
         return dest_file
 
     if dest_file.exists() and dest_file.stat().st_size == source_file.stat().st_size:
-        log.debug(f"Skip move (same size): {source_file.name}")
+        log.debug(f"Skip move (same size): {filename}")
         return dest_file
 
     log.info(f"Move {source_file} -> {dest_file}")
@@ -649,6 +691,41 @@ def _clean_title_fallback(basename: str) -> str:
     title = re.sub(r"^\d+\s*[-\u2013]?\s*", "", title)
     title = re.sub(r"\s+", " ", title).strip()
     return title if title else basename
+
+
+def _title_from_audio_file(directory: Path) -> str:
+    """Extract title from the first audio file's stem, stripping year prefix.
+
+    Returns empty string if no audio files found or if stem is garbage.
+    """
+    try:
+        # Use rglob() to find files in nested CD1/CD2 dirs
+        audio_files = [
+            f
+            for f in directory.rglob("*")
+            if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+        ]
+        if not audio_files:
+            return ""
+        first_file = sorted(audio_files)[0]
+        stem = first_file.stem
+        # Strip pipeline hash suffix
+        stem = _strip_hash(stem)
+        # Strip year prefix: "1991 - Barrayar" -> "Barrayar"
+        cleaned = re.sub(r"^\d{4}\s*-\s*", "", stem)
+        cleaned = cleaned.strip()
+
+        # Validate: reject generic basenames and purely numeric stems
+        if cleaned.lower() in _GENERIC_BASENAMES:
+            log.debug(f"_title_from_audio_file: rejected generic basename: {cleaned}")
+            return ""
+        if cleaned.isdigit():
+            log.debug(f"_title_from_audio_file: rejected numeric stem: {cleaned}")
+            return ""
+
+        return cleaned
+    except (OSError, PermissionError):
+        return ""
 
 
 def _build_result(author: str, title: str, series: str, position: str) -> dict:

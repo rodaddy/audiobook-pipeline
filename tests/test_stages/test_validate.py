@@ -7,8 +7,8 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from audiobook_pipeline.config import PipelineConfig
-from audiobook_pipeline.manifest import Manifest
-from audiobook_pipeline.models import Stage, StageStatus
+from audiobook_pipeline.pipeline_db import PipelineDB
+from audiobook_pipeline.models import PipelineMode, Stage, StageStatus
 from audiobook_pipeline.stages.validate import run, _natural_sort_key
 
 
@@ -37,7 +37,6 @@ class TestValidateStage:
         return PipelineConfig(
             _env_file=None,
             work_dir=tmp_path / "work",
-            manifest_dir=tmp_path / "manifests",
         )
 
     def _make_source(self, tmp_path, files=None):
@@ -55,11 +54,10 @@ class TestValidateStage:
     @patch("audiobook_pipeline.stages.validate.check_disk_space", return_value=True)
     def test_happy_path(self, mock_disk, mock_valid, mock_br, mock_dur, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         src = self._make_source(tmp_path)
         book_hash = "testhash123"
-        manifest.create(book_hash, str(src), "convert")
+        manifest.create(book_hash, str(src), PipelineMode.CONVERT)
 
         run(source_path=src, book_hash=book_hash, config=config, manifest=manifest)
 
@@ -75,12 +73,11 @@ class TestValidateStage:
 
     def test_not_a_directory(self, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         fake_file = tmp_path / "notadir.mp3"
         fake_file.write_text("x")
         book_hash = "testhash456"
-        manifest.create(book_hash, str(fake_file), "convert")
+        manifest.create(book_hash, str(fake_file), PipelineMode.CONVERT)
 
         run(
             source_path=fake_file, book_hash=book_hash, config=config, manifest=manifest
@@ -91,11 +88,10 @@ class TestValidateStage:
 
     def test_no_audio_files(self, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         src = self._make_source(tmp_path, files=["readme.txt"])
         book_hash = "testhash789"
-        manifest.create(book_hash, str(src), "convert")
+        manifest.create(book_hash, str(src), PipelineMode.CONVERT)
 
         run(source_path=src, book_hash=book_hash, config=config, manifest=manifest)
 
@@ -108,11 +104,10 @@ class TestValidateStage:
     @patch("audiobook_pipeline.stages.validate.check_disk_space", return_value=True)
     def test_bitrate_capping(self, mock_disk, mock_valid, mock_br, mock_dur, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         src = self._make_source(tmp_path)
         book_hash = "testhashcap"
-        manifest.create(book_hash, str(src), "convert")
+        manifest.create(book_hash, str(src), PipelineMode.CONVERT)
 
         run(source_path=src, book_hash=book_hash, config=config, manifest=manifest)
 
@@ -128,11 +123,10 @@ class TestValidateStage:
         self, mock_disk, mock_valid, mock_br, mock_dur, tmp_path
     ):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         src = self._make_source(tmp_path)
         book_hash = "testhashdry"
-        manifest.create(book_hash, str(src), "convert")
+        manifest.create(book_hash, str(src), PipelineMode.CONVERT)
 
         run(
             source_path=src,

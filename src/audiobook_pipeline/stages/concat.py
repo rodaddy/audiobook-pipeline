@@ -20,7 +20,7 @@ from ..models import Stage, StageStatus
 
 if TYPE_CHECKING:
     from ..config import PipelineConfig
-    from ..manifest import Manifest
+    from ..pipeline_db import PipelineDB
 
 log = logger.bind(stage="concat")
 
@@ -29,7 +29,7 @@ def run(
     source_path: Path,
     book_hash: str,
     config: PipelineConfig,
-    manifest: Manifest,
+    manifest: PipelineDB,
     dry_run: bool = False,
     verbose: bool = False,
     **kwargs,

@@ -1,10 +1,8 @@
-"""Tests for manifest.py -- JSON state machine, atomic writes, mode pre-completion."""
-
-import json
+"""Tests for pipeline_db.py -- SQLite state machine, concurrent access, mode pre-completion."""
 
 import pytest
 
-from audiobook_pipeline.manifest import Manifest
+from audiobook_pipeline.pipeline_db import PipelineDB
 from audiobook_pipeline.models import (
     ErrorCategory,
     PipelineMode,
@@ -16,7 +14,7 @@ from audiobook_pipeline.errors import ManifestError
 
 @pytest.fixture
 def manifest(tmp_path):
-    return Manifest(tmp_path / "manifests")
+    return PipelineDB(tmp_path / "test.db")
 
 
 @pytest.fixture
@@ -27,11 +25,10 @@ def book(manifest):
 
 
 class TestCreate:
-    def test_creates_json_file(self, manifest, tmp_path):
+    def test_creates_book_record(self, manifest, tmp_path):
         manifest.create("h1", "/src/book", PipelineMode.CONVERT)
-        path = tmp_path / "manifests" / "h1.json"
-        assert path.exists()
-        data = json.loads(path.read_text())
+        data = manifest.read("h1")
+        assert data is not None
         assert data["book_hash"] == "h1"
         assert data["source_path"] == "/src/book"
         assert data["mode"] == "convert"
@@ -190,7 +187,7 @@ class TestRetryAndError:
 
 class TestAtomicWrites:
     def test_concurrent_safe(self, manifest, tmp_path):
-        """Verify no partial writes -- file is always valid JSON."""
+        """Verify concurrent updates work correctly via SQLite."""
         manifest.create("atom", "/src", PipelineMode.CONVERT)
         for i in range(20):
             manifest.update("atom", {"retry_count": i})

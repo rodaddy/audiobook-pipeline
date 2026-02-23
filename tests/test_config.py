@@ -9,11 +9,27 @@ from audiobook_pipeline.config import PipelineConfig
 
 # Env vars that pydantic-settings reads -- must be cleaned for default tests
 _CONFIG_ENV_VARS = [
-    "WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR", "ARCHIVE_DIR",
-    "LOCK_DIR", "NFS_OUTPUT_DIR", "MAX_BITRATE", "CHANNELS", "CODEC",
-    "FILE_OWNER", "FILE_MODE", "DIR_MODE", "DRY_RUN", "FORCE", "VERBOSE",
-    "CLEANUP_WORK_DIR", "LOG_LEVEL", "METADATA_SOURCE", "AUDIBLE_REGION",
-    "AUDNEXUS_REGION", "MAX_RETRIES",
+    "WORK_DIR",
+    "OUTPUT_DIR",
+    "LOG_DIR",
+    "ARCHIVE_DIR",
+    "LOCK_DIR",
+    "NFS_OUTPUT_DIR",
+    "MAX_BITRATE",
+    "CHANNELS",
+    "CODEC",
+    "FILE_OWNER",
+    "FILE_MODE",
+    "DIR_MODE",
+    "DRY_RUN",
+    "FORCE",
+    "VERBOSE",
+    "CLEANUP_WORK_DIR",
+    "LOG_LEVEL",
+    "METADATA_SOURCE",
+    "AUDIBLE_REGION",
+    "AUDNEXUS_REGION",
+    "MAX_RETRIES",
 ]
 
 
@@ -23,8 +39,13 @@ def _clean_env(monkeypatch):
     for var in _CONFIG_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     # Also clear ASIN_SEARCH_THRESHOLD and AI vars that .env may set
-    for var in ["ASIN_SEARCH_THRESHOLD", "AI_ALL", "OPENAI_BASE_URL",
-                "OPENAI_API_KEY", "OPENAI_MODEL"]:
+    for var in [
+        "ASIN_SEARCH_THRESHOLD",
+        "AI_ALL",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+    ]:
         monkeypatch.delenv(var, raising=False)
 
 
@@ -46,7 +67,6 @@ class TestDefaults:
     def test_default_paths(self):
         config = PipelineConfig(_env_file=None)
         assert config.work_dir == Path("/var/lib/audiobook-pipeline/work")
-        assert config.manifest_dir == Path("/var/lib/audiobook-pipeline/manifests")
         assert config.nfs_output_dir == Path("/mnt/media/AudioBooks")
 
     def test_metadata_defaults(self):

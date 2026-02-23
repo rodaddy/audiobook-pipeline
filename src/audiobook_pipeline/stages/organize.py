@@ -8,6 +8,7 @@ vs move (reorganize mode), and library index registration.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -17,7 +18,7 @@ import click
 from loguru import logger
 
 from ..config import PipelineConfig
-from ..manifest import Manifest
+from ..pipeline_db import PipelineDB
 from ..models import AUDIO_EXTENSIONS, Stage, StageStatus
 from ..ops.organize import (
     _strip_hash,
@@ -64,7 +65,7 @@ def run(
     source_path: Path,
     book_hash: str,
     config: PipelineConfig,
-    manifest: Manifest,
+    manifest: PipelineDB,
     dry_run: bool = False,
     verbose: bool = False,
     index: LibraryIndex | None = None,
@@ -108,16 +109,20 @@ def run(
     # Build clean library filename (year strip, series position prefix)
     library_filename = _build_library_filename(source_file.name, metadata)
 
-    # Cross-source dedup: scope by book directory to avoid collisions
-    dedup_key = (
-        f"{source_path.name}/{source_file.stem}"
-        if source_path.is_dir()
-        else source_file.stem
-    )
-    if index and index.mark_processed(dedup_key):
-        click.echo(f"  SKIPPED {source_file.name} -- already processed in batch")
-        manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
-        return
+    # Cross-source dedup: scope by book directory to avoid collisions.
+    # Skip dedup in reorganize mode -- each directory is processed independently
+    # so misplaced duplicates get moved to the correct location (or cleaned up
+    # when dest already has the file via same-size skip in _move_book_directory).
+    if not reorganize:
+        dedup_key = (
+            f"{source_path.name}/{source_file.stem}"
+            if source_path.is_dir()
+            else source_file.stem
+        )
+        if index and index.mark_processed(dedup_key):
+            click.echo(f"  SKIPPED {source_file.name} -- already processed in batch")
+            manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
+            return
 
     # Build destination
     dest_dir = build_plex_path(config.nfs_output_dir, metadata, index=index)
@@ -125,7 +130,11 @@ def run(
 
     # Reorganize mode: check if source dir is already the correct dest
     if reorganize and book_dir:
-        if book_dir.resolve() == dest_dir.resolve():
+        try:
+            same = os.path.samefile(book_dir, dest_dir)
+        except OSError:
+            same = False
+        if same:
             # Directory is correct, but file may need renaming (year strip, etc.)
             if source_file.name != library_filename:
                 renamed = source_file.parent / library_filename
@@ -244,7 +253,46 @@ def _move_book_directory(
     Cleans up the empty source directory after moving.
     Returns the destination directory path.
     """
+    # Detect nesting: if dest_dir is inside source_dir, flatten by moving
+    # to a sibling temp dir first to avoid recursive nesting
+    try:
+        dest_dir.relative_to(source_dir)
+        is_nested = True
+    except ValueError:
+        is_nested = False
+
+    if is_nested:
+        # Dest is child of source -- move source contents to temp, then to dest
+        temp_dir = source_dir.parent / f".{source_dir.name}_moving"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        for item in sorted(source_dir.iterdir()):
+            if item == temp_dir:
+                continue
+            try:
+                shutil.move(str(item), str(temp_dir / item.name))
+            except OSError:
+                shutil.copy2(str(item), str(temp_dir / item.name))
+        # Now source_dir is empty (except temp), remove and rename
+        shutil.rmtree(source_dir, ignore_errors=True)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for item in temp_dir.iterdir():
+            dest_name = (rename_map or {}).get(item.name, item.name)
+            try:
+                shutil.move(str(item), str(dest_dir / dest_name))
+            except OSError:
+                shutil.copy2(str(item), str(dest_dir / dest_name))
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        log.info(f"Flattened nested move: {source_dir.name} -> {dest_dir}")
+        return dest_dir
+
     dest_dir.mkdir(parents=True, exist_ok=True)
+    # Clean up orphan cover files from failed metadata runs before moving
+    for orphan in source_dir.rglob("_cover.jpg"):
+        try:
+            orphan.unlink()
+        except OSError:
+            log.warning(f"Could not remove orphan cover: {orphan}")
+
     moved = 0
     for item in sorted(source_dir.rglob("*")):
         if not item.is_file():
@@ -261,7 +309,12 @@ def _move_book_directory(
         if dest_file.exists() and dest_file.stat().st_size == item.stat().st_size:
             log.debug(f"Skip (same size): {rel}")
             continue
-        shutil.move(str(item), str(dest_file))
+        # NFS-safe move: try rename, fall back to copy+delete
+        try:
+            shutil.move(str(item), str(dest_file))
+        except OSError:
+            shutil.copy2(str(item), str(dest_file))
+            item.unlink()
         if dest_name != item.name:
             log.info(f"Renamed: {item.name} -> {dest_name}")
         moved += 1
@@ -284,8 +337,9 @@ def _find_audio_file(source_path: Path) -> Path | None:
 
     m4b_files = list(source_path.rglob("*.m4b"))
     if m4b_files:
-        log.debug(f"_find_audio_file: found m4b {m4b_files[0]}")
-        return m4b_files[0]
+        largest = max(m4b_files, key=lambda f: f.stat().st_size)
+        log.debug(f"_find_audio_file: found m4b {largest}")
+        return largest
 
     audio_files = [
         f for f in source_path.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS

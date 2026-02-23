@@ -5,7 +5,8 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from audiobook_pipeline.config import PipelineConfig
-from audiobook_pipeline.manifest import Manifest
+from audiobook_pipeline.pipeline_db import PipelineDB
+from audiobook_pipeline.models import PipelineMode
 from audiobook_pipeline.stages.convert import run, _detect_encoder
 
 
@@ -40,7 +41,6 @@ class TestConvertStage:
         return PipelineConfig(
             _env_file=None,
             work_dir=tmp_path / "work",
-            manifest_dir=tmp_path / "manifests",
         )
 
     def _setup_work_dir(self, config, book_hash):
@@ -50,9 +50,9 @@ class TestConvertStage:
         (work_dir / "metadata.txt").write_text(";FFMETADATA1\ntitle=Test\n")
         return work_dir
 
-    def _create_manifest(self, config, book_hash, bitrate=128, file_count=2):
-        manifest = Manifest(config.manifest_dir)
-        manifest.create(book_hash, "/src/book", "convert")
+    def _create_manifest(self, tmp_path, config, book_hash, bitrate=128, file_count=2):
+        manifest = PipelineDB(tmp_path / "test.db")
+        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
         manifest.update(
             book_hash,
             {
@@ -68,8 +68,7 @@ class TestConvertStage:
     @patch("audiobook_pipeline.stages.convert.subprocess.run")
     def test_dry_run_skips_ffmpeg(self, mock_run, mock_enc, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = self._create_manifest(config, "testconv01")
+        manifest = self._create_manifest(tmp_path, config, "testconv01")
         self._setup_work_dir(config, "testconv01")
 
         run(
@@ -83,12 +82,11 @@ class TestConvertStage:
         mock_run.assert_not_called()
         data = manifest.read("testconv01")
         assert data["stages"]["convert"]["status"] == "completed"
-        assert "output_file" in data["metadata"]
+        assert "output_file" in data["stages"]["convert"]
 
     def test_missing_files_txt_fails(self, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = self._create_manifest(config, "testconv02")
+        manifest = self._create_manifest(tmp_path, config, "testconv02")
         # Don't create work dir files
 
         run(
@@ -112,8 +110,7 @@ class TestConvertStage:
         self, mock_run, mock_enc, mock_codec, mock_fmt, mock_ch, tmp_path
     ):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = self._create_manifest(config, "testconv03")
+        manifest = self._create_manifest(tmp_path, config, "testconv03")
         self._setup_work_dir(config, "testconv03")
 
         # Mock ffmpeg success and create output file
@@ -142,8 +139,7 @@ class TestConvertStage:
     @patch("audiobook_pipeline.stages.convert.subprocess.run")
     def test_ffmpeg_failure_sets_failed(self, mock_run, mock_enc, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = self._create_manifest(config, "testconv04")
+        manifest = self._create_manifest(tmp_path, config, "testconv04")
         self._setup_work_dir(config, "testconv04")
 
         mock_run.return_value = subprocess.CompletedProcess(
@@ -164,8 +160,7 @@ class TestConvertStage:
     @patch("audiobook_pipeline.stages.convert.subprocess.run")
     def test_threads_kwarg_passed_to_ffmpeg(self, mock_run, mock_enc, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = self._create_manifest(config, "testconv05")
+        manifest = self._create_manifest(tmp_path, config, "testconv05")
         self._setup_work_dir(config, "testconv05")
 
         run(

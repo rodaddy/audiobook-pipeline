@@ -16,7 +16,7 @@ import click
 from loguru import logger
 
 from .config import PipelineConfig
-from .manifest import Manifest
+from .pipeline_db import PipelineDB
 from .models import BatchResult, PipelineMode, Stage, StageStatus
 from .ops.organize import build_plex_path
 from .sanitize import generate_book_hash
@@ -33,7 +33,7 @@ class ConvertOrchestrator:
 
     Attributes:
         config: Pipeline configuration with resource limits
-        manifest: Manifest manager for tracking conversion state
+        db: PipelineDB instance for tracking conversion state
     """
 
     def __init__(self, config: PipelineConfig) -> None:
@@ -43,29 +43,28 @@ class ConvertOrchestrator:
             config: Pipeline configuration including max workers and CPU ceiling
         """
         self.config = config
-        self.manifest = Manifest(config.manifest_dir)
+        self.db = PipelineDB(config.db_path)
 
     def clean_state(self, book_dirs: list[Path]) -> None:
-        """Remove manifests and work dirs for books in the batch.
+        """Reset book records and work dirs for books in the batch.
 
         Called by default before each run so books process from scratch.
-        Use --resume to skip this and pick up where a previous run left off.
+        Always resumes by default with SQLite (no --resume flag needed).
         """
-        cleaned_manifests = 0
+        cleaned_books = 0
         cleaned_work = 0
         for book_path in book_dirs:
             book_hash = generate_book_hash(book_path)
-            manifest_file = self.config.manifest_dir / f"{book_hash}.json"
-            if manifest_file.exists():
-                manifest_file.unlink()
-                cleaned_manifests += 1
+            if self.db.read(book_hash) is not None:
+                self.db.reset_book(book_hash)
+                cleaned_books += 1
             work_dir = self.config.work_dir / book_hash
             if work_dir.exists():
                 shutil.rmtree(work_dir, ignore_errors=True)
                 cleaned_work += 1
-        if cleaned_manifests or cleaned_work:
+        if cleaned_books or cleaned_work:
             log.info(
-                f"Cleaned state: {cleaned_manifests} manifests, "
+                f"Cleaned state: {cleaned_books} book records, "
                 f"{cleaned_work} work dirs"
             )
 
@@ -190,9 +189,9 @@ class ConvertOrchestrator:
         log.info(f"Starting conversion: {source_path.name} (hash={book_hash[:8]})")
 
         # Create or load manifest
-        existing = self.manifest.read(book_hash)
+        existing = self.db.read(book_hash)
         if existing is None:
-            self.manifest.create(book_hash, str(source_path), PipelineMode.CONVERT)
+            self.db.create(book_hash, str(source_path), PipelineMode.CONVERT)
             log.debug(f"Created manifest for {source_path.name}")
 
         # MVP stages (skip ARCHIVE)
@@ -218,12 +217,10 @@ class ConvertOrchestrator:
                 continue
 
             # Check if already completed
-            stage_status = self.manifest.read_field(
-                book_hash, f"stages.{stage.value}.status"
-            )
+            stage_status = self.db.read_field(book_hash, f"stages.{stage.value}.status")
             if stage_status == StageStatus.COMPLETED.value and not self.config.force:
                 if self._is_stage_stale(book_hash, stage, source_path):
-                    self.manifest.set_stage(book_hash, stage, StageStatus.PENDING)
+                    self.db.set_stage(book_hash, stage, StageStatus.PENDING)
                 else:
                     log.debug(
                         f"Skipping {stage.value} for {source_path.name} "
@@ -235,11 +232,13 @@ class ConvertOrchestrator:
             stage_runner = get_stage_runner(stage)
 
             # Build kwargs for stage
+            # Each thread gets its own PipelineDB connection automatically
+            # (PipelineDB uses threading.local for per-thread connections)
             kwargs = {
                 "source_path": source_path,
                 "book_hash": book_hash,
                 "config": self.config,
-                "manifest": self.manifest,
+                "manifest": self.db,
                 "dry_run": self.config.dry_run,
                 "verbose": self.config.verbose,
             }
@@ -256,9 +255,7 @@ class ConvertOrchestrator:
             stage_runner(**kwargs)
 
             # Check for failure
-            post_status = self.manifest.read_field(
-                book_hash, f"stages.{stage.value}.status"
-            )
+            post_status = self.db.read_field(book_hash, f"stages.{stage.value}.status")
             if post_status == StageStatus.FAILED.value:
                 raise RuntimeError(
                     f"Stage '{stage.value}' failed for {source_path.name}"
@@ -303,9 +300,9 @@ class ConvertOrchestrator:
                 return True
 
         elif stage == Stage.CONVERT:
-            output_file = self.manifest.read_field(
+            output_file = self.db.read_field(
                 book_hash, "stages.convert.output_file"
-            ) or self.manifest.read_field(book_hash, "metadata.output_file")
+            ) or self.db.read_field(book_hash, "metadata.output_file")
             if not output_file or not Path(output_file).is_file():
                 log.warning(
                     f"Stale: convert output missing for {source_path.name}, "
@@ -315,9 +312,9 @@ class ConvertOrchestrator:
 
         elif stage == Stage.METADATA:
             # Metadata tags the convert output -- if that's gone, re-run
-            output_file = self.manifest.read_field(
+            output_file = self.db.read_field(
                 book_hash, "stages.convert.output_file"
-            ) or self.manifest.read_field(book_hash, "metadata.output_file")
+            ) or self.db.read_field(book_hash, "metadata.output_file")
             if output_file and not Path(output_file).is_file():
                 log.warning(
                     f"Stale: convert output missing for {source_path.name}, "
@@ -337,7 +334,7 @@ class ConvertOrchestrator:
         Returns True if destination was found and re-tagged (caller should
         skip remaining stages), False to continue normally.
         """
-        data = self.manifest.read(book_hash)
+        data = self.db.read(book_hash)
         if not data:
             return False
 
@@ -396,8 +393,8 @@ class ConvertOrchestrator:
 
         if self.config.dry_run:
             click.echo(f"  [DRY-RUN] Would re-tag {existing_file.name} in place")
-            self.manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
-            self.manifest.set_stage(book_hash, Stage.CLEANUP, StageStatus.COMPLETED)
+            self.db.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
+            self.db.set_stage(book_hash, Stage.CLEANUP, StageStatus.COMPLETED)
             return True
 
         # Download cover (non-fatal)
@@ -420,19 +417,19 @@ class ConvertOrchestrator:
         )
 
         # Mark organize as completed (skipped -- file already at destination)
-        data = self.manifest.read(book_hash)
+        data = self.db.read(book_hash)
         if data:
             data["stages"]["organize"]["output_file"] = str(existing_file)
             data["stages"]["organize"]["dest_dir"] = str(dest_dir)
-            self.manifest.update(book_hash, data)
-        self.manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
+            self.db.update(book_hash, data)
+        self.db.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
 
         # Clean up work dir (would normally be done by cleanup stage)
         work_dir = self.config.work_dir / book_hash
         if work_dir.exists() and self.config.cleanup_work_dir:
             shutil.rmtree(work_dir, ignore_errors=True)
             log.debug(f"Cleaned work dir after retag: {source_path.name}")
-        self.manifest.set_stage(book_hash, Stage.CLEANUP, StageStatus.COMPLETED)
+        self.db.set_stage(book_hash, Stage.CLEANUP, StageStatus.COMPLETED)
         return True
 
     def _calculate_max_workers(self) -> int:

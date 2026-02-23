@@ -7,21 +7,24 @@ replacing per-call iterdir() with dict lookups. Supports:
 - Cross-source dedup within a batch
 - Dynamic registration as new content is added
 - Correctly-placed detection for reorganize mode
-- Author name canonicalization via surname matching + persistent alias DB
+- Author name canonicalization via surname matching + persistent alias DB (SQLite)
 """
 
-import json
+from __future__ import annotations
+
 import os
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from .ops.organize import _is_near_match, _normalize_for_compare
 
-log = logger.bind(stage="index")
+if TYPE_CHECKING:
+    from .pipeline_db import PipelineDB
 
-AUTHOR_ALIASES_FILE = ".author_aliases.json"
+log = logger.bind(stage="index")
 
 
 class LibraryIndex:
@@ -31,8 +34,9 @@ class LibraryIndex:
     instead of per-call iterdir() scans.
     """
 
-    def __init__(self, library_root: Path) -> None:
+    def __init__(self, library_root: Path, db: PipelineDB | None = None) -> None:
         self.library_root = library_root
+        self._db = db
         # Map: parent_path -> {normalized_name: actual_name}
         self._folders: dict[Path, dict[str, str]] = {}
         # Set of (dest_dir, filename) for file existence checks
@@ -41,7 +45,7 @@ class LibraryIndex:
         self._processed: set[str] = set()
         # Map: lowercase surname -> list of existing author folder names
         self._authors_by_surname: dict[str, list[str]] = {}
-        # Persistent author alias DB: variant -> canonical name
+        # In-memory author alias cache (loaded from DB at init)
         self._author_aliases: dict[str, str] = {}
         self._load_aliases()
         self._scan(library_root)
@@ -141,10 +145,11 @@ class LibraryIndex:
         """Check if a file is already in its correct destination.
 
         For reorganize mode: if source is already at the computed
-        destination, skip it entirely.
+        destination, skip it entirely. Uses os.path.samefile() for
+        reliability on NFS/symlinks.
         """
         try:
-            return source_path.resolve() == dest_path.resolve()
+            return os.path.samefile(source_path, dest_path)
         except OSError:
             return False
 
@@ -232,40 +237,24 @@ class LibraryIndex:
                 existing.append(author_name)
 
     def _load_aliases(self) -> None:
-        """Load persistent author alias DB from library root."""
-        alias_file = self.library_root / AUTHOR_ALIASES_FILE
-        if not alias_file.exists():
+        """Load persistent author aliases from SQLite DB."""
+        if self._db is None:
             return
-        try:
-            data = json.loads(alias_file.read_text())
-            # Format: {canonical: [alias1, alias2, ...]}
-            for canonical, aliases in data.items():
-                for alias in aliases:
-                    self._author_aliases[alias] = canonical
-            log.debug(f"Loaded {len(self._author_aliases)} author aliases")
-        except (json.JSONDecodeError, OSError) as e:
-            log.warning(f"Failed to load author aliases: {e}")
+        # Load all aliases into memory for O(1) lookups
+        conn = self._db._get_conn()
+        rows = conn.execute("SELECT variant, canonical FROM author_aliases").fetchall()
+        for row in rows:
+            self._author_aliases[row["variant"]] = row["canonical"]
+        if self._author_aliases:
+            log.debug(f"Loaded {len(self._author_aliases)} author aliases from DB")
 
     def _save_alias(self, variant: str, canonical: str) -> None:
-        """Save a new author alias to the persistent DB."""
+        """Save a new author alias to the DB and in-memory cache."""
         if variant == canonical:
             return
         self._author_aliases[variant] = canonical
-
-        # Rebuild canonical -> [aliases] format for saving
-        canonical_map: dict[str, list[str]] = {}
-        for alias, canon in self._author_aliases.items():
-            canonical_map.setdefault(canon, []).append(alias)
-        # Sort for stable output
-        for key in canonical_map:
-            canonical_map[key] = sorted(canonical_map[key])
-
-        alias_file = self.library_root / AUTHOR_ALIASES_FILE
-        try:
-            alias_file.write_text(json.dumps(canonical_map, indent=2, sort_keys=True))
-            log.info(f"Author alias saved: '{variant}' -> '{canonical}'")
-        except OSError as e:
-            log.warning(f"Failed to save author alias: {e}")
+        if self._db is not None:
+            self._db.save_alias(variant, canonical)
 
     @property
     def folder_count(self) -> int:

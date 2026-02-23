@@ -27,7 +27,6 @@ class PipelineConfig(BaseSettings):
 
     # -- Directories --
     work_dir: Path = Path("/var/lib/audiobook-pipeline/work")
-    manifest_dir: Path = Path("/var/lib/audiobook-pipeline/manifests")
     output_dir: Path = Path("/var/lib/audiobook-pipeline/output")
     log_dir: Path = Path("/var/log/audiobook-pipeline")
     archive_dir: Path = Path("/var/lib/audiobook-pipeline/archive")
@@ -65,9 +64,6 @@ class PipelineConfig(BaseSettings):
     metadata_skip: bool = False
     force_metadata: bool = False
 
-    # -- Folder organization --
-    create_companion_files: bool = True
-
     # -- Archive --
     archive_retention_days: int = 90
 
@@ -92,11 +88,15 @@ class PipelineConfig(BaseSettings):
     ai_all: bool = False
     asin_search_threshold: int = 65
 
+    @property
+    def db_path(self) -> Path:
+        """Path to the SQLite pipeline database."""
+        return self.work_dir / "pipeline.db"
+
     def ensure_dirs(self) -> None:
         """Create all required directories if they don't exist."""
         for d in (
             self.work_dir,
-            self.manifest_dir,
             self.output_dir,
             self.log_dir,
             self.archive_dir,

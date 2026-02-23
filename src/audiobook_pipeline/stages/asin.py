@@ -30,7 +30,7 @@ from ..ops.organize import parse_path
 
 if TYPE_CHECKING:
     from ..config import PipelineConfig
-    from ..manifest import Manifest
+    from ..pipeline_db import PipelineDB
 
 log = logger.bind(stage="asin")
 
@@ -39,7 +39,7 @@ def run(
     source_path: Path,
     book_hash: str,
     config: PipelineConfig,
-    manifest: Manifest,
+    manifest: PipelineDB,
     dry_run: bool = False,
     verbose: bool = False,
     **kwargs,
@@ -246,6 +246,18 @@ def run(
         )
         manifest.update(book_hash, data)
 
+    # Download and cache cover art in the database (no NFS temp files)
+    if cover_url and not dry_run:
+        try:
+            import httpx
+
+            resp = httpx.get(cover_url, timeout=30.0, follow_redirects=True)
+            resp.raise_for_status()
+            manifest.store_cover(book_hash, resp.content)
+            log.info(f"Cover art cached: {len(resp.content)} bytes")
+        except Exception as e:
+            log.warning(f"Cover art download failed (non-fatal): {e}")
+
     manifest.set_stage(book_hash, Stage.ASIN, StageStatus.COMPLETED)
     click.echo(f"  ASIN resolved: {metadata['author']!r} - {metadata['title']!r}")
 
@@ -275,7 +287,7 @@ def _find_tag_file(source_path: Path) -> Path | None:
 
     m4b_files = list(source_path.rglob("*.m4b"))
     if m4b_files:
-        return m4b_files[0]
+        return max(m4b_files, key=lambda f: f.stat().st_size)
     audio_files = [
         f for f in source_path.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS
     ]

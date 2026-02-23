@@ -2,8 +2,9 @@
 
 Runs after ASIN resolution (reads parsed metadata from manifest).
 Uses ffmpeg -c copy to write tags without re-encoding, preserving chapters.
-Downloads cover art from Audible and embeds it as attached_pic.
-Writes to a temp file in the same directory and atomically replaces the original.
+Downloads cover art to local work_dir (not NFS) and embeds via attached_pic.
+Writes to a temp file, then replaces the original with NFS-safe fallback
+(atomic rename -> shutil.copy2 if rename fails on network filesystems).
 
 Full tag set per Plex Audiobook Guide (seanap/Plex-Audiobook-Guide):
 artist (author + narrator), album_artist, album, title, composer (narrator),
@@ -14,6 +15,7 @@ ASIN, SHOWMOVEMENT, MOVEMENTNAME, MOVEMENT (Apple Books series), pgap.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,7 +27,7 @@ from ..models import Stage, StageStatus
 
 if TYPE_CHECKING:
     from ..config import PipelineConfig
-    from ..manifest import Manifest
+    from ..pipeline_db import PipelineDB
 
 log = logger.bind(stage="metadata")
 
@@ -34,7 +36,7 @@ def run(
     source_path: Path,
     book_hash: str,
     config: PipelineConfig,
-    manifest: Manifest,
+    manifest: PipelineDB,
     dry_run: bool = False,
     verbose: bool = False,
     **kwargs,
@@ -148,11 +150,15 @@ def run(
         manifest.set_stage(book_hash, Stage.METADATA, StageStatus.COMPLETED)
         return
 
-    # Download cover art (non-fatal on failure)
+    # Extract cover art from DB to local work_dir (not NFS) for ffmpeg
     cover_path = None
     try:
-        if cover_url:
-            cover_path = _download_cover(cover_url, output_file.parent)
+        cover_path = manifest.extract_cover_to_file(book_hash, config.work_dir)
+        if cover_path is None and cover_url:
+            # Fallback: download if not cached in DB (legacy data)
+            cover_dir = config.work_dir
+            cover_dir.mkdir(parents=True, exist_ok=True)
+            cover_path = _download_cover(cover_url, cover_dir)
 
         # Write tags via ffmpeg
         success = _write_tags(output_file, tags, cover_path=cover_path)
@@ -204,11 +210,11 @@ def _find_output_file(data: dict, source_path: Path) -> Path | None:
     if source_path.is_file() and source_path.suffix.lower() == ".m4b":
         return source_path
 
-    # source_path is a directory -- find M4B
+    # source_path is a directory -- find largest M4B
     if source_path.is_dir():
         m4b_files = list(source_path.rglob("*.m4b"))
         if m4b_files:
-            return m4b_files[0]
+            return max(m4b_files, key=lambda f: f.stat().st_size)
 
     return None
 
@@ -325,12 +331,16 @@ def _write_tags(
             log.error(f"ffmpeg stderr: {result.stderr[-500:]}")
             return False
 
-        # Atomic replace
+        # Replace original with tagged version
         try:
             temp_file.replace(filepath)
-        except OSError as e:
-            click.echo(f"  ERROR: Failed to replace {filepath.name}: {e}")
-            return False
+        except OSError:
+            # Atomic rename fails on NFS -- fall back to copy + unlink
+            try:
+                shutil.copy2(str(temp_file), str(filepath))
+            except OSError as e:
+                click.echo(f"  ERROR: Failed to replace {filepath.name}: {e}")
+                return False
 
         return True
     finally:

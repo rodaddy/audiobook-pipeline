@@ -4,7 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from audiobook_pipeline.config import PipelineConfig
-from audiobook_pipeline.manifest import Manifest
+from audiobook_pipeline.pipeline_db import PipelineDB
+from audiobook_pipeline.models import PipelineMode
 from audiobook_pipeline.stages.concat import run
 
 
@@ -13,7 +14,6 @@ class TestConcatStage:
         return PipelineConfig(
             _env_file=None,
             work_dir=tmp_path / "work",
-            manifest_dir=tmp_path / "manifests",
         )
 
     def _setup_work_dir(self, config, book_hash, audio_files):
@@ -26,10 +26,9 @@ class TestConcatStage:
     @patch("audiobook_pipeline.stages.concat.get_duration", return_value=63.0)
     def test_generates_files_txt(self, mock_dur, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         book_hash = "testconcat01"
-        manifest.create(book_hash, "/src/book", "convert")
+        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
 
         audio_files = [
             Path("/src/book/Chapter 01.mp3"),
@@ -51,10 +50,9 @@ class TestConcatStage:
     @patch("audiobook_pipeline.stages.concat.get_duration", return_value=63.0)
     def test_escapes_single_quotes(self, mock_dur, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         book_hash = "testconcat02"
-        manifest.create(book_hash, "/src/book", "convert")
+        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
 
         audio_files = [Path("/src/book/O'Brien Chapter 01.mp3")]
         self._setup_work_dir(config, book_hash, audio_files)
@@ -72,10 +70,9 @@ class TestConcatStage:
     @patch("audiobook_pipeline.stages.concat.get_duration", return_value=63.0)
     def test_metadata_has_chapters(self, mock_dur, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         book_hash = "testconcat03"
-        manifest.create(book_hash, "/src/book", "convert")
+        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
 
         audio_files = [
             Path("/src/book/Chapter 01.mp3"),
@@ -101,10 +98,9 @@ class TestConcatStage:
     @patch("audiobook_pipeline.stages.concat.get_duration", return_value=300.0)
     def test_single_file_no_chapters(self, mock_dur, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         book_hash = "testconcat04"
-        manifest.create(book_hash, "/src/book", "convert")
+        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
 
         audio_files = [Path("/src/book/audiobook.mp3")]
         self._setup_work_dir(config, book_hash, audio_files)
@@ -122,10 +118,9 @@ class TestConcatStage:
 
     def test_missing_audio_files_txt_fails(self, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         book_hash = "testconcat05"
-        manifest.create(book_hash, "/src/book", "convert")
+        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
 
         run(
             source_path=Path("/src/book"),
@@ -140,10 +135,9 @@ class TestConcatStage:
     @patch("audiobook_pipeline.stages.concat.get_duration", return_value=60.0)
     def test_updates_manifest_chapter_count(self, mock_dur, tmp_path):
         config = self._make_config(tmp_path)
-        config.manifest_dir.mkdir(parents=True)
-        manifest = Manifest(config.manifest_dir)
+        manifest = PipelineDB(tmp_path / "test.db")
         book_hash = "testconcat06"
-        manifest.create(book_hash, "/src/book", "convert")
+        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
 
         audio_files = [Path(f"/src/book/ch{i:02d}.mp3") for i in range(5)]
         self._setup_work_dir(config, book_hash, audio_files)
