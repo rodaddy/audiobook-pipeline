@@ -69,12 +69,15 @@ Core modules:
     library_index       -- In-memory library index for O(1) folder/file lookups in batch mode.
                            Replaces per-call iterdir() with dict-based scans via os.walk().
                            Supports cross-source dedup, dynamic registration, reorganize detection.
+                           Author alias canonicalization via PipelineDB (SQLite).
     ai                  -- AI-assisted metadata resolution via any OpenAI-compatible endpoint
                            (LiteLLM, OpenAI, Ollama). Includes cache-busting for semantic caches,
                            conflict resolution, and Audible disambiguation. Logs evidence sources,
                            resolution decisions, and parse failures.
-    manifest            -- JSON manifest state machine. Logs all state transitions, I/O
-                           operations, retries, and errors.
+    pipeline_db         -- SQLite-backed pipeline state (WAL mode). Replaces JSON manifests
+                           with a single database for book records, per-stage progress,
+                           cover art blobs, author aliases, and concurrency locks.
+                           Thread-safe via per-thread connections.
     ffprobe             -- Audio file inspection via ffprobe subprocess. Includes get_format_name()
                            for container format validation. Logs every subprocess call, tag
                            extraction, and parse result. Numeric functions raise ValueError on
