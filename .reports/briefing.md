@@ -1,6 +1,6 @@
 # Audiobook Pipeline Briefing
 
-**Last Updated:** 2026-02-22
+**Last Updated:** 2026-02-23
 
 ## Project Overview
 
@@ -90,8 +90,8 @@ src/audiobook_pipeline/
 
 ---
 
-**Last session:** 2026-02-22 -- Batch Threading and Agent Hook Fixes (72924475)
-**Done:** Monitored batch conversion (9+ books completed, 0 failures) | Optimized worker threading (4 workers, 3 threads each) | Added CONVERTIBLE_EXTENSIONS (exclude M4B-only dirs) | Implemented --resume flag | Fixed agent-aware hooks (3 PreToolUse hooks bypass for subagents) | Added targeted Bash permissions for agents
+**Last session:** 2026-02-23 -- ThunderBolt Library Migration and Chaptered M4B Support (619a0225)
+**Done:** Completed TB library migration (18 books, 6 authors) | Split Harry Potter into two narrator series (Fry UK / Dale US) | Fixed chaptered m4b discovery bug (CONVERTIBLE_EXTENSIONS excluded .m4b) | Added chaptered m4b fallback detection in validate stage | Converted Hungry City Chronicles (4 books) and Shadowmarch (3 books, manual author fix) | Verified empty TB folders | Committed c3882cf
 **PR:** https://github.com/rodaddy/audiobook-pipeline/pull/5 (awaiting review)
-**Carry-forward:** Wait for batch conversion to complete | Review conversion results | Check for failures | Consider --status flag for monitoring
-**Next:** Monitor batch completion, review results
+**Carry-forward:** SQLite migration | Brandon Sanderson NFS cleanup (duplicate Mistborn folders) | Ken Liu Book 3 ASIN failure | Consider author hint parameter for chaptered books
+**Next:** SQLite migration, Sanderson cleanup, or merge PR

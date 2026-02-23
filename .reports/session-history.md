@@ -110,3 +110,16 @@ Monitored batch conversion of 142 books, optimized worker threading (4 workers, 
 **Key changes:** clean_state() method, CONVERTIBLE_EXTENSIONS constant, --resume flag, agent-aware hook bypasses
 
 **Details:** `.reports/sessions/72924475-727a-40c8-b645-aa5c36945a67.md`
+
+---
+
+## 2026-02-23 -- ThunderBolt Library Migration and Chaptered M4B Support (619a0225)
+
+**Branch:** feat/python-rewrite
+**Type:** Feature -- library migration, chaptered m4b detection fix, batch processing
+
+Completed migration of ThunderBolt audiobooks to NFS library. Split Harry Potter into two narrator series (Stephen Fry UK / Jim Dale US), processed 18 books across 6 authors. Fixed pipeline bug where chaptered m4b directories were skipped in convert mode (CONVERTIBLE_EXTENSIONS excluded .m4b). Added chaptered m4b fallback detection in validate stage. Converted Hungry City Chronicles (4 chaptered m4b) and Shadowmarch (3 chaptered m4b, manual author correction needed). Verified empty TB folders (Otherland, Glen Cook, Sanderson).
+
+**Commit:** c3882cf
+
+**Details:** `.reports/sessions/619a0225-2aff-46fc-8b71-fbb25491a6d3.md`
