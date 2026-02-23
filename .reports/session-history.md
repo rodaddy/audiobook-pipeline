@@ -123,3 +123,16 @@ Completed migration of ThunderBolt audiobooks to NFS library. Split Harry Potter
 **Commit:** c3882cf
 
 **Details:** `.reports/sessions/619a0225-2aff-46fc-8b71-fbb25491a6d3.md`
+
+---
+
+## 2026-02-23 -- Pipeline Levels (24cd5aab)
+
+**Branch:** feat/python-rewrite
+**Type:** Feature -- intelligence tier system, agent documentation, project instructions
+
+Implemented a four-tier pipeline intelligence system (simple/normal/ai/full) controlled by PIPELINE_LEVEL env var and --level CLI flag. Also created docs/install.md agent guide, .claude/agents/audiobook-guide.md custom agent, and project CLAUDE.md. Added 11 new tests covering PipelineLevel enum, config integration, CLI flag behavior, and AI gating. Fixed StrEnum comparison bug (alphabetical ordering vs semantic level ordering). Verified dry-run at ai level (HP3 LLM disambiguation) and simple level (no AI, copy to source). Updated PR #5 with new description and pushed 3 commits.
+
+**Commits:** a1db8f9, 609427e, f864d7d
+
+**Details:** `.reports/sessions/24cd5aab-76b2-4c5e-b52e-1a930780fe34.md`

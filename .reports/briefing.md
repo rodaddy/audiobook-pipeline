@@ -90,8 +90,8 @@ src/audiobook_pipeline/
 
 ---
 
-**Last session:** 2026-02-23 -- ThunderBolt Library Migration and Chaptered M4B Support (619a0225)
-**Done:** Completed TB library migration (18 books, 6 authors) | Split Harry Potter into two narrator series (Fry UK / Dale US) | Fixed chaptered m4b discovery bug (CONVERTIBLE_EXTENSIONS excluded .m4b) | Added chaptered m4b fallback detection in validate stage | Converted Hungry City Chronicles (4 books) and Shadowmarch (3 books, manual author fix) | Verified empty TB folders | Committed c3882cf
+**Last session:** 2026-02-23 -- Pipeline Levels (24cd5aab)
+**Done:** Implemented four-tier pipeline intelligence system (simple/normal/ai/full) via PIPELINE_LEVEL env var and --level CLI flag | Created docs/install.md agent guide (~360 lines), .claude/agents/audiobook-guide.md custom agent, project CLAUDE.md | Added 11 new tests (PipelineLevel enum, config, CLI flag, AI gating) | Fixed StrEnum comparison bug (alphabetical vs semantic ordering) | Verified ai level (HP3 LLM disambiguation) and simple level (no AI, copy to source) | Updated PR #5 with new description | Committed a1db8f9, 609427e, f864d7d
 **PR:** https://github.com/rodaddy/audiobook-pipeline/pull/5 (awaiting review)
 **Carry-forward:** SQLite migration | Brandon Sanderson NFS cleanup (duplicate Mistborn folders) | Ken Liu Book 3 ASIN failure | Consider author hint parameter for chaptered books
-**Next:** SQLite migration, Sanderson cleanup, or merge PR
+**Next:** Merge PR #5, SQLite migration, or Sanderson cleanup
