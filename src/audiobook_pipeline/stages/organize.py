@@ -61,14 +61,18 @@ def _build_library_filename(filename: str, metadata: dict) -> str:
         # But don't strip if title == series (would leave empty stem)
         if series and title.lower() != series.lower():
             series_clean = sanitize_filename(series)
-            candidate = re.sub(
-                rf"^{re.escape(series_clean)}\s*(?:Book\s+[\d.]+\s*-\s*)?",
-                "",
-                stem,
-                flags=re.IGNORECASE,
+            # Only strip series name when followed by a clear delimiter:
+            #   separator chars (: - ,) or "Book N -"
+            # NOT when series name flows into title phrase:
+            #   "Elminster in Hell" (series "Elminster") -> keep as-is
+            #   "The Wheel of Time Book 11 - Knife of Dreams" -> "Knife of Dreams"
+            sep_pattern = (
+                rf"^{re.escape(series_clean)}\s*"
+                rf"(?:[:_,\-]+\s*(?:Book\s+[\d.]+\s*-\s*)?|Book\s+[\d.]+\s*-\s*)"
             )
-            if candidate.strip():
-                stem = candidate
+            candidate = re.sub(sep_pattern, "", stem, flags=re.IGNORECASE)
+            if candidate.strip() and candidate.strip() != stem.strip():
+                stem = candidate.strip()
         # Strip any remaining "Book N - " prefix to avoid doubling on re-runs
         stem = re.sub(r"^Book\s+[\d.]+\s*-\s*", "", stem)
     else:
