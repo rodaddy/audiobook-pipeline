@@ -90,9 +90,8 @@ src/audiobook_pipeline/
 
 ---
 
-**Last session:** 2026-02-22 -- Pipeline Reordering and ASIN Stage (0838cfda)
-**Done:** Created stages/asin.py (~200 lines) | Rewrote metadata.py (cover art embedding) | Slimmed organize.py (~100 lines removed) | Updated audible.py (500/1024px images) | Created 11 tests for ASIN stage | Updated metadata/organize tests
-**Commit:** 609427e
+**Last session:** 2026-02-22 -- Batch Threading and Agent Hook Fixes (72924475)
+**Done:** Monitored batch conversion (9+ books completed, 0 failures) | Optimized worker threading (4 workers, 3 threads each) | Added CONVERTIBLE_EXTENSIONS (exclude M4B-only dirs) | Implemented --resume flag | Fixed agent-aware hooks (3 PreToolUse hooks bypass for subagents) | Added targeted Bash permissions for agents
 **PR:** https://github.com/rodaddy/audiobook-pipeline/pull/5 (awaiting review)
-**Carry-forward:** E2E test convert mode with real audio files | Monitor batch conversion progress | Fix any conversion issues
-**Next:** E2E testing, conversion monitoring
+**Carry-forward:** Wait for batch conversion to complete | Review conversion results | Check for failures | Consider --status flag for monitoring
+**Next:** Monitor batch completion, review results

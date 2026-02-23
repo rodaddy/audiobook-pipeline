@@ -97,3 +97,16 @@ Implemented full convert pipeline (validate, concat, convert stages) wrapping ff
 **Commits:** 99545f5, 4c31442, 5e0a0d4
 
 **Details:** `.reports/sessions/ce5c2584-153c-45d0-b4d5-dd6e798f111b.md`
+
+---
+
+## 2026-02-22 -- Batch Threading and Agent Hook Fixes (72924475)
+
+**Branch:** feat/python-rewrite
+**Type:** Feature -- batch conversion testing, threading optimization, agent hook fixes
+
+Monitored batch conversion of 142 books, optimized worker threading (4 workers, 3 threads each), added CONVERTIBLE_EXTENSIONS to exclude M4B-only dirs, implemented --resume flag for stateful batch runs. Fixed 3 PreToolUse hooks to be agent-aware (check CLAUDE_CODE_AGENT env var). Added targeted Bash permissions for agent operations. 9+ books completed successfully, still running at session end.
+
+**Key changes:** clean_state() method, CONVERTIBLE_EXTENSIONS constant, --resume flag, agent-aware hook bypasses
+
+**Details:** `.reports/sessions/72924475-727a-40c8-b645-aa5c36945a67.md`
