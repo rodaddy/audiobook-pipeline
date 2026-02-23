@@ -7,9 +7,10 @@ replacing per-call iterdir() with dict lookups. Supports:
 - Cross-source dedup within a batch
 - Dynamic registration as new content is added
 - Correctly-placed detection for reorganize mode
-- Author name canonicalization via surname matching
+- Author name canonicalization via surname matching + persistent alias DB
 """
 
+import json
 import os
 import re
 from pathlib import Path
@@ -19,6 +20,8 @@ from loguru import logger
 from .ops.organize import _is_near_match, _normalize_for_compare
 
 log = logger.bind(stage="index")
+
+AUTHOR_ALIASES_FILE = ".author_aliases.json"
 
 
 class LibraryIndex:
@@ -38,6 +41,9 @@ class LibraryIndex:
         self._processed: set[str] = set()
         # Map: lowercase surname -> list of existing author folder names
         self._authors_by_surname: dict[str, list[str]] = {}
+        # Persistent author alias DB: variant -> canonical name
+        self._author_aliases: dict[str, str] = {}
+        self._load_aliases()
         self._scan(library_root)
 
     def _scan(self, root: Path) -> None:
@@ -145,15 +151,32 @@ class LibraryIndex:
     def match_author(self, desired: str) -> str:
         """Canonicalize an author name against existing library folders.
 
-        Extracts the surname from the desired name, looks up all existing
-        author folders with that surname, then picks the best match using
-        normalized comparison. Returns the existing folder name if a match
-        is found, otherwise returns desired unchanged.
+        Checks persistent alias DB first (O(1)), then surname matching
+        with initials-aware normalization. When a match is found, saves
+        the alias for future runs.
         """
         if not desired:
             return desired
 
-        surname = _extract_surname(desired)
+        # 1. Persistent alias DB -- instant lookup
+        canonical = self._author_aliases.get(desired)
+        if canonical:
+            log.debug(f"Author alias hit: '{desired}' -> '{canonical}'")
+            return canonical
+
+        # 2. Clean the desired name (strip role suffixes, co-editors)
+        cleaned = _clean_author_name(desired)
+
+        # 3. Check alias for cleaned version too
+        if cleaned != desired:
+            canonical = self._author_aliases.get(cleaned)
+            if canonical:
+                self._save_alias(desired, canonical)
+                log.debug(f"Author alias hit (cleaned): '{desired}' -> '{canonical}'")
+                return canonical
+
+        # 4. Surname matching against library folders
+        surname = _extract_surname(cleaned)
         if not surname:
             return desired
 
@@ -164,21 +187,33 @@ class LibraryIndex:
         # Exact match -- fast path
         if desired in candidates:
             return desired
+        if cleaned in candidates:
+            self._save_alias(desired, cleaned)
+            return cleaned
 
-        # Normalized comparison
-        desired_norm = _normalize_for_compare(desired)
+        # Initials-aware normalized comparison
+        desired_norm = _normalize_author(cleaned)
         for existing in candidates:
-            if _normalize_for_compare(existing) == desired_norm:
+            if _normalize_author(existing) == desired_norm:
                 log.debug(f"Author canonicalized: '{desired}' -> '{existing}'")
+                self._save_alias(desired, existing)
+                return existing
+
+        # Fallback: standard normalization
+        desired_norm_std = _normalize_for_compare(cleaned)
+        for existing in candidates:
+            if _normalize_for_compare(existing) == desired_norm_std:
+                log.debug(f"Author canonicalized (std): '{desired}' -> '{existing}'")
+                self._save_alias(desired, existing)
                 return existing
 
         # Single candidate with same surname -- use it
-        # (covers "R.A. Salvatore" vs "R. A. Salvatore")
         if len(candidates) == 1:
             log.debug(
                 f"Author canonicalized (sole surname match): "
                 f"'{desired}' -> '{candidates[0]}'"
             )
+            self._save_alias(desired, candidates[0])
             return candidates[0]
 
         # Multiple candidates, can't disambiguate -- return as-is
@@ -195,6 +230,42 @@ class LibraryIndex:
             existing = self._authors_by_surname.setdefault(surname, [])
             if author_name not in existing:
                 existing.append(author_name)
+
+    def _load_aliases(self) -> None:
+        """Load persistent author alias DB from library root."""
+        alias_file = self.library_root / AUTHOR_ALIASES_FILE
+        if not alias_file.exists():
+            return
+        try:
+            data = json.loads(alias_file.read_text())
+            # Format: {canonical: [alias1, alias2, ...]}
+            for canonical, aliases in data.items():
+                for alias in aliases:
+                    self._author_aliases[alias] = canonical
+            log.debug(f"Loaded {len(self._author_aliases)} author aliases")
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning(f"Failed to load author aliases: {e}")
+
+    def _save_alias(self, variant: str, canonical: str) -> None:
+        """Save a new author alias to the persistent DB."""
+        if variant == canonical:
+            return
+        self._author_aliases[variant] = canonical
+
+        # Rebuild canonical -> [aliases] format for saving
+        canonical_map: dict[str, list[str]] = {}
+        for alias, canon in self._author_aliases.items():
+            canonical_map.setdefault(canon, []).append(alias)
+        # Sort for stable output
+        for key in canonical_map:
+            canonical_map[key] = sorted(canonical_map[key])
+
+        alias_file = self.library_root / AUTHOR_ALIASES_FILE
+        try:
+            alias_file.write_text(json.dumps(canonical_map, indent=2, sort_keys=True))
+            log.info(f"Author alias saved: '{variant}' -> '{canonical}'")
+        except OSError as e:
+            log.warning(f"Failed to save author alias: {e}")
 
     @property
     def folder_count(self) -> int:
@@ -213,17 +284,62 @@ def _extract_surname(name: str) -> str:
     Handles multi-author: "Margaret Weis, Tracy Hickman" -> "hickman"
     Handles initials: "R.A. Salvatore" -> "salvatore"
     Handles "and": "Margaret Weis and Tracy Hickman" -> "hickman"
+
+    Cleans the name first to strip role suffixes before extraction.
     """
     if not name:
         return ""
-    # Take the last author if comma or "and" separated
-    parts = re.split(r",\s*|\s+and\s+", name)
-    last_author = parts[-1].strip()
+    cleaned = _clean_author_name(name)
+    # Take the first author (primary) if comma or "and" separated
+    parts = re.split(r",\s*|\s+and\s+", cleaned)
+    first_author = parts[0].strip()
     # Take the last word (surname)
-    words = last_author.split()
+    words = first_author.split()
     if not words:
         return ""
     surname = words[-1].lower()
     # Strip trailing punctuation
     surname = surname.rstrip(".,;:")
     return surname
+
+
+def _clean_author_name(name: str) -> str:
+    """Strip role suffixes and co-author annotations from author names.
+
+    "J. R. R. Tolkien, Christopher Tolkien - editor" -> "J. R. R. Tolkien"
+    "Brandon Sanderson (Author)" -> "Brandon Sanderson"
+    """
+    # Strip " - editor", " - translator", etc.
+    cleaned = re.sub(
+        r",?\s+\w+\s*-\s*(editor|translator|narrator|foreword|introduction)\b.*$",
+        "",
+        name,
+        flags=re.IGNORECASE,
+    )
+    # Strip "(Author)", "(Editor)", etc.
+    cleaned = re.sub(
+        r"\s*\((Author|Editor|Translator|Narrator)\)",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned.strip()
+
+
+def _normalize_author(name: str) -> str:
+    """Normalize an author name for comparison, handling initials.
+
+    "J.R.R. Tolkien" -> "j r r tolkien"
+    "J. R. R. Tolkien" -> "j r r tolkien"
+    "J. R.R. Tolkien" -> "j r r tolkien"
+    """
+    s = name.lower().strip()
+    # Expand concatenated initials: "j.r.r." -> "j. r. r."
+    s = re.sub(r"([a-z])\.([a-z])", r"\1. \2", s)
+    # Repeat for triple+ initials
+    s = re.sub(r"([a-z])\.([a-z])", r"\1. \2", s)
+    # Strip all periods
+    s = s.replace(".", "")
+    # Collapse whitespace
+    s = re.sub(r"\s+", " ", s).strip()
+    return s

@@ -206,6 +206,11 @@ def run(
         elif tag_author:
             metadata["author"] = tag_author
 
+    # Canonicalize author against library index (alias DB + surname matching)
+    index = kwargs.get("index")
+    if index and metadata["author"]:
+        metadata["author"] = index.match_author(metadata["author"])
+
     log.debug(
         f"Final: author={metadata['author']!r} title={metadata['title']!r} "
         f"series={metadata['series']!r} pos={metadata['position']!r}"

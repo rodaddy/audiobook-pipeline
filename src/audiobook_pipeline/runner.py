@@ -199,9 +199,10 @@ class PipelineRunner:
                 "dry_run": self.config.dry_run,
                 "verbose": self.config.verbose,
             }
-            # Pass index and reorganize to organize stage
-            if stage == Stage.ORGANIZE:
+            # Pass index to ASIN (author normalization) and ORGANIZE
+            if stage in (Stage.ASIN, Stage.ORGANIZE):
                 kwargs["index"] = index
+            if stage == Stage.ORGANIZE:
                 kwargs["reorganize"] = self.reorganize
             # Pass threads to convert stage (0 = all cores for single book)
             if stage == Stage.CONVERT:
