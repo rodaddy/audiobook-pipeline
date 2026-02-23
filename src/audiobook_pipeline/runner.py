@@ -65,10 +65,12 @@ class PipelineRunner:
         config: PipelineConfig,
         mode: PipelineMode,
         reorganize: bool = False,
+        author_override: str | None = None,
     ) -> None:
         self.config = config
         self.mode = mode
         self.reorganize = reorganize
+        self.author_override = author_override
         self.db = PipelineDB(config.db_path)
 
     def run(
@@ -105,9 +107,18 @@ class PipelineRunner:
         if source_path.is_dir() and self.mode == PipelineMode.ORGANIZE:
             book_dirs = _find_book_directories(source_path)
 
+            # Auto-detect .author-override marker file (CLI flag takes priority)
+            if not self.author_override:
+                marker = source_path / ".author-override"
+                if marker.is_file():
+                    self.author_override = marker.read_text().strip()
+                    log.info(f"Author override from marker: {self.author_override}")
+
             total = len(book_dirs)
             label = "reorganize" if self.reorganize else "organize"
             click.echo(f"Batch {label}: {total} books in {source_path}")
+            if self.author_override:
+                click.echo(f"Author override: {self.author_override}")
             if self.config.dry_run:
                 click.echo("[DRY-RUN] No changes will be made")
 
@@ -227,6 +238,8 @@ class PipelineRunner:
                 kwargs["index"] = index
             if stage == Stage.ORGANIZE:
                 kwargs["reorganize"] = self.reorganize
+                if self.author_override:
+                    kwargs["author_override"] = self.author_override
             # Pass threads to convert stage (0 = all cores for single book)
             if stage == Stage.CONVERT:
                 kwargs["threads"] = 0

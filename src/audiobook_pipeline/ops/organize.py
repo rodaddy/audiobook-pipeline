@@ -528,6 +528,11 @@ def _normalize_for_compare(name: str) -> str:
     return s
 
 
+_STOP_WORDS = frozenset(
+    {"the", "a", "an", "of", "and", "in", "at", "to", "by", "for", "on", "with"}
+)
+
+
 def _is_near_match(desired_norm: str, existing_norm: str) -> bool:
     """Check if two normalized folder names are near-matches.
 
@@ -535,8 +540,10 @@ def _is_near_match(desired_norm: str, existing_norm: str) -> bool:
     e.g. desired="the raven tower" vs existing="ann leckie the raven tower".
 
     Uses token-based Jaccard similarity with a bias toward the smaller name:
-    if all tokens of the shorter name appear in the longer one, it's a match.
-    Otherwise falls back to 70% Jaccard overlap.
+    if all tokens of the shorter name appear in the longer one AND the extra
+    tokens are only stop words, it's a match. Otherwise falls back to 70%
+    Jaccard overlap. This prevents false matches like "The Wheel of Time"
+    matching "Origins of The Wheel of Time" where "origins" changes meaning.
     """
     if desired_norm == existing_norm:
         return True
@@ -548,17 +555,22 @@ def _is_near_match(desired_norm: str, existing_norm: str) -> bool:
     if len(desired_tokens) < 2 and len(existing_tokens) < 2:
         return False
 
-    # If the smaller set is a subset of the larger, it's a match
-    # e.g. "the raven tower" is fully contained in "ann leckie the raven tower"
+    # If the smaller set is a subset of the larger, check whether the extra
+    # tokens are all stop words (of, the, a, etc.). Meaningful extra words
+    # like "origins" change the meaning and should NOT match.
     smaller, larger = sorted([desired_tokens, existing_tokens], key=len)
     if smaller <= larger and len(smaller) >= 2:
-        return True
+        extra_tokens = larger - smaller
+        if extra_tokens <= _STOP_WORDS:
+            return True
 
-    # Jaccard similarity fallback for reordered/partial matches
+    # Jaccard similarity fallback for reordered/partial matches.
+    # Threshold 0.85 prevents false positives like "The Wheel of Time" (4 tokens)
+    # matching "Origins of The Wheel of Time" (5 tokens) at 4/5 = 0.8.
     intersection = desired_tokens & existing_tokens
     union = desired_tokens | existing_tokens
     similarity = len(intersection) / len(union) if union else 0
-    return similarity >= 0.7
+    return similarity >= 0.85
 
 
 def _reuse_existing(parent: Path, desired: str) -> str:

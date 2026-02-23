@@ -278,6 +278,16 @@ class TestReuseExisting:
         (tmp_path / "Title (2014)").mkdir()
         assert _reuse_existing(tmp_path, "Title") == "Title (2014)"
 
+    def test_no_near_match_for_meaningful_extra_word(self, tmp_path):
+        """'Origins of The Wheel of Time' should NOT match 'The Wheel of Time'"""
+        (tmp_path / "Origins of The Wheel of Time (Unabridged)").mkdir()
+        assert _reuse_existing(tmp_path, "The Wheel of Time") == "The Wheel of Time"
+
+    def test_near_match_with_stop_word_extra(self, tmp_path):
+        """Extra stop word 'the' is still a valid near-match"""
+        (tmp_path / "The Raven Tower").mkdir()
+        assert _reuse_existing(tmp_path, "Raven Tower") == "The Raven Tower"
+
     def test_no_match_returns_desired(self, tmp_path):
         """No match returns desired name unchanged"""
         (tmp_path / "Existing").mkdir()

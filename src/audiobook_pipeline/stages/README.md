@@ -56,10 +56,14 @@ Stages:
                 to NFS library with NFS-safe rename fallback (shutil.move on
                 ENOENT/EBUSY). Detects dest-is-child-of-source nesting and
                 flattens correctly. Uses os.path.samefile() for placement
-                detection. Picks largest m4b when multiples exist. Renames
-                files to strip year prefix and add series position prefix.
-                Accepts optional LibraryIndex for O(1) batch lookups and
-                reorganize flag for in-place library cleanup.
+                detection. Picks largest m4b when multiples exist. Strips
+                embedded series name from title to prevent filename doubling
+                (e.g., "Book 11 - Knife of Dreams" not "Book 11 - WoT Book 11
+                - Knife of Dreams"). Renames files to strip year prefix and add
+                series position prefix. Accepts optional LibraryIndex for O(1)
+                batch lookups, reorganize flag for in-place library cleanup,
+                and author_override to force all books under a named folder
+                (e.g., --author-override Dragonlance).
     cleanup -- Remove temporary work directory after conversion.
 
 ---

@@ -26,6 +26,7 @@ from ..ops.organize import (
     copy_to_library,
     move_in_library,
 )
+from ..sanitize import sanitize_filename
 
 if TYPE_CHECKING:
     from ..library_index import LibraryIndex
@@ -34,27 +35,52 @@ log = logger.bind(stage="organize")
 
 
 def _build_library_filename(filename: str, metadata: dict) -> str:
-    """Build clean library filename: strip year prefix, add series position.
+    """Build clean library filename from metadata title (preferred) or source name.
+
+    Uses the metadata title as the filename base when available, avoiding
+    mangled source filenames like "The Wheel of Time Book 11 - Knife of Dreams"
+    that cause doubling when we prepend "Book N -".
 
     Examples:
-        "1991 - Barrayar.m4b" -> "Book 3 - Barrayar.m4b" (with series position)
-        "1991 - Barrayar.m4b" -> "Barrayar.m4b" (no series position)
+        metadata title "Barrayar", series pos 3 -> "Book 3 - Barrayar.m4b"
+        metadata title "Barrayar", no series    -> "Barrayar.m4b"
+        no metadata, "1991 - Barrayar.m4b"      -> "Barrayar.m4b"
     """
-    stem = Path(filename).stem
     ext = Path(filename).suffix
 
-    # Strip pipeline hash suffix (defensive)
-    stem = _strip_hash(stem)
-
-    # Strip year prefix: "1991 - Barrayar" -> "Barrayar"
-    stem = re.sub(r"^\d{4}\s*-\s*", "", stem)
-
-    # Strip existing "Book N - " prefix to avoid doubling on re-runs
-    stem = re.sub(r"^Book\s+[\d.]+\s*-\s*", "", stem)
-
-    # Add series position prefix: "Book 3 - Barrayar"
+    # Prefer metadata title over source filename -- avoids embedded
+    # series/position/year cruft in source names
+    title = metadata.get("title", "").strip()
     series = metadata.get("series", "")
     position = metadata.get("position", "")
+
+    if title:
+        stem = sanitize_filename(title)
+        # Strip embedded series name from title to avoid doubling:
+        # "The Wheel of Time Book 11 - Knife of Dreams" -> "Knife of Dreams"
+        # But don't strip if title == series (would leave empty stem)
+        if series and title.lower() != series.lower():
+            series_clean = sanitize_filename(series)
+            candidate = re.sub(
+                rf"^{re.escape(series_clean)}\s*(?:Book\s+[\d.]+\s*-\s*)?",
+                "",
+                stem,
+                flags=re.IGNORECASE,
+            )
+            if candidate.strip():
+                stem = candidate
+        # Strip any remaining "Book N - " prefix to avoid doubling on re-runs
+        stem = re.sub(r"^Book\s+[\d.]+\s*-\s*", "", stem)
+    else:
+        stem = Path(filename).stem
+        # Strip pipeline hash suffix (defensive)
+        stem = _strip_hash(stem)
+        # Strip year prefix: "1991 - Barrayar" -> "Barrayar"
+        stem = re.sub(r"^\d{4}\s*-\s*", "", stem)
+        # Strip any "Book N - " prefix to avoid doubling on re-runs
+        stem = re.sub(r"^Book\s+[\d.]+\s*-\s*", "", stem)
+
+    # Add series position prefix: "Book 3 - Barrayar"
     if series and position:
         stem = f"Book {position} - {stem}"
 
@@ -70,6 +96,7 @@ def run(
     verbose: bool = False,
     index: LibraryIndex | None = None,
     reorganize: bool = False,
+    author_override: str | None = None,
     **kwargs,
 ) -> None:
     """Organize an audiobook into the NFS library.
@@ -91,10 +118,22 @@ def run(
         return
 
     meta = data.get("metadata", {})
+    series = meta.get("parsed_series", "")
+
+    # Strip author_override name from series to avoid redundancy:
+    # "Dragonlance: Lost Histories" -> "Lost Histories" when override="Dragonlance"
+    if author_override and series:
+        override_lower = author_override.lower()
+        series_lower = series.lower()
+        if series_lower.startswith(override_lower):
+            stripped = series[len(author_override) :].lstrip(":_ -")
+            if stripped:
+                series = stripped
+
     metadata = {
-        "author": meta.get("parsed_author", ""),
+        "author": author_override if author_override else meta.get("parsed_author", ""),
         "title": meta.get("parsed_title", ""),
-        "series": meta.get("parsed_series", ""),
+        "series": series,
         "position": meta.get("parsed_position", ""),
     }
 

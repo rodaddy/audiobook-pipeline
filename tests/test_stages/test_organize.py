@@ -230,7 +230,8 @@ class TestOrganizeStage:
 
         dest_dir = tmp_path / "library" / "_unsorted" / "book"
         dest_dir.mkdir(parents=True)
-        dest_file = dest_dir / source_file.name
+        # Dest file uses metadata title (Test Book), not source filename
+        dest_file = dest_dir / "Test Book.m4b"
         dest_file.write_text("fake audio")
 
         mock_build_path.return_value = dest_dir
@@ -306,7 +307,9 @@ class TestOrganizeWithIndex:
         mock_build_path.return_value = dest_dir
         index = LibraryIndex(lib)
 
-        _setup_manifest_with_metadata(mock_manifest, "hash07", source_file)
+        _setup_manifest_with_metadata(
+            mock_manifest, "hash07", source_file, title="Great Book"
+        )
 
         run(
             source_file,
@@ -362,6 +365,47 @@ class TestOrganizeStageOrder:
         # ASIN must come before METADATA, METADATA before ORGANIZE
         assert stages.index(Stage.ASIN) < stages.index(Stage.METADATA)
         assert stages.index(Stage.METADATA) < stages.index(Stage.ORGANIZE)
+
+
+class TestBuildLibraryFilename:
+    """Test filename construction to avoid doubling."""
+
+    def test_strips_series_from_title(self):
+        from audiobook_pipeline.stages.organize import _build_library_filename
+
+        # Source filename has series embedded: "The Wheel of Time Book 11 - Knife of Dreams.m4b"
+        result = _build_library_filename(
+            "The Wheel of Time Book 11 - Knife of Dreams.m4b",
+            {
+                "title": "The Wheel of Time Book 11 - Knife of Dreams",
+                "series": "The Wheel of Time",
+                "position": "11",
+            },
+        )
+        assert result == "Book 11 - Knife of Dreams.m4b"
+
+    def test_clean_title_no_doubling(self):
+        from audiobook_pipeline.stages.organize import _build_library_filename
+
+        # Normal case: title is already clean
+        result = _build_library_filename(
+            "source.m4b",
+            {
+                "title": "Knife of Dreams",
+                "series": "The Wheel of Time",
+                "position": "11",
+            },
+        )
+        assert result == "Book 11 - Knife of Dreams.m4b"
+
+    def test_no_series_no_prefix(self):
+        from audiobook_pipeline.stages.organize import _build_library_filename
+
+        result = _build_library_filename(
+            "source.m4b",
+            {"title": "Standalone Book", "series": "", "position": ""},
+        )
+        assert result == "Standalone Book.m4b"
 
 
 class TestOrganizeReorganize:

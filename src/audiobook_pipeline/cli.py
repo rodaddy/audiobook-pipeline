@@ -80,6 +80,11 @@ def _load_env_file(env_file: Path) -> None:
     help="Run data quality checks on the library after processing.",
 )
 @click.option(
+    "--author-override",
+    default=None,
+    help="Force all books into this folder instead of per-author folders.",
+)
+@click.option(
     "-c",
     "--config",
     "config_file",
@@ -98,6 +103,7 @@ def main(
     ai_all: bool,
     reorganize: bool,
     verify: bool,
+    author_override: str | None,
     config_file: str | None,
 ) -> None:
     """Convert, enrich, and organize audiobooks into tagged M4B files."""
@@ -153,6 +159,7 @@ def main(
         config=config,
         mode=pipeline_mode,
         reorganize=reorganize,
+        author_override=author_override,
     )
 
     log.info(
