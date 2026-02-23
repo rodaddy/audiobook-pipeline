@@ -10,12 +10,26 @@ logs/
 archive/
 manifests/
 
-# Personal config (use config.env.example as template)
-config.env
+# Personal config (use .env.example as template)
+.env
+
+# Database (contains book metadata, cover art, author aliases)
+*.db
+*.db-wal
+*.db-shm
 
 # macOS
 .DS_Store
 
+# Python
+python/.venv/
+__pycache__/
+*.pyc
+
 # IDE
 .vscode/
 .idea/
+
+# OMC / PRD session artifacts
+.omc/
+.prd/

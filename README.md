@@ -11,7 +11,7 @@ Convert audio files to chaptered M4B audiobooks with rich metadata from the Audi
 - **Accurate chapters** -- Audible API provides official chapter markers with exact timestamps
 - **Plex-ready organization** -- `Author/Book (Year)/Book.m4b` folder structure
 - **M4B enrichment** -- fix metadata and organize existing M4B files (skip conversion)
-- **Idempotent processing** -- manifest-based state tracking with resume support
+- **Idempotent processing** -- SQLite-based state tracking with automatic resume
 - **Automation ready** -- Readarr webhook, cron scanner, batch processing with `--no-lock`
 - **Error recovery** -- categorized failures, automatic retries, failed/ directory quarantine
 - **Hardware-accelerated encoding** -- AudioToolbox (macOS) when available, software AAC fallback
@@ -27,9 +27,36 @@ cp config.env.example config.env
 
 # Install dependencies (see Installation section)
 
-# Convert a directory of MP3s
-bin/audiobook-convert /path/to/audiobook-mp3s/
+# Convert a directory of MP3s to M4B
+uv run audiobook-convert /path/to/audiobook-mp3s/
+
+# Batch convert multiple books (CPU-aware parallel processing)
+uv run audiobook-convert --mode convert /path/to/incoming/
 ```
+
+## Pipeline Levels
+
+The pipeline supports four intelligence tiers, configured via `PIPELINE_LEVEL` in `.env` or `--level` on the CLI:
+
+| Level | Convert | Metadata | Organize | AI | Use case |
+|-------|---------|----------|----------|----|----------|
+| `simple` | Yes | Audible/Audnexus API | No -- m4b stays in source dir | None | "Just give me a tagged m4b" |
+| `normal` | Yes | Audible/Audnexus API | Best-effort, fallback `_unsorted/` | None | "Try to file it, don't overthink" |
+| `ai` | Yes | API + LLM disambiguation | Full library placement | LLM resolves conflicts | Current `--ai-all` behavior |
+| `full` | Yes | API + LLM | Interactive agent-guided | Agent walks user through issues | See `docs/install.md` |
+
+```bash
+# Set in .env
+PIPELINE_LEVEL=normal
+
+# Or override per-run
+uv run audiobook-convert --level simple /path/to/book/
+```
+
+Notes:
+- `--reorganize` and `--ai-all` force level to `ai` minimum (with a warning if lower)
+- `simple` and `normal` levels never call the LLM, even if `PIPELINE_LLM_BASE_URL` is configured
+- `full` level behaves identically to `ai` in the pipeline -- the difference is the interactive agent guide (`.claude/agents/audiobook-guide.md`)
 
 ## Installation
 
@@ -37,39 +64,7 @@ bin/audiobook-convert /path/to/audiobook-mp3s/
 
 | Tool | Purpose | macOS Install | Linux Install |
 |------|---------|---------------|---------------|
-| `ffmpeg` | Audio concat + AAC encoding | `brew install ffmpeg` | `apt install ffmpeg` |
-| `jq` | JSON parsing and manipulation | `brew install jq` | `apt install jq` |
-| `curl` | API calls (Audible, Audnexus) | Pre-installed | Pre-installed |
-| `bc` | Duration arithmetic | Pre-installed | `apt install bc` |
-| `xxd` | JPEG validation (cover art) | Pre-installed | `apt install xxd` |
-| `tone` | M4B chapter + metadata tagging | See below | See below |
-
-### Installing tone
-
-`tone` is a specialized M4B tagging tool not available in package managers. Download from the [official release page](https://github.com/sandreas/tone).
-
-```bash
-# macOS (Intel)
-wget https://github.com/sandreas/tone/releases/latest/download/tone-darwin-x64.tar.gz
-tar -xzf tone-darwin-x64.tar.gz
-sudo mv tone /usr/local/bin/
-sudo chmod +x /usr/local/bin/tone
-
-# macOS (Apple Silicon)
-wget https://github.com/sandreas/tone/releases/latest/download/tone-darwin-arm64.tar.gz
-tar -xzf tone-darwin-arm64.tar.gz
-sudo mv tone /usr/local/bin/
-sudo chmod +x /usr/local/bin/tone
-
-# Linux (x86_64)
-wget https://github.com/sandreas/tone/releases/latest/download/tone-linux-x64.tar.gz
-tar -xzf tone-linux-x64.tar.gz
-sudo mv tone /usr/local/bin/
-sudo chmod +x /usr/local/bin/tone
-
-# Verify installation
-tone --version
-```
+| `ffmpeg` | Audio concat + AAC encoding + metadata tagging | `brew install ffmpeg` | `apt install ffmpeg` |
 
 ### Setup
 
@@ -81,7 +76,6 @@ cp config.env.example config.env
 
 Edit `config.env` to configure paths for your system. At minimum:
 - `WORK_DIR` -- temporary processing space
-- `MANIFEST_DIR` -- manifest storage for idempotency
 - `NFS_OUTPUT_DIR` -- your Plex/Audiobookshelf library root
 
 ## Configuration
@@ -95,7 +89,6 @@ Copy `config.env.example` to `config.env` and customize for your environment.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WORK_DIR` | `/var/lib/audiobook-pipeline/work` | Temporary processing workspace |
-| `MANIFEST_DIR` | `/var/lib/audiobook-pipeline/manifests` | Manifest storage for idempotency tracking |
 | `OUTPUT_DIR` | `/var/lib/audiobook-pipeline/output` | Local output before NFS move |
 | `LOG_DIR` | `/var/log/audiobook-pipeline` | Pipeline logs |
 | `NFS_OUTPUT_DIR` | `/mnt/media/AudioBooks` | Library root for organized output (Plex/Audiobookshelf) |
@@ -120,12 +113,6 @@ Copy `config.env.example` to `config.env` and customize for your environment.
 | `CHAPTER_DURATION_TOLERANCE` | `5` | Percent tolerance for chapter duration matching |
 | `METADATA_SKIP` | `false` | Set `true` to skip metadata enrichment entirely |
 | `FORCE_METADATA` | `false` | Set `true` to re-fetch metadata even if cached |
-
-**Organization**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CREATE_COMPANION_FILES` | `true` | Deploy `cover.jpg`, `desc.txt`, `reader.txt` alongside M4B |
 
 **Automation**
 
@@ -222,32 +209,27 @@ The `AUDIBLE_REGION` variable controls which Audible marketplace to query. Use t
 
 ### Metadata Fields
 
-The pipeline writes the following metadata tags to M4B files using `tone`:
+The pipeline writes the following metadata tags to M4B files using `ffmpeg`:
 
-| M4B Tag | tone Flag | Audible Source | Audnexus Source |
-|---------|-----------|----------------|-----------------|
-| Title | `--meta-title` | `.product.title` | `.title` |
-| Artist | `--meta-artist` | `.product.authors[].name` (joined) | `.authors[].name` (joined) |
-| Narrator | `--meta-narrator` | `.product.narrators[].name` (joined) | `.narrators[].name` (joined) |
-| Album | `--meta-album` | `.product.series[0].title` | `.seriesPrimary.name` |
-| Part | `--meta-part` | `.product.series[0].sequence` | `.seriesPrimary.position` |
-| Movement Name | `--meta-movement-name` | `.product.series[0].title` | `.seriesPrimary.name` |
-| Movement | `--meta-movement` | `.product.series[0].sequence` | `.seriesPrimary.position` |
-| Content Group | `--meta-group` | "Series, Book #N" | "Series, Book #N" |
-| Sort Album | `--meta-sort-album` | "Series 01 - Title" (zero-padded) | "Series 01 - Title" (zero-padded) |
-| Genre | `--meta-genre` | `.category_ladders[].ladder[].name` (full path) | `.genres[0].name` |
-| Description | `--meta-description` | `.product.publisher_summary` | `.description` or `.summary` |
-| Long Description | `--meta-long-description` | `.product.publisher_summary` | _(not set)_ |
-| Recording Date | `--meta-recording-date` | `.product.release_date` (ISO 8601) | `.releaseDate` (ISO 8601) |
-| **Subtitle** | `--meta-subtitle` | `.product.subtitle` | _(not available)_ |
-| **Copyright** | `--meta-copyright` | `.product.copyright` | _(not available)_ |
-| **Publisher** | `--meta-publisher` | `.product.publisher_name` | _(not available)_ |
-| **Album Artist** | `--meta-album-artist` | `.product.authors[0].name` (first with ASIN) | `.authors[0].name` |
-| **Composer** | `--meta-composer` | `.product.narrators[].name` (joined) | `.narrators[].name` (joined) |
-| **Popularity** | `--meta-popularity` | `.product.rating.overall_distribution.display_average_rating` | _(not available)_ |
-| Cover Art | `--meta-cover-file` | `.product_images["2400"]` (2400x2400px) | `.image` (500x500px) |
-| Chapters | `--meta-chapters-file` | `.product.content_metadata.chapter_info.chapters[]` | `.chapters[]` |
-| iTunes Media Type | `--meta-itunes-media-type` | `"Audiobook"` | `"Audiobook"` |
+| M4B Tag | ffmpeg key | Source |
+|---------|------------|--------|
+| Title | `title` | Audible/Audnexus |
+| Artist | `artist` | Author + Narrator |
+| Album Artist | `album_artist` | Author |
+| Album | `album` | Book title |
+| Composer | `composer` | Narrator |
+| Genre | `genre` | Audible categories |
+| Date | `date` | Release year |
+| Description | `description` | Publisher summary |
+| Comment | `comment` | Publisher summary |
+| Sort Album | `sort_album` | Series sort key |
+| Copyright | `copyright` | From Audible |
+| Publisher | `publisher` | From Audible |
+| Show | `show` | Series name |
+| Grouping | `grouping` | Series + Book # |
+| ASIN | `ASIN` | Audible ASIN |
+| Media Type | `media_type` | `2` (audiobook) |
+| Cover Art | embedded | Up to 2400x2400px |
 
 **Custom fields** (stored but not displayed by most players):
 
@@ -258,14 +240,19 @@ The pipeline writes the following metadata tags to M4B files using `tone`:
 
 ## Usage
 
+Entry point: `uv run audiobook-convert`
+
 ### Convert a directory of audio files
 
 ```bash
 # Auto-detects directory input -> convert mode
-bin/audiobook-convert /mnt/downloads/MyBook/
+uv run audiobook-convert /mnt/downloads/MyBook/
+
+# Batch convert with CPU-aware parallel processing
+uv run audiobook-convert --mode convert /mnt/downloads/incoming/
 
 # With options
-bin/audiobook-convert --verbose --force /mnt/downloads/MyBook/
+uv run audiobook-convert --verbose --force /mnt/downloads/MyBook/
 ```
 
 Pipeline stages: `validate -> concat -> convert -> asin -> metadata -> organize -> archive -> cleanup`
@@ -274,7 +261,7 @@ Pipeline stages: `validate -> concat -> convert -> asin -> metadata -> organize 
 
 ```bash
 # Auto-detects .m4b input -> enrich mode
-bin/audiobook-convert /mnt/media/untagged-book.m4b
+uv run audiobook-convert /mnt/media/untagged-book.m4b
 ```
 
 Skips conversion stages. Fetches metadata from configured source and organizes into your library.
@@ -282,7 +269,7 @@ Skips conversion stages. Fetches metadata from configured source and organizes i
 ### Metadata-only mode
 
 ```bash
-bin/audiobook-convert --mode metadata /path/to/book.m4b
+uv run audiobook-convert --mode metadata /path/to/book.m4b
 ```
 
 Fetches ASIN and applies metadata (cover art, author, narrator, series) without moving the file.
@@ -290,7 +277,7 @@ Fetches ASIN and applies metadata (cover art, author, narrator, series) without 
 ### Organize-only mode
 
 ```bash
-bin/audiobook-convert --mode organize /path/to/book.m4b
+uv run audiobook-convert --mode organize /path/to/book.m4b
 ```
 
 Moves the file into the `Author/Book (Year)/Book.m4b` folder structure without touching metadata.
@@ -299,28 +286,68 @@ Moves the file into the `Author/Book (Year)/Book.m4b` folder structure without t
 
 ```bash
 # German audiobook
-AUDIBLE_REGION=de bin/audiobook-convert /path/to/german-book/
+AUDIBLE_REGION=de uv run audiobook-convert /path/to/german-book/
 
 # UK audiobook
-AUDIBLE_REGION=co.uk bin/audiobook-convert /path/to/uk-book/
+AUDIBLE_REGION=co.uk uv run audiobook-convert /path/to/uk-book/
 ```
 
 ### Override metadata source
 
 ```bash
 # Use Audnexus instead of Audible for this run
-METADATA_SOURCE=audnexus bin/audiobook-convert /path/to/book.m4b
+METADATA_SOURCE=audnexus uv run audiobook-convert /path/to/book.m4b
 
 # Use Audible API for UK marketplace
-AUDIBLE_REGION=co.uk METADATA_SOURCE=audible bin/audiobook-convert /path/to/book/
+AUDIBLE_REGION=co.uk METADATA_SOURCE=audible uv run audiobook-convert /path/to/book/
 ```
+
+### Large library processing
+
+For large batches (hundreds or thousands of books), the pipeline builds an in-memory index of your library once at startup, replacing per-file directory scans with O(1) dict lookups.
+
+**Add new books to an existing library:**
+
+```bash
+# Organize a staging directory into your library
+uv run audiobook-convert /path/to/new/books --mode organize --dry-run
+
+# Verify the dry-run output, then run for real
+uv run audiobook-convert /path/to/new/books --mode organize
+```
+
+**Reorganize an existing library in-place:**
+
+```bash
+# Dry-run first -- see what would move
+uv run audiobook-convert /Volumes/media_files/AudioBooks --reorganize --dry-run
+
+# Verify moves look correct, then run
+uv run audiobook-convert /Volumes/media_files/AudioBooks --reorganize
+```
+
+The `--reorganize` flag:
+- Implies `--mode organize` and `--ai-all` (every book gets AI metadata verification)
+- Moves files instead of copying (avoids doubling library size)
+- Detects books already in the correct location and skips them
+- Cleans up empty directories left behind after moves
+- Deduplicates across source directories within a batch
+
+**Recommended workflow:**
+1. Always start with `--dry-run` to verify decisions
+2. Review the output for any unexpected moves
+3. Run without `--dry-run` when satisfied
+4. Test on a known subset before processing a full library
 
 ### Batch processing
 
 ```bash
-# Process multiple books in parallel (each skips the global lock)
+# Automatic CPU-aware parallel processing (recommended)
+uv run audiobook-convert --mode convert /mnt/downloads/batch/
+
+# Manual parallel processing (legacy)
 for dir in /mnt/downloads/*/; do
-  bin/audiobook-convert --no-lock "$dir" &
+  uv run audiobook-convert --no-lock "$dir" &
 done
 wait
 ```
@@ -329,7 +356,23 @@ wait
 
 ```bash
 # Preview what would happen without making changes
-bin/audiobook-convert --dry-run --verbose /mnt/downloads/MyBook/
+uv run audiobook-convert --dry-run --verbose /mnt/downloads/MyBook/
+```
+
+### CLI flags reference
+
+```
+-m, --mode {convert,enrich,metadata,organize}  Pipeline mode (auto-detected if omitted)
+--level {simple,normal,ai,full}                Override PIPELINE_LEVEL from config
+--dry-run                                      Preview without making changes
+--force                                        Re-process even if completed
+-v, --verbose                                  Enable DEBUG logging
+-c, --config PATH                              Path to .env file
+--ai-all                                       Run AI validation on all books
+--reorganize                                   Move misplaced books (implies --ai-all)
+--verify                                       Run data quality checks after processing
+--no-lock                                      Skip file locking (manual batch mode)
+--asin TEXT                                    Override ASIN discovery
 ```
 
 ## Architecture
@@ -499,7 +542,7 @@ WantedBy=multi-user.target
 - Verify NFS mount is accessible: `ls -la $NFS_OUTPUT_DIR`
 - Kill hung ffmpeg processes: `pkill -9 ffmpeg`
 - Check work directory for partial files: `ls -lah $WORK_DIR`
-- Enable verbose logging and retry: `bin/audiobook-convert --verbose --force /path/to/book/`
+- Enable verbose logging and retry: `uv run audiobook-convert --verbose --force /path/to/book/`
 
 ### Permission denied errors
 

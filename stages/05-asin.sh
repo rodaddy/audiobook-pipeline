@@ -9,6 +9,7 @@ STAGE="asin"
 
 source "$SCRIPT_DIR/lib/core.sh"
 source "$SCRIPT_DIR/lib/manifest.sh"
+source "$SCRIPT_DIR/lib/audible.sh"
 source "$SCRIPT_DIR/lib/asin.sh"
 
 stage_asin() {

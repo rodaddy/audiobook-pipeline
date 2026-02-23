@@ -69,22 +69,66 @@ build_plex_path() {
     ')
   fi
 
-  # Fallback when no Audnexus JSON
-  if [[ -z "$author" ]]; then
-    # Try to extract author from parent directory name
-    local parent_dir
-    parent_dir=$(basename "$(dirname "$source_path")")
-    if [[ -n "$parent_dir" && "$parent_dir" != "/" && "$parent_dir" != "." ]]; then
-      author="$parent_dir"
-    else
-      author="Unknown Author"
+  # Fallback when no Audnexus JSON -- try ffprobe tags, then Python path parser, then dir names
+  if [[ -z "$author" || -z "$title" ]]; then
+    # Try ffprobe metadata tags from the m4b file
+    local probe_artist="" probe_title=""
+    if [[ -f "$source_path" ]] && command -v ffprobe >/dev/null 2>&1; then
+      probe_artist=$(ffprobe -v quiet -show_entries format_tags=artist \
+        -of default=noprint_wrappers=1:nokey=1 "$source_path" 2>/dev/null || true)
+      probe_title=$(ffprobe -v quiet -show_entries format_tags=title \
+        -of default=noprint_wrappers=1:nokey=1 "$source_path" 2>/dev/null || true)
+      # Reject generic/placeholder values
+      if [[ "$probe_artist" == "Unknown" || -z "$probe_artist" ]]; then
+        probe_artist=""
+      fi
+      if [[ -z "$probe_title" ]]; then
+        probe_title=""
+      fi
     fi
-  fi
 
-  if [[ -z "$title" ]]; then
-    title=$(basename "$source_path")
-    # Add hash suffix to avoid collisions
-    title="$title - $book_hash"
+    [[ -z "$author" && -n "$probe_artist" ]] && author="$probe_artist"
+    [[ -z "$title" && -n "$probe_title" ]] && title="$probe_title"
+
+    # Try Python path parser for remaining gaps
+    if [[ -z "$author" || -z "$title" ]]; then
+      local py_script="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/python/path_builder.py"
+      local py_venv="${py_script%/*}/.venv/bin/python3"
+      local py_cmd="python3"
+      [[ -x "$py_venv" ]] && py_cmd="$py_venv"
+      if [[ -f "$py_script" ]] && command -v "$py_cmd" >/dev/null 2>&1; then
+        local parsed
+        if parsed=$("$py_cmd" "$py_script" --source-path "$source_path" 2>/dev/null); then
+          [[ -z "$author" ]] && author=$(echo "$parsed" | jq -r '.author // empty')
+          [[ -z "$title" ]] && title=$(echo "$parsed" | jq -r '.title // empty')
+          # Also grab series info if we don't have it from metadata
+          if [[ -z "$series_name" ]]; then
+            series_name=$(echo "$parsed" | jq -r '.series // empty')
+            series_position=$(echo "$parsed" | jq -r '.position // empty')
+          fi
+          log_debug "Python path parser: author='$author' title='$title' series='$series_name'"
+        fi
+      fi
+    fi
+
+    # Final fallback: basic dir name extraction
+    if [[ -z "$author" ]]; then
+      local parent_dir_name
+      parent_dir_name=$(basename "$(dirname "$source_path")")
+      if [[ -n "$parent_dir_name" && "$parent_dir_name" != "/" && "$parent_dir_name" != "." ]]; then
+        local clean_parent
+        clean_parent=$(echo "$parent_dir_name" | sed -E 's/ - [a-f0-9]{16}$//')
+        author="$clean_parent"
+      else
+        author="Unknown Author"
+      fi
+    fi
+
+    if [[ -z "$title" ]]; then
+      title=$(basename "$source_path")
+      title="${title%.*}"
+      title=$(echo "$title" | sed -E 's/ - [a-f0-9]{16}$//; s/\[[0-9]+\]//g; s/  +/ /g; s/^ +//; s/ +$//')
+    fi
   fi
 
   # Sanitize each component
