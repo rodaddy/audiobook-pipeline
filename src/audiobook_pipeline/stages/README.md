@@ -28,25 +28,34 @@ Stages:
             disambiguation, embedded tags, and path parsing. Searches Audible
             with multiple query strategies, scores with fuzzy matching, uses
             AI when scores are low or sources conflict. Writes parsed_author,
-            parsed_title, parsed_series, parsed_position, parsed_asin, and
-            cover_url to manifest. Runs before metadata tagging so files are
-            tagged before landing in the library. Can run in dry-run mode.
-    metadata -- Tag M4B files with artist, album_artist, album, title, genre,
-                ASIN, and cover art via ffmpeg -c copy (no re-encode). Preserves
-                chapters with -map_chapters 0. Downloads cover art from Audible
-                and embeds as attached_pic. Reads parsed metadata from manifest
-                (set by ASIN stage). Reads output file from convert stage
-                (work_dir). Album is "Series, Book N" when series exists,
-                otherwise title. Writes to temp file with atomic replace.
-                Cover download failure is non-fatal. Supports dry-run mode.
-                Uses try/finally guards for _cover.jpg and .m4b.tmp cleanup
-                to prevent orphaned temp files on any error path.
+            parsed_title, parsed_series, parsed_position, parsed_asin,
+            parsed_narrator, parsed_year, cover_url, and expanded metadata
+            (parsed_subtitle, parsed_description, parsed_publisher,
+            parsed_copyright, parsed_language, parsed_genre) to manifest.
+            Runs before metadata tagging so files are tagged before landing
+            in the library. Also runs in reorganize mode. Can run in dry-run mode.
+    metadata -- Tag M4B files with full Plex-compatible metadata and cover art
+                via ffmpeg -c copy (no re-encode). Preserves chapters with
+                -map_chapters 0. Downloads cover art from Audible and embeds
+                as attached_pic. Full tag set: artist (author + narrator),
+                album_artist, album, title, composer, genre (from Audible
+                categories), date, ASIN, comment/description (publisher summary),
+                sort_album, copyright, publisher, show, grouping, Apple Books
+                series tags (SHOWMOVEMENT, MOVEMENTNAME, MOVEMENT), pgap.
+                Reads output file from convert stage (work_dir). Album is
+                "Series, Book N" when series exists, otherwise title. Writes
+                to temp file with atomic replace. Cover download failure is
+                non-fatal. Supports dry-run mode. Uses try/finally guards for
+                _cover.jpg and .m4b.tmp cleanup.
     organize -- Pure file-mover. Reads pre-resolved metadata from manifest
                 (set by ASIN stage) and tagged file from metadata stage output.
                 Builds Plex-compatible destination path, copies or moves file
-                to NFS library. Accepts optional LibraryIndex for O(1) batch
-                lookups and reorganize flag for in-place library cleanup.
-                Handles cross-source dedup. Supports batch and single-file modes.
+                to NFS library. Renames files to strip year prefix and add
+                series position prefix (e.g., "1991 - Barrayar.m4b" becomes
+                "Book 3 - Barrayar.m4b"). Accepts optional LibraryIndex for
+                O(1) batch lookups and reorganize flag for in-place library
+                cleanup. Handles cross-source dedup. Supports batch and
+                single-file modes.
     cleanup -- Remove temporary work directory after conversion.
 
 ---

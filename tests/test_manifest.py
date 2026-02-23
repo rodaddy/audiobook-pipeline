@@ -51,10 +51,13 @@ class TestCreate:
         assert data["stages"]["convert"]["output_file"] == "/src/book.m4b"
         assert data["stages"]["asin"]["status"] == "pending"
 
-    def test_organize_pre_completes_five_stages(self, manifest):
+    def test_organize_pre_completes_three_stages(self, manifest):
         data = manifest.create("h1", "/src/book.m4b", PipelineMode.ORGANIZE)
         assert data["stages"]["validate"]["status"] == "completed"
-        assert data["stages"]["metadata"]["status"] == "completed"
+        assert data["stages"]["concat"]["status"] == "completed"
+        assert data["stages"]["convert"]["status"] == "completed"
+        assert data["stages"]["asin"]["status"] == "pending"
+        assert data["stages"]["metadata"]["status"] == "pending"
         assert data["stages"]["organize"]["status"] == "pending"
 
     def test_returns_created_data(self, manifest):
@@ -144,8 +147,9 @@ class TestGetNextStage:
 
     def test_returns_none_when_all_done(self, manifest):
         manifest.create("done", "/src", PipelineMode.ORGANIZE)
+        manifest.set_stage("done", Stage.ASIN, StageStatus.COMPLETED)
+        manifest.set_stage("done", Stage.METADATA, StageStatus.COMPLETED)
         manifest.set_stage("done", Stage.ORGANIZE, StageStatus.COMPLETED)
-        manifest.set_stage("done", Stage.CLEANUP, StageStatus.COMPLETED)
         assert manifest.get_next_stage("done", PipelineMode.ORGANIZE) is None
 
     def test_enrich_starts_at_asin(self, manifest):

@@ -123,7 +123,7 @@ class TestMetadataStage:
             if arg == "-metadata" and i + 1 < len(cmd):
                 metadata_pairs.append(cmd[i + 1])
 
-        assert "artist=James Corey" in metadata_pairs
+        assert "artist=James Corey, Jefferson Mays" in metadata_pairs
         assert "album_artist=James Corey" in metadata_pairs
         assert "album=The Expanse, Book 1" in metadata_pairs
         assert "title=Leviathan Wakes" in metadata_pairs
@@ -132,7 +132,13 @@ class TestMetadataStage:
         assert "composer=Jefferson Mays" in metadata_pairs
         assert "date=2011" in metadata_pairs
         assert "show=The Expanse" in metadata_pairs
-        assert "grouping=The Expanse" in metadata_pairs
+        assert "grouping=The Expanse, Book #1" in metadata_pairs
+        assert "sort_album=The Expanse 1 - Leviathan Wakes" in metadata_pairs
+        assert "ASIN=B005LZHV6Q" in metadata_pairs
+        assert "SHOWMOVEMENT=1" in metadata_pairs
+        assert "MOVEMENTNAME=The Expanse" in metadata_pairs
+        assert "MOVEMENT=1" in metadata_pairs
+        assert "pgap=1" in metadata_pairs
 
         data = manifest.read("meta01")
         assert data["stages"]["metadata"]["status"] == "completed"

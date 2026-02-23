@@ -1,8 +1,11 @@
 """Audible catalog search client.
 
 Queries the Audible product catalog API and returns structured results
-for fuzzy matching and metadata resolution.
+for fuzzy matching and metadata resolution. Extracts expanded metadata
+(subtitle, publisher, copyright, genre, language) for Plex-compatible tagging.
 """
+
+import re
 
 import httpx
 from loguru import logger
@@ -11,15 +14,21 @@ from loguru import logger
 def search(query: str, region: str = "com") -> list[dict]:
     """Search Audible catalog API, return up to 10 results.
 
-    Each result dict contains: asin, title, authors (list), author_str,
-    series, position.
+    Each result dict contains: asin, title, subtitle, authors (list),
+    author_str, series, position, narrators, narrator_str, release_date,
+    year, cover_url, publisher_summary, publisher_name, copyright,
+    language, genre.
     """
     api_base = f"https://api.audible.{region}/1.0"
     params = {
         "keywords": query,
         "num_results": "10",
         "products_sort_by": "Relevance",
-        "response_groups": "contributors,media,product_desc,product_attrs,series",
+        "response_groups": (
+            "category_ladders,contributors,media,product_desc,"
+            "product_attrs,product_extended_attrs,rating,series,"
+            "product_details"
+        ),
         "image_sizes": "500,1024",
     }
 
@@ -50,10 +59,18 @@ def search(query: str, region: str = "com") -> list[dict]:
         narrators = [n.get("name", "") for n in (p.get("narrators") or [])]
         release_date = p.get("release_date", "")
 
+        # Extract genre from category_ladders (walk ladder, join with /)
+        genre = _extract_genre(p.get("category_ladders") or [])
+
+        # Publisher summary -- strip HTML tags
+        raw_summary = p.get("publisher_summary", "") or ""
+        publisher_summary = _strip_html(raw_summary)
+
         results.append(
             {
                 "asin": p.get("asin", ""),
                 "title": p.get("title", ""),
+                "subtitle": p.get("subtitle", "") or "",
                 "authors": authors,
                 "author_str": ", ".join(authors),
                 "narrators": narrators,
@@ -63,8 +80,32 @@ def search(query: str, region: str = "com") -> list[dict]:
                 "release_date": release_date,
                 "year": release_date[:4] if release_date else "",
                 "cover_url": cover_url,
+                "publisher_summary": publisher_summary,
+                "publisher_name": p.get("publisher_name", "") or "",
+                "copyright": p.get("copyright", "") or "",
+                "language": p.get("language", "") or "",
+                "genre": genre,
             }
         )
 
     logger.debug(f"Audible results: {len(results)} products")
     return results
+
+
+def _extract_genre(category_ladders: list[dict]) -> str:
+    """Extract genre string from Audible category_ladders.
+
+    Walks the first ladder and joins category names with '/'.
+    Example: [{"ladder": [{"name": "Science Fiction"}, {"name": "Space Opera"}]}]
+    -> "Science Fiction/Space Opera"
+    """
+    if not category_ladders:
+        return ""
+    ladder = category_ladders[0].get("ladder", [])
+    names = [step.get("name", "") for step in ladder if step.get("name")]
+    return "/".join(names) if names else ""
+
+
+def _strip_html(text: str) -> str:
+    """Strip HTML tags from text."""
+    return re.sub(r"<[^>]+>", "", text).strip()

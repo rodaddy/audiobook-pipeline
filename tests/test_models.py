@@ -44,9 +44,9 @@ class TestStageOrder:
         assert Stage.CONVERT not in stages
         assert Stage.ASIN in stages
 
-    def test_organize_is_minimal(self):
+    def test_organize_includes_asin_metadata(self):
         stages = STAGE_ORDER[PipelineMode.ORGANIZE]
-        assert stages == [Stage.ORGANIZE]
+        assert stages == [Stage.ASIN, Stage.METADATA, Stage.ORGANIZE]
 
 
 class TestPreCompletedStages:
@@ -57,9 +57,9 @@ class TestPreCompletedStages:
         pre = PRE_COMPLETED_STAGES[PipelineMode.ENRICH]
         assert set(pre) == {Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT}
 
-    def test_organize_pre_completes_five(self):
+    def test_organize_pre_completes_three(self):
         pre = PRE_COMPLETED_STAGES[PipelineMode.ORGANIZE]
-        assert len(pre) == 5
+        assert set(pre) == {Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT}
 
 
 class TestAudioExtensions:

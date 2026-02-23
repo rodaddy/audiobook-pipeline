@@ -12,7 +12,7 @@ import pytest
 from audiobook_pipeline.config import PipelineConfig
 from audiobook_pipeline.library_index import LibraryIndex
 from audiobook_pipeline.manifest import Manifest
-from audiobook_pipeline.models import PipelineMode, Stage, StageStatus
+from audiobook_pipeline.models import STAGE_ORDER, PipelineMode, Stage, StageStatus
 from audiobook_pipeline.stages.organize import _find_audio_file, run
 
 
@@ -349,6 +349,19 @@ class TestOrganizeWithIndex:
 
         data = mock_manifest.read("hash08")
         assert data["stages"]["organize"]["status"] == StageStatus.COMPLETED.value
+
+
+class TestOrganizeStageOrder:
+    """Verify that reorganize mode includes ASIN + METADATA stages."""
+
+    def test_organize_mode_includes_asin_and_metadata(self):
+        stages = STAGE_ORDER[PipelineMode.ORGANIZE]
+        assert Stage.ASIN in stages
+        assert Stage.METADATA in stages
+        assert Stage.ORGANIZE in stages
+        # ASIN must come before METADATA, METADATA before ORGANIZE
+        assert stages.index(Stage.ASIN) < stages.index(Stage.METADATA)
+        assert stages.index(Stage.METADATA) < stages.index(Stage.ORGANIZE)
 
 
 class TestOrganizeReorganize:

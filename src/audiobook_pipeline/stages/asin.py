@@ -3,10 +3,14 @@
 Searches the Audible catalog, scores results with fuzzy matching,
 uses AI disambiguation when scores are low, and falls back to embedded
 tags or path-parsed metadata. Writes parsed_author, parsed_title,
-parsed_series, parsed_position, parsed_asin, and cover_url to the manifest.
+parsed_series, parsed_position, parsed_asin, parsed_narrator,
+parsed_year, cover_url, and expanded metadata (parsed_subtitle,
+parsed_description, parsed_publisher, parsed_copyright, parsed_language,
+parsed_genre) to the manifest.
 
 Runs before metadata tagging so the file can be tagged before it lands
-in the library.
+in the library. Also runs in reorganize mode (before ORGANIZE stage)
+to populate metadata for correct library placement.
 """
 
 from __future__ import annotations
@@ -77,9 +81,9 @@ def run(
             parse_target = source_path / tag_file.name
         else:
             parse_target = source_path / source_path.name
+        metadata = parse_path(str(parse_target), source_dir=source_path)
     else:
-        parse_target = source_path
-    metadata = parse_path(str(parse_target))
+        metadata = parse_path(str(source_path))
 
     # Gather evidence from tags
     tag_author = ""
@@ -210,6 +214,9 @@ def run(
     # Persist to manifest
     data = manifest.read(book_hash)
     if data:
+        # Find the best Audible candidate for extended metadata
+        best_candidate = _find_best_candidate(audible_result, audible_candidates)
+
         data["metadata"].update(
             {
                 "parsed_author": metadata["author"],
@@ -224,12 +231,37 @@ def run(
                     audible_result.get("year", "") if audible_result else ""
                 ),
                 "cover_url": cover_url,
+                "parsed_subtitle": best_candidate.get("subtitle", ""),
+                "parsed_description": best_candidate.get("publisher_summary", ""),
+                "parsed_publisher": best_candidate.get("publisher_name", ""),
+                "parsed_copyright": best_candidate.get("copyright", ""),
+                "parsed_language": best_candidate.get("language", ""),
+                "parsed_genre": best_candidate.get("genre", ""),
             }
         )
         manifest.update(book_hash, data)
 
     manifest.set_stage(book_hash, Stage.ASIN, StageStatus.COMPLETED)
     click.echo(f"  ASIN resolved: {metadata['author']!r} - {metadata['title']!r}")
+
+
+def _find_best_candidate(
+    audible_result: dict | None,
+    audible_candidates: list[dict],
+) -> dict:
+    """Find the best Audible candidate for extended metadata fields.
+
+    If we have a resolved result with an ASIN, find the matching candidate
+    from the full search results (which has the extended fields). Falls
+    back to empty dict if no match.
+    """
+    if not audible_result or not audible_result.get("asin"):
+        return {}
+    asin = audible_result["asin"]
+    for candidate in audible_candidates:
+        if candidate.get("asin") == asin:
+            return candidate
+    return {}
 
 
 def _find_tag_file(source_path: Path) -> Path | None:

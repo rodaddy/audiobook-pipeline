@@ -58,6 +58,8 @@ STAGE_ORDER: dict[PipelineMode, list[Stage]] = {
         Stage.CLEANUP,
     ],
     PipelineMode.ORGANIZE: [
+        Stage.ASIN,
+        Stage.METADATA,
         Stage.ORGANIZE,
     ],
 }
@@ -70,8 +72,6 @@ PRE_COMPLETED_STAGES: dict[PipelineMode, list[Stage]] = {
         Stage.VALIDATE,
         Stage.CONCAT,
         Stage.CONVERT,
-        Stage.ASIN,
-        Stage.METADATA,
     ],
 }
 
@@ -85,6 +85,9 @@ AUDIO_EXTENSIONS: frozenset[str] = frozenset(
         ".wma",
     }
 )
+
+# Extensions that need conversion (excludes .m4b -- already converted)
+CONVERTIBLE_EXTENSIONS: frozenset[str] = AUDIO_EXTENSIONS - {".m4b"}
 
 
 @dataclass

@@ -13,7 +13,14 @@ from loguru import logger
 from .config import PipelineConfig
 from .errors import ExternalToolError
 from .manifest import Manifest
-from .models import AUDIO_EXTENSIONS, STAGE_ORDER, PipelineMode, Stage, StageStatus
+from .models import (
+    AUDIO_EXTENSIONS,
+    CONVERTIBLE_EXTENSIONS,
+    STAGE_ORDER,
+    PipelineMode,
+    Stage,
+    StageStatus,
+)
 from .stages import get_stage_runner
 
 if TYPE_CHECKING:
@@ -22,18 +29,26 @@ if TYPE_CHECKING:
 log = logger.bind(stage="runner")
 
 
-def _find_book_directories(root: Path) -> list[Path]:
-    """Find book root directories that contain audio files.
+def _find_book_directories(
+    root: Path,
+    extensions: frozenset[str] = AUDIO_EXTENSIONS,
+) -> list[Path]:
+    """Find book root directories that contain matching audio files.
 
     A "book directory" is the first directory in a subtree that contains
     audio files. Once found, its children are pruned (not descended into)
     so multi-disc structures like CD1/CD2 are treated as one book.
 
+    Args:
+        root: Root directory to search
+        extensions: File extensions to match (default: all audio types).
+            Use CONVERTIBLE_EXTENSIONS to skip dirs with only .m4b files.
+
     Single-pass O(n) -- no redundant rglob calls.
     """
     book_dirs: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        has_audio = any(Path(f).suffix.lower() in AUDIO_EXTENSIONS for f in filenames)
+        has_audio = any(Path(f).suffix.lower() in extensions for f in filenames)
         if has_audio:
             book_dirs.append(Path(dirpath))
             # Prune children so os.walk doesn't descend into subdirs
@@ -50,10 +65,12 @@ class PipelineRunner:
         config: PipelineConfig,
         mode: PipelineMode,
         reorganize: bool = False,
+        resume: bool = False,
     ) -> None:
         self.config = config
         self.mode = mode
         self.reorganize = reorganize
+        self.resume = resume
         self.manifest = Manifest(config.manifest_dir)
 
     def run(
@@ -72,12 +89,16 @@ class PipelineRunner:
         if source_path.is_dir() and self.mode == PipelineMode.CONVERT:
             from .convert_orchestrator import ConvertOrchestrator
 
-            book_dirs = _find_book_directories(source_path)
+            book_dirs = _find_book_directories(
+                source_path, extensions=CONVERTIBLE_EXTENSIONS
+            )
             click.echo(f"Batch convert: {len(book_dirs)} books in {source_path}")
             if self.config.dry_run:
                 click.echo("[DRY-RUN] No changes will be made")
 
             orchestrator = ConvertOrchestrator(self.config)
+            if not self.resume:
+                orchestrator.clean_state(book_dirs)
             result = orchestrator.run_batch(book_dirs)
 
             if result.failed > 0:
@@ -95,6 +116,10 @@ class PipelineRunner:
             click.echo(f"Batch {label}: {total} books in {source_path}")
             if self.config.dry_run:
                 click.echo("[DRY-RUN] No changes will be made")
+
+            # Clean stale manifests unless resuming
+            if not self.resume:
+                self._clean_manifests(book_dirs)
 
             # Build library index once for the entire batch
             from .library_index import LibraryIndex
@@ -192,6 +217,24 @@ class PipelineRunner:
                 raise RuntimeError(
                     f"Stage '{stage.value}' failed for {source_path.name}"
                 )
+
+    def _clean_manifests(self, book_dirs: list[Path]) -> None:
+        """Remove stale manifests for books in a batch.
+
+        Mirrors ConvertOrchestrator.clean_state() but only cleans manifests
+        (no work dirs for organize mode).
+        """
+        from .sanitize import generate_book_hash
+
+        cleaned = 0
+        for book_path in book_dirs:
+            book_hash = generate_book_hash(book_path)
+            manifest_file = self.config.manifest_dir / f"{book_hash}.json"
+            if manifest_file.exists():
+                manifest_file.unlink()
+                cleaned += 1
+        if cleaned:
+            log.info(f"Cleaned {cleaned} stale manifests")
 
     def run_cmd(
         self,

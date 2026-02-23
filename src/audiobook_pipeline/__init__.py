@@ -43,7 +43,8 @@ Modes:
     enrich    -- M4B input: resolve ASIN, tag metadata, organize (asin -> metadata ->
                  organize -> cleanup)
     metadata  -- Resolve and apply metadata only, no file move (asin -> metadata -> cleanup)
-    organize  -- Move file into library structure (no metadata changes)
+    organize  -- Resolve ASIN, tag metadata, then move into library structure
+                 (asin -> metadata -> organize)
 
 Core modules:
     config              -- Pipeline configuration via pydantic-settings (PIPELINE_LLM_* env vars).
@@ -90,8 +91,10 @@ Subpackages:
                   cover art embedding; organize as pure file-mover with index-aware
                   early-skip and reorganize mode; cleanup with work directory removal.
                   See stages/__init__.py for full stage docs.)
-    ops        -- File operations (path parsing with pattern match logging, Plex library
-                  building, dedup detection, move_in_library for reorganize mode with
-                  empty-dir cleanup, author heuristic rejection reasons)
+    ops        -- File operations (path parsing with pattern match logging and
+                  author-only directory fallback, Plex library building, dedup detection,
+                  move_in_library for reorganize mode with empty-dir cleanup, author
+                  heuristic rejection reasons, filename renaming with year stripping
+                  and series position prefix)
     automation -- Cron scanner and queue processor (planned)
 """

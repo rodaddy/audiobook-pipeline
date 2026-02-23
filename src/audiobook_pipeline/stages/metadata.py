@@ -1,9 +1,15 @@
-"""Stage 05: Metadata -- tag M4B files with artist, album, genre, ASIN, and cover art.
+"""Stage 05: Metadata -- tag M4B files with full Plex-compatible metadata and cover art.
 
 Runs after ASIN resolution (reads parsed metadata from manifest).
 Uses ffmpeg -c copy to write tags without re-encoding, preserving chapters.
 Downloads cover art from Audible and embeds it as attached_pic.
 Writes to a temp file in the same directory and atomically replaces the original.
+
+Full tag set per Plex Audiobook Guide (seanap/Plex-Audiobook-Guide):
+artist (author + narrator), album_artist, album, title, composer (narrator),
+genre (from Audible categories), date, media_type, show, grouping,
+comment/description (publisher summary), sort_album, copyright, publisher,
+ASIN, SHOWMOVEMENT, MOVEMENTNAME, MOVEMENT (Apple Books series), pgap.
 """
 
 from __future__ import annotations
@@ -82,24 +88,51 @@ def run(
     narrator = meta.get("parsed_narrator", "")
     year = meta.get("parsed_year", "")
     cover_url = meta.get("cover_url", "")
+    description = meta.get("parsed_description", "")
+    copyright_text = meta.get("parsed_copyright", "")
+    publisher = meta.get("parsed_publisher", "")
+    genre = meta.get("parsed_genre", "")
 
     album = _build_album(title, series, position)
 
+    # Build artist tag: "Author, Narrator" per Plex Audiobook Guide
+    artist = f"{author}, {narrator}" if narrator else author
+
+    # Sort album: "Series N - Title" for Plex sort order
+    sort_album = _build_sort_album(title, series, position)
+
     tags: dict[str, str] = {
-        "artist": author,
+        "artist": artist,
         "album_artist": author,
         "album": album,
         "title": title,
-        "genre": "Audiobook",
+        "genre": genre or "Audiobook",
         "media_type": "2",
+        "sort_album": sort_album,
     }
     if narrator:
         tags["composer"] = narrator
     if year:
         tags["date"] = year
+    if asin:
+        tags["ASIN"] = asin
+    if description:
+        tags["comment"] = description
+        tags["description"] = description
+    if copyright_text:
+        tags["copyright"] = copyright_text
+    if publisher:
+        tags["publisher"] = publisher
     if series:
         tags["show"] = series
-        tags["grouping"] = series
+        tags["grouping"] = f"{series}, Book #{position}" if position else series
+        # Apple Books series tags
+        tags["SHOWMOVEMENT"] = "1"
+        tags["MOVEMENTNAME"] = series
+        if position:
+            tags["MOVEMENT"] = position
+    # Gapless playback
+    tags["pgap"] = "1"
 
     log.debug(
         f"Tagging {output_file.name}: artist={author!r} album={album!r} "
@@ -196,6 +229,22 @@ def _download_cover(url: str, dest_dir: Path) -> Path | None:
     except Exception as e:
         log.warning(f"Cover art download failed: {e}")
         return None
+
+
+def _build_sort_album(title: str, series: str, position: str) -> str:
+    """Build sort_album tag for Plex sort order.
+
+    Examples:
+        series="The Expanse", position="3", title="Abaddon's Gate"
+            -> "The Expanse 3 - Abaddon's Gate"
+        series="", position="", title="Standalone Book"
+            -> "Standalone Book"
+    """
+    if series and position:
+        return f"{series} {position} - {title}"
+    if series:
+        return f"{series} - {title}"
+    return title
 
 
 def _build_album(title: str, series: str, position: str) -> str:

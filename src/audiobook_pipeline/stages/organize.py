@@ -8,6 +8,7 @@ vs move (reorganize mode), and library index registration.
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,12 +19,45 @@ from loguru import logger
 from ..config import PipelineConfig
 from ..manifest import Manifest
 from ..models import AUDIO_EXTENSIONS, Stage, StageStatus
-from ..ops.organize import build_plex_path, copy_to_library, move_in_library
+from ..ops.organize import (
+    _strip_hash,
+    build_plex_path,
+    copy_to_library,
+    move_in_library,
+)
 
 if TYPE_CHECKING:
     from ..library_index import LibraryIndex
 
 log = logger.bind(stage="organize")
+
+
+def _build_library_filename(filename: str, metadata: dict) -> str:
+    """Build clean library filename: strip year prefix, add series position.
+
+    Examples:
+        "1991 - Barrayar.m4b" -> "Book 3 - Barrayar.m4b" (with series position)
+        "1991 - Barrayar.m4b" -> "Barrayar.m4b" (no series position)
+    """
+    stem = Path(filename).stem
+    ext = Path(filename).suffix
+
+    # Strip pipeline hash suffix (defensive)
+    stem = _strip_hash(stem)
+
+    # Strip year prefix: "1991 - Barrayar" -> "Barrayar"
+    stem = re.sub(r"^\d{4}\s*-\s*", "", stem)
+
+    # Strip existing "Book N - " prefix to avoid doubling on re-runs
+    stem = re.sub(r"^Book\s+[\d.]+\s*-\s*", "", stem)
+
+    # Add series position prefix: "Book 3 - Barrayar"
+    series = metadata.get("series", "")
+    position = metadata.get("position", "")
+    if series and position:
+        stem = f"Book {position} - {stem}"
+
+    return f"{stem}{ext}"
 
 
 def run(
@@ -71,6 +105,9 @@ def run(
         manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.FAILED)
         return
 
+    # Build clean library filename (year strip, series position prefix)
+    library_filename = _build_library_filename(source_file.name, metadata)
+
     # Cross-source dedup: scope by book directory to avoid collisions
     dedup_key = (
         f"{source_path.name}/{source_file.stem}"
@@ -89,19 +126,27 @@ def run(
     # Reorganize mode: check if source dir is already the correct dest
     if reorganize and book_dir:
         if book_dir.resolve() == dest_dir.resolve():
-            click.echo(f"  OK {book_dir.name}/ -- already correctly placed")
+            # Directory is correct, but file may need renaming (year strip, etc.)
+            if source_file.name != library_filename:
+                renamed = source_file.parent / library_filename
+                if not dry_run:
+                    source_file.rename(renamed)
+                    log.info(f"Renamed: {source_file.name} -> {library_filename}")
+                click.echo(f"  Renamed {source_file.name} -> {library_filename}")
+            else:
+                click.echo(f"  OK {book_dir.name}/ -- already correctly placed")
             manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
             return
 
     # For single-file mode, check individual file
-    dest_file_path = dest_dir / source_file.name
+    dest_file_path = dest_dir / library_filename
     if not reorganize:
         if index:
-            already_exists = index.file_exists(dest_dir, source_file.name)
+            already_exists = index.file_exists(dest_dir, library_filename)
         else:
             already_exists = dest_file_path.exists()
         if already_exists:
-            click.echo(f"  SKIPPED {source_file.name} -- already exists at")
+            click.echo(f"  SKIPPED {library_filename} -- already exists at")
             click.echo(f"          {dest_file_path}")
             manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
             return
@@ -112,7 +157,7 @@ def run(
         display_name = f"{book_dir.name}/" if book_dir else source_file.name
     else:
         action_label = "Copying" if not dry_run else "[DRY-RUN] Would copy"
-        display_name = source_file.name
+        display_name = library_filename
 
     click.echo(f"  {action_label} {display_name}")
     click.echo(f"       -> {dest_dir}")
@@ -123,18 +168,27 @@ def run(
 
     if reorganize and book_dir:
         dest_file = _move_book_directory(
-            book_dir, dest_dir, stop_at=config.nfs_output_dir
+            book_dir,
+            dest_dir,
+            stop_at=config.nfs_output_dir,
+            rename_map={source_file.name: library_filename},
         )
     elif reorganize:
         dest_file = move_in_library(
-            source_file, dest_dir, dry_run=False, library_root=config.nfs_output_dir
+            source_file,
+            dest_dir,
+            dry_run=False,
+            library_root=config.nfs_output_dir,
+            dest_filename=library_filename,
         )
     else:
-        dest_file = copy_to_library(source_file, dest_dir, dry_run=False)
+        dest_file = copy_to_library(
+            source_file, dest_dir, dry_run=False, dest_filename=library_filename
+        )
 
     # Register the new file in the index
     if index:
-        index.register_new_file(dest_dir, source_file.name)
+        index.register_new_file(dest_dir, library_filename)
 
     # Update manifest
     data = manifest.read(book_hash)
@@ -176,12 +230,17 @@ def _find_source_file(data: dict, source_path: Path) -> Path | None:
 
 
 def _move_book_directory(
-    source_dir: Path, dest_dir: Path, stop_at: Path | None = None
+    source_dir: Path,
+    dest_dir: Path,
+    stop_at: Path | None = None,
+    rename_map: dict[str, str] | None = None,
 ) -> Path:
     """Move all contents from source_dir into dest_dir (recursively).
 
     Handles multi-chapter books (many MP3s in one dir), multi-disc books
     with CD1/CD2 subdirectories, and single-file books alike.
+    Applies rename_map to rename specific files during the move
+    (e.g., strip year prefix, add series position).
     Cleans up the empty source directory after moving.
     Returns the destination directory path.
     """
@@ -191,12 +250,20 @@ def _move_book_directory(
         if not item.is_file():
             continue
         rel = item.relative_to(source_dir)
-        dest_file = dest_dir / rel
+        # Apply rename if this file is in the rename map
+        dest_name = (rename_map or {}).get(item.name, item.name)
+        if len(rel.parts) > 1:
+            # Nested file -- preserve subdirectory, rename leaf
+            dest_file = dest_dir / rel.parent / dest_name
+        else:
+            dest_file = dest_dir / dest_name
         dest_file.parent.mkdir(parents=True, exist_ok=True)
         if dest_file.exists() and dest_file.stat().st_size == item.stat().st_size:
             log.debug(f"Skip (same size): {rel}")
             continue
         shutil.move(str(item), str(dest_file))
+        if dest_name != item.name:
+            log.info(f"Renamed: {item.name} -> {dest_name}")
         moved += 1
     log.info(f"Moved {moved} files: {source_dir.name} -> {dest_dir}")
 
