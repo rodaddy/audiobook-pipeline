@@ -175,6 +175,7 @@ class TestAsinStage:
     ):
         mock_config.pipeline_llm_base_url = "http://test:4000"
         mock_config.pipeline_llm_api_key = "test-key"
+        mock_config.pipeline_level = "ai"
 
         source_file = tmp_path / "book.m4b"
         source_file.write_text("fake audio")

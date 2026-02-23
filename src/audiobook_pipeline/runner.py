@@ -17,6 +17,7 @@ from .models import (
     AUDIO_EXTENSIONS,
     CONVERTIBLE_EXTENSIONS,
     STAGE_ORDER,
+    PipelineLevel,
     PipelineMode,
     Stage,
     StageStatus,
@@ -203,7 +204,12 @@ class PipelineRunner:
                         f"(has convertible audio, no .m4b)"
                     )
 
-        stages = STAGE_ORDER.get(effective_mode, [])
+        stages = list(STAGE_ORDER.get(effective_mode, []))
+
+        # Simple level: strip organize and archive -- output stays in source dir
+        if self.config.level == PipelineLevel.SIMPLE:
+            stages = [s for s in stages if s not in (Stage.ORGANIZE, Stage.ARCHIVE)]
+
         book_hash = generate_book_hash(source_path)
 
         click.echo(
@@ -264,6 +270,42 @@ class PipelineRunner:
                 raise RuntimeError(
                     f"Stage '{stage.value}' failed for {source_path.name}"
                 )
+
+        # Simple level: copy tagged m4b back to source directory
+        if self.config.level == PipelineLevel.SIMPLE:
+            self._copy_output_to_source(book_hash, source_path)
+
+    def _copy_output_to_source(self, book_hash: str, source_path: Path) -> None:
+        """Copy the tagged m4b from work dir back to source directory (simple level)."""
+        import shutil
+
+        data = self.db.read(book_hash)
+        if not data:
+            return
+
+        # Find the output file from metadata or convert stage
+        output_file = ""
+        for stage_name in ("metadata", "convert"):
+            output_file = (
+                data.get("stages", {}).get(stage_name, {}).get("output_file", "")
+            )
+            if output_file:
+                break
+
+        if not output_file or not Path(output_file).exists():
+            log.warning("Simple level: no output file found to copy back")
+            return
+
+        dest_dir = source_path if source_path.is_dir() else source_path.parent
+        dest = dest_dir / Path(output_file).name
+
+        if self.config.dry_run:
+            click.echo(f"  [DRY-RUN] Would copy {Path(output_file).name} -> {dest}")
+            return
+
+        shutil.copy2(output_file, dest)
+        click.echo(f"  Output: {dest}")
+        log.info(f"Simple level: copied output to {dest}")
 
     def run_cmd(
         self,

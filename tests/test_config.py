@@ -30,6 +30,7 @@ _CONFIG_ENV_VARS = [
     "AUDIBLE_REGION",
     "AUDNEXUS_REGION",
     "MAX_RETRIES",
+    "PIPELINE_LEVEL",
 ]
 
 
@@ -38,13 +39,14 @@ def _clean_env(monkeypatch):
     """Remove pipeline env vars so defaults tests see actual defaults."""
     for var in _CONFIG_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    # Also clear ASIN_SEARCH_THRESHOLD and AI vars that .env may set
+    # Also clear ASIN_SEARCH_THRESHOLD, AI vars, and PIPELINE_LEVEL that .env may set
     for var in [
         "ASIN_SEARCH_THRESHOLD",
         "AI_ALL",
         "OPENAI_BASE_URL",
         "OPENAI_API_KEY",
         "OPENAI_MODEL",
+        "PIPELINE_LEVEL",
     ]:
         monkeypatch.delenv(var, raising=False)
 
@@ -94,3 +96,28 @@ class TestOverrides:
         monkeypatch.setenv("WORK_DIR", "/tmp/test-work")
         config = PipelineConfig(_env_file=None)
         assert config.work_dir == Path("/tmp/test-work")
+
+
+class TestPipelineLevel:
+    def test_default_level(self):
+        config = PipelineConfig(_env_file=None)
+        from audiobook_pipeline.models import PipelineLevel
+
+        assert config.level == PipelineLevel.NORMAL
+
+    def test_level_from_env(self, monkeypatch):
+        monkeypatch.setenv("PIPELINE_LEVEL", "ai")
+        config = PipelineConfig(_env_file=None)
+        from audiobook_pipeline.models import PipelineLevel
+
+        assert config.level == PipelineLevel.AI
+
+    def test_level_from_constructor(self):
+        config = PipelineConfig(_env_file=None, pipeline_level="simple")
+        from audiobook_pipeline.models import PipelineLevel
+
+        assert config.level == PipelineLevel.SIMPLE
+
+    def test_ai_level_string_field(self):
+        config = PipelineConfig(_env_file=None, pipeline_level="full")
+        assert config.pipeline_level == "full"

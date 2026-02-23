@@ -1,11 +1,17 @@
 """Pipeline configuration via pydantic-settings (.env + env vars)."""
 
+from __future__ import annotations
+
 import sys
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from .models import PipelineLevel
 
 # Suppress pydantic-settings toml_file warning until we wire up the source hook
 warnings.filterwarnings(
@@ -81,12 +87,22 @@ class PipelineConfig(BaseSettings):
     failure_webhook_url: str = ""
     failure_email: str = ""
 
+    # -- Pipeline level --
+    pipeline_level: str = "normal"
+
     # -- AI (uses PIPELINE_LLM_* env vars to avoid OPENAI_* collisions) --
     pipeline_llm_base_url: str = ""
     pipeline_llm_api_key: str = ""
     pipeline_llm_model: str = "haiku"
     ai_all: bool = False
     asin_search_threshold: int = 65
+
+    @property
+    def level(self) -> PipelineLevel:
+        """Parsed pipeline level enum from the pipeline_level string."""
+        from .models import PipelineLevel
+
+        return PipelineLevel(self.pipeline_level)
 
     @property
     def db_path(self) -> Path:

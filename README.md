@@ -34,6 +34,30 @@ uv run audiobook-convert /path/to/audiobook-mp3s/
 uv run audiobook-convert --mode convert /path/to/incoming/
 ```
 
+## Pipeline Levels
+
+The pipeline supports four intelligence tiers, configured via `PIPELINE_LEVEL` in `.env` or `--level` on the CLI:
+
+| Level | Convert | Metadata | Organize | AI | Use case |
+|-------|---------|----------|----------|----|----------|
+| `simple` | Yes | Audible/Audnexus API | No -- m4b stays in source dir | None | "Just give me a tagged m4b" |
+| `normal` | Yes | Audible/Audnexus API | Best-effort, fallback `_unsorted/` | None | "Try to file it, don't overthink" |
+| `ai` | Yes | API + LLM disambiguation | Full library placement | LLM resolves conflicts | Current `--ai-all` behavior |
+| `full` | Yes | API + LLM | Interactive agent-guided | Agent walks user through issues | See `docs/install.md` |
+
+```bash
+# Set in .env
+PIPELINE_LEVEL=normal
+
+# Or override per-run
+uv run audiobook-convert --level simple /path/to/book/
+```
+
+Notes:
+- `--reorganize` and `--ai-all` force level to `ai` minimum (with a warning if lower)
+- `simple` and `normal` levels never call the LLM, even if `PIPELINE_LLM_BASE_URL` is configured
+- `full` level behaves identically to `ai` in the pipeline -- the difference is the interactive agent guide (`.claude/agents/audiobook-guide.md`)
+
 ## Installation
 
 ### Dependencies
@@ -339,6 +363,7 @@ uv run audiobook-convert --dry-run --verbose /mnt/downloads/MyBook/
 
 ```
 -m, --mode {convert,enrich,metadata,organize}  Pipeline mode (auto-detected if omitted)
+--level {simple,normal,ai,full}                Override PIPELINE_LEVEL from config
 --dry-run                                      Preview without making changes
 --force                                        Re-process even if completed
 -v, --verbose                                  Enable DEBUG logging

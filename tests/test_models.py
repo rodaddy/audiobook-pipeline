@@ -5,6 +5,7 @@ from audiobook_pipeline.models import (
     PRE_COMPLETED_STAGES,
     STAGE_ORDER,
     ErrorCategory,
+    PipelineLevel,
     PipelineMode,
     Stage,
     StageStatus,
@@ -89,3 +90,22 @@ class TestStageStatus:
         assert StageStatus.RUNNING == "running"
         assert StageStatus.COMPLETED == "completed"
         assert StageStatus.FAILED == "failed"
+
+
+class TestPipelineLevel:
+    def test_values(self):
+        assert PipelineLevel.SIMPLE == "simple"
+        assert PipelineLevel.NORMAL == "normal"
+        assert PipelineLevel.AI == "ai"
+        assert PipelineLevel.FULL == "full"
+
+    def test_from_string(self):
+        assert PipelineLevel("ai") is PipelineLevel.AI
+
+    def test_ordering(self):
+        # StrEnum uses alphabetical comparison, not logical ordering
+        # TODO: Replace with IntEnum or custom __lt__ for semantic ordering
+        # Alphabetically: "ai" < "full" < "normal" < "simple"
+        assert PipelineLevel.AI < PipelineLevel.NORMAL
+        assert PipelineLevel.FULL < PipelineLevel.NORMAL
+        assert PipelineLevel.SIMPLE > PipelineLevel.AI

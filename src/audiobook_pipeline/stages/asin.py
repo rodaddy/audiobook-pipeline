@@ -25,7 +25,7 @@ from ..ai import disambiguate, get_client, needs_resolution, resolve
 from ..api.audible import search
 from ..api.search import score_results
 from ..ffprobe import extract_author_from_tags, get_tags
-from ..models import Stage, StageStatus
+from ..models import PipelineLevel, Stage, StageStatus
 from ..ops.organize import parse_path
 
 if TYPE_CHECKING:
@@ -117,13 +117,17 @@ def run(
         metadata["series"],
         config,
         author=metadata.get("author", ""),
-        widen=bool(config.pipeline_llm_base_url),
+        widen=bool(config.pipeline_llm_base_url)
+        and config.level in (PipelineLevel.AI, PipelineLevel.FULL),
     )
 
     # Pick best Audible match via fuzzy scoring
     audible_result = None
     cover_url = ""
-    has_ai = bool(config.pipeline_llm_base_url)
+    has_ai = bool(config.pipeline_llm_base_url) and config.level in (
+        PipelineLevel.AI,
+        PipelineLevel.FULL,
+    )
     if audible_candidates:
         scored = score_results(audible_candidates, metadata["title"], "")
         best = scored[0]
@@ -166,11 +170,14 @@ def run(
                 cover_url = ai_pick.get("cover_url", "")
                 log.debug(f"AI disambiguated: {ai_pick['author_str']!r}")
 
-    # Decide if AI should resolve metadata
-    should_resolve = config.ai_all or needs_resolution(
-        metadata,
-        tag_metadata,
-        audible_result,
+    # Decide if AI should resolve metadata (only when level >= ai)
+    should_resolve = has_ai and (
+        config.ai_all
+        or needs_resolution(
+            metadata,
+            tag_metadata,
+            audible_result,
+        )
     )
 
     if should_resolve:

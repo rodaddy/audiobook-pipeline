@@ -1,4 +1,14 @@
-"""Core enums, constants, and type definitions for the audiobook pipeline."""
+"""Core enums, constants, and type definitions for the audiobook pipeline.
+
+Enums:
+    PipelineMode   -- Pipeline operation mode (convert, enrich, metadata, organize).
+    PipelineLevel  -- Intelligence tier (simple, normal, ai, full). Controls AI
+                      availability and stage filtering. Simple/normal never use LLM;
+                      ai/full enable LLM disambiguation and resolution.
+    Stage          -- Individual pipeline stage (validate through cleanup).
+    StageStatus    -- Stage execution state (pending, running, completed, failed).
+    ErrorCategory  -- Error classification for retry logic (transient, permanent).
+"""
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -21,6 +31,21 @@ class StageStatus(StrEnum):
 class ErrorCategory(StrEnum):
     TRANSIENT = "transient"
     PERMANENT = "permanent"
+
+
+class PipelineLevel(StrEnum):
+    """Intelligence tier controlling AI usage and stage filtering.
+
+    simple  -- convert + tag only, output stays in source dir (no AI)
+    normal  -- convert + tag + best-effort organize (no AI)
+    ai      -- full pipeline with LLM-assisted metadata resolution
+    full    -- ai + interactive agent guidance (see docs/install.md)
+    """
+
+    SIMPLE = "simple"
+    NORMAL = "normal"
+    AI = "ai"
+    FULL = "full"
 
 
 class Stage(StrEnum):

@@ -85,6 +85,12 @@ def _load_env_file(env_file: Path) -> None:
     help="Force all books into this folder instead of per-author folders.",
 )
 @click.option(
+    "--level",
+    type=click.Choice(["simple", "normal", "ai", "full"]),
+    default=None,
+    help="Override PIPELINE_LEVEL from config.",
+)
+@click.option(
     "-c",
     "--config",
     "config_file",
@@ -104,6 +110,7 @@ def main(
     reorganize: bool,
     verify: bool,
     author_override: str | None,
+    level: str | None,
     config_file: str | None,
 ) -> None:
     """Convert, enrich, and organize audiobooks into tagged M4B files."""
@@ -142,6 +149,21 @@ def main(
     else:
         log.debug(f"Mode: {mode} (explicit)")
 
+    # Resolve pipeline level: CLI --level > env PIPELINE_LEVEL > default "normal"
+    from .models import PipelineLevel
+
+    effective_level = level  # CLI override (may be None)
+
+    # --ai-all or --reorganize forces level to at least "ai"
+    if ai_all or reorganize:
+        if effective_level and effective_level in ("simple", "normal"):
+            log.warning(
+                f"--level {effective_level} overridden to 'ai' "
+                f"(implied by {'--reorganize' if reorganize else '--ai-all'})"
+            )
+        if not effective_level or effective_level in ("simple", "normal"):
+            effective_level = "ai"
+
     # Pass CLI flags as kwargs to avoid env pollution
     config_kwargs: dict[str, bool | str] = {
         "dry_run": dry_run,
@@ -149,11 +171,23 @@ def main(
         "verbose": verbose,
         "ai_all": ai_all,
     }
+    if effective_level:
+        config_kwargs["pipeline_level"] = effective_level
     if verbose:
         config_kwargs["log_level"] = "DEBUG"
 
     config = PipelineConfig(**config_kwargs)  # type: ignore[arg-type]
+
+    # Enforce level semantics on ai_all
+    if config.level in (PipelineLevel.AI, PipelineLevel.FULL):
+        config_kwargs["ai_all"] = True
+        config = PipelineConfig(**config_kwargs)  # type: ignore[arg-type]
+    elif config.level in (PipelineLevel.SIMPLE, PipelineLevel.NORMAL):
+        config_kwargs["ai_all"] = False
+        config = PipelineConfig(**config_kwargs)  # type: ignore[arg-type]
+
     config.setup_logging()
+    log.info(f"Pipeline level: {config.level.value}")
 
     runner = PipelineRunner(
         config=config,

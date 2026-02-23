@@ -13,8 +13,12 @@ from audiobook_pipeline.models import PipelineMode
 def _use_tmp_dirs(tmp_path, monkeypatch):
     """Point all directory config to tmp_path so tests don't need /var/lib permissions."""
     for var in (
-        "WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR",
-        "ARCHIVE_DIR", "LOCK_DIR",
+        "WORK_DIR",
+        "MANIFEST_DIR",
+        "OUTPUT_DIR",
+        "LOG_DIR",
+        "ARCHIVE_DIR",
+        "LOCK_DIR",
     ):
         monkeypatch.setenv(var, str(tmp_path / var.lower()))
 
@@ -82,3 +86,44 @@ class TestDryRun:
         assert result.exit_code == 0, result.output + str(result.exception or "")
         config = mock_runner_cls.call_args.kwargs.get("config")
         assert config.dry_run is True
+
+
+class TestLevelFlag:
+    @patch("audiobook_pipeline.cli.PipelineRunner")
+    def test_level_flag_overrides_config(self, mock_runner_cls, tmp_path, monkeypatch):
+        monkeypatch.delenv("PIPELINE_LEVEL", raising=False)
+        runner = CliRunner()
+        result = runner.invoke(main, [str(tmp_path), "--level", "simple", "--dry-run"])
+        assert result.exit_code == 0, result.output + str(result.exception or "")
+        config = mock_runner_cls.call_args.kwargs.get("config")
+        assert config.pipeline_level == "simple"
+
+    @patch("audiobook_pipeline.cli.PipelineRunner")
+    def test_reorganize_forces_ai_level(self, mock_runner_cls, tmp_path, monkeypatch):
+        monkeypatch.delenv("PIPELINE_LEVEL", raising=False)
+        runner = CliRunner()
+        result = runner.invoke(main, [str(tmp_path), "--reorganize", "--dry-run"])
+        assert result.exit_code == 0, result.output + str(result.exception or "")
+        config = mock_runner_cls.call_args.kwargs.get("config")
+        # --reorganize forces level to "ai" or "full"
+        assert config.pipeline_level in ("ai", "full")
+
+    @patch("audiobook_pipeline.cli.PipelineRunner")
+    def test_ai_all_forces_ai_level(self, mock_runner_cls, tmp_path, monkeypatch):
+        monkeypatch.delenv("PIPELINE_LEVEL", raising=False)
+        runner = CliRunner()
+        result = runner.invoke(main, [str(tmp_path), "--ai-all", "--dry-run"])
+        assert result.exit_code == 0, result.output + str(result.exception or "")
+        config = mock_runner_cls.call_args.kwargs.get("config")
+        # --ai-all forces level to "ai" or "full"
+        assert config.pipeline_level in ("ai", "full")
+
+    @patch("audiobook_pipeline.cli.PipelineRunner")
+    def test_simple_level_disables_ai(self, mock_runner_cls, tmp_path, monkeypatch):
+        monkeypatch.delenv("PIPELINE_LEVEL", raising=False)
+        monkeypatch.delenv("AI_ALL", raising=False)
+        runner = CliRunner()
+        result = runner.invoke(main, [str(tmp_path), "--level", "simple", "--dry-run"])
+        assert result.exit_code == 0, result.output + str(result.exception or "")
+        config = mock_runner_cls.call_args.kwargs.get("config")
+        assert config.ai_all is False

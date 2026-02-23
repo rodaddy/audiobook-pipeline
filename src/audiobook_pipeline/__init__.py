@@ -25,8 +25,15 @@ Usage:
     # Specify config file
     uv run audiobook-convert -c /path/to/custom.env /path/to/book/
 
+Pipeline levels (PIPELINE_LEVEL env var or --level flag):
+    simple  -- Convert + tag only, output stays in source dir. No AI, no organize.
+    normal  -- Convert + tag + best-effort organize (fallback _unsorted/). No AI.
+    ai      -- Full pipeline with LLM-assisted metadata disambiguation.
+    full    -- Same as ai, plus interactive agent guidance (see docs/install.md).
+
 CLI flags:
     -m, --mode {convert,enrich,metadata,organize}  Pipeline mode (auto-detected if omitted)
+    --level {simple,normal,ai,full}                Override PIPELINE_LEVEL from config
     --dry-run                                      Preview without making changes
     --force                                        Re-process even if completed
     -v, --verbose                                  Enable DEBUG logging
@@ -48,8 +55,10 @@ Modes:
 
 Core modules:
     config              -- Pipeline configuration via pydantic-settings (PIPELINE_LLM_* env vars).
-                           Includes parallel conversion settings (max_parallel_converts,
-                           cpu_ceiling).
+                           Includes pipeline_level field with PipelineLevel property for
+                           tiered intelligence (simple/normal/ai/full). Level controls AI
+                           availability and stage filtering. Includes parallel conversion
+                           settings (max_parallel_converts, cpu_ceiling).
     cli                 -- Click CLI entry point with auto mode detection, --reorganize flag.
                            CLI flags passed as kwargs to PipelineConfig (no env pollution).
                            Logs mode detection, env loading, and flag resolution.
