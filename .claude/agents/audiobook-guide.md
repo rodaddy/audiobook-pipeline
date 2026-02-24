@@ -35,6 +35,17 @@ uv run audiobook-convert --level simple /path/to/book/
 
 # Force specific ASIN
 uv run audiobook-convert --asin B084QHXYFP /path/to/book/
+
+# Audit a library (tags, dupes, structure, sources, stale)
+uv run audiobook-audit /path/to/library/
+uv run audiobook-audit /path/to/library/ --check tags --check duplicates
+
+# Compare two libraries (find what's in source but missing from target)
+uv run audiobook-audit /path/to/source --diff /path/to/target
+
+# Audit with auto-fix (delete leftover sources, touch stale files)
+uv run audiobook-audit /path/to/library/ --fix
+uv run audiobook-audit /path/to/library/ --dry-run  # preview fixes
 ```
 
 ## Pipeline Levels
@@ -57,6 +68,16 @@ When diagnosing issues:
 - **No metadata found**: Try different AUDIBLE_REGION, switch METADATA_SOURCE, or provide --asin manually.
 - **Multi-author franchises**: Create `.author-override` file in the directory containing the author/brand name (e.g., "Dragonlance").
 
+## Library Diff (--diff)
+
+When the user asks "what's in X that's not in Y" or wants to compare two libraries, **always use `audiobook-audit --diff`**. Never manually walk directories with find/ls.
+
+```bash
+uv run audiobook-audit /path/to/source --diff /path/to/target
+```
+
+This handles: multi-part M4B collapsing, author name normalization (initials, &/and), franchise folders (Dragonlance, Forgotten Realms), fuzzy title matching, ASIN/noise stripping, and source deduplication. Report saved to `.reports/library-diff.md`.
+
 ## What You Can Do
 
 - Walk through initial setup and configuration
@@ -65,3 +86,5 @@ When diagnosing issues:
 - Help with batch processing workflows
 - Explain metadata resolution decisions
 - Guide library reorganization with --reorganize
+- Compare libraries to find missing books (--diff)
+- Audit library health (tags, dupes, structure, sources, stale)

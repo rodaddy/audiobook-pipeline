@@ -343,6 +343,37 @@ uv run audiobook-convert --level full /path/to/book/
 - `ai` - Better series detection and genre classification, requires LLM
 - `full` - Maximum metadata quality, requires Audible access + LLM
 
+## Library Audit
+
+Check library health -- metadata tags, duplicates, structure, leftover sources, stale Plex entries:
+
+```bash
+# Full audit
+uv run audiobook-audit /path/to/library/
+
+# Specific checks only
+uv run audiobook-audit /path/to/library/ --check tags --check duplicates
+
+# Auto-fix safe issues (delete leftover sources, touch stale files)
+uv run audiobook-audit /path/to/library/ --fix
+uv run audiobook-audit /path/to/library/ --dry-run  # preview first
+
+# JSON output
+uv run audiobook-audit /path/to/library/ --json-output
+```
+
+### Compare Two Libraries (--diff)
+
+Find books in a source library that are missing from a target library:
+
+```bash
+uv run audiobook-audit /path/to/source --diff /path/to/target
+```
+
+Handles: multi-part M4B collapsing (Part N files and chapter-per-file), author name normalization (initials, &/and), franchise folder awareness (Dragonlance, Forgotten Realms), fuzzy title matching (85% threshold), ASIN/noise stripping, and source deduplication.
+
+Report saved to `.reports/library-diff.md`.
+
 ## Next Steps
 
 After setup:
@@ -358,4 +389,6 @@ For ongoing use:
 - Add new books to SOURCE_LIBRARY
 - Run pipeline on new arrivals
 - Use `--reorganize` after manual library changes
+- Use `audiobook-audit` to check library health
+- Use `audiobook-audit --diff` to compare libraries
 - Check logs for errors: `~/.audiobook-pipeline/logs/`
