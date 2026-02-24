@@ -136,3 +136,18 @@ Implemented a four-tier pipeline intelligence system (simple/normal/ai/full) con
 **Commits:** a1db8f9, 609427e, f864d7d
 
 **Details:** `.reports/sessions/24cd5aab-76b2-4c5e-b52e-1a930780fe34.md`
+
+---
+
+## 2026-02-24 -- Library Diff Implementation and PR Merge (969c8457)
+
+**Branch:** wip/next (created from main after PR merge)
+**Type:** Feature -- cross-library comparison, audit enhancements, PR workflow
+
+Implemented full library diff for comparing two audiobook libraries and identifying missing books. Created library_diff.py (~240 lines) with 4-tier matching (exact same-author, exact cross-author, fuzzy same-author, fuzzy any-author) using rapidfuzz token_set_ratio. Enhanced audit.py with sophisticated normalization for titles/authors, franchise folder awareness, multi-part directory handling. Added --diff CLI option. Created comprehensive test suites. Reduced false "missing" from 505 to 11 through iterative real-library testing. Enhanced docs/install.md and audiobook-guide.md. Merged to main via PR #8 (cherry-pick for clean history), created wip/next branch.
+
+**Note:** This session context is only the wrap; actual implementation happened in previous context window (same session ID).
+
+**Commits:** Multiple on feat/library-diff-clean branch, merged via PR #8
+
+**Details:** `.reports/sessions/969c8457-3797-4ffb-88e1-9f104c6a7abf.md`

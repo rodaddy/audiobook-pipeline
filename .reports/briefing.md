@@ -90,8 +90,8 @@ src/audiobook_pipeline/
 
 ---
 
-**Last session:** 2026-02-23 -- Pipeline Levels (24cd5aab)
-**Done:** Implemented four-tier pipeline intelligence system (simple/normal/ai/full) via PIPELINE_LEVEL env var and --level CLI flag | Created docs/install.md agent guide (~360 lines), .claude/agents/audiobook-guide.md custom agent, project CLAUDE.md | Added 11 new tests (PipelineLevel enum, config, CLI flag, AI gating) | Fixed StrEnum comparison bug (alphabetical vs semantic ordering) | Verified ai level (HP3 LLM disambiguation) and simple level (no AI, copy to source) | Updated PR #5 with new description | Committed a1db8f9, 609427e, f864d7d
-**PR:** https://github.com/rodaddy/audiobook-pipeline/pull/5 (awaiting review)
-**Carry-forward:** SQLite migration | Brandon Sanderson NFS cleanup (duplicate Mistborn folders) | Ken Liu Book 3 ASIN failure | Consider author hint parameter for chaptered books
-**Next:** Merge PR #5, SQLite migration, or Sanderson cleanup
+**Last session:** 2026-02-24 -- Library Diff Implementation and PR Merge (969c8457)
+**Done:** Implemented library diff module (ops/library_diff.py ~240 lines) with 4-tier fuzzy matching (token_set_ratio >= 85%) | Enhanced audit normalization (_normalize_for_dedup, _normalize_author) | Added franchise folder awareness (FRANCHISE_FOLDERS dict) | Fixed multi-part directory handling | Added --diff CLI option | Created comprehensive tests (test_library_diff.py ~150 lines, enhanced test_audit.py) | Reduced false "missing" from 505 to 11 via iterative tuning | Updated docs/install.md and audiobook-guide.md | Fixed agent symlink (repo is source of truth) | Merged PR #8 via cherry-pick | Created wip/next branch from main
+**PRs:** PR #5 (feat/python-rewrite) still open awaiting review | PR #8 (library diff) merged to main
+**Carry-forward:** SQLite migration | Brandon Sanderson NFS cleanup (duplicate Mistborn folders) | Ken Liu Book 3 ASIN failure | Consider author hint parameter for chaptered books | Clean up stale remote branches (feat/library-diff, feat/library-diff-v2, feat/library-diff-clean, feat/python-rewrite after PR #5 merges)
+**Next:** Review/merge PR #5, clean up stale branches, SQLite migration, or Sanderson cleanup
