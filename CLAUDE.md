@@ -6,9 +6,15 @@ Convert audio files (MP3, FLAC, etc.) to chaptered M4B audiobooks with Audible m
 > All LAWs (#!/bin/bash, protected branches, stack prefs) enforced via ~/.claude/CLAUDE.md and hooks.
 
 
+## Agent First
+
+For any audiobook task (convert, audit, diff, troubleshoot), spawn the `audiobook-guide` agent. It knows the CLI, the flags, and the workflows. Don't manually walk directories or shell out to ffprobe -- use the tool.
+
 ## Quick Reference
 
 - **Run:** `uv run audiobook-convert /path/to/audio/`
+- **Audit:** `uv run audiobook-audit /path/to/library/` (tags, dupes, structure, sources, stale)
+- **Diff:** `uv run audiobook-audit /path/to/source --diff /path/to/target` (find books in source missing from target)
 - **Config:** `.env` in project root
 - **Levels:** simple | normal | ai | full (set via `PIPELINE_LEVEL` or `--level`)
 - **Docs:** `docs/install.md` for full setup guide
