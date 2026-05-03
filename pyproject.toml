@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 audiobook-convert = "audiobook_pipeline.cli:main"
+audiobook-audit = "audiobook_pipeline.cli_audit:main"
 
 [build-system]
 requires = ["hatchling"]
