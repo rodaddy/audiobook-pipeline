@@ -1,7 +1,7 @@
 """File locking and disk space checks."""
 
+import fcntl
 import shutil
-import sys
 from pathlib import Path
 
 from loguru import logger
@@ -29,28 +29,15 @@ def acquire_global_lock(lock_dir: Path, skip: bool = False) -> object | None:
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_file = lock_dir / "pipeline.lock"
 
-    if sys.platform == "win32":
-        import msvcrt
-        fh = open(lock_file, "w")
-        try:
-            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError:
-            fh.close()
-            log.warning(f"Failed to acquire lock at {lock_file}")
-            raise LockError("Another pipeline instance is running")
-        log.info(f"Lock acquired at {lock_file}")
-        return fh
-    else:
-        import fcntl
-        fh = open(lock_file, "w")
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            fh.close()
-            log.warning(f"Failed to acquire lock at {lock_file}")
-            raise LockError("Another pipeline instance is running")
-        log.info(f"Lock acquired at {lock_file}")
-        return fh
+    fh = open(lock_file, "w")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        log.warning(f"Failed to acquire lock at {lock_file}")
+        raise LockError("Another pipeline instance is running")
+    log.info(f"Lock acquired at {lock_file}")
+    return fh
 
 
 def check_disk_space(source_path: Path, work_dir: Path, multiplier: int = 3) -> bool:
