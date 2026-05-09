@@ -1,8 +1,6 @@
 """Tests for ai.py -- AI-assisted metadata resolution."""
 
-from unittest.mock import MagicMock, Mock
-
-import pytest
+from unittest.mock import Mock
 
 from audiobook_pipeline.ai import (
     _parse_resolve_response,
@@ -305,7 +303,7 @@ class TestResolve:
         ]
         mock_client.chat.completions.create.return_value = mock_response
 
-        result = resolve(
+        resolve(
             {},
             {"author": "Stephen King", "album": "The Stand", "title": "Chapter 1"},
             None,
@@ -342,7 +340,7 @@ class TestResolve:
             },
         ]
 
-        result = resolve({}, {}, candidates, "haiku", mock_client)
+        resolve({}, {}, candidates, "haiku", mock_client)
 
         call_args = mock_client.chat.completions.create.call_args
         prompt = call_args.kwargs["messages"][0]["content"]
@@ -535,7 +533,7 @@ class TestDisambiguate:
 
         call_args = mock_client.chat.completions.create.call_args
         prompt = call_args.kwargs["messages"][0]["content"]
-        assert ' by ' not in prompt.split("Search results:")[0]
+        assert " by " not in prompt.split("Search results:")[0]
 
     def test_handles_api_exception(self):
         mock_client = Mock()

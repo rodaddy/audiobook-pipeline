@@ -29,13 +29,13 @@ def acquire_global_lock(lock_dir: Path, skip: bool = False) -> object | None:
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_file = lock_dir / "pipeline.lock"
 
-    fh = open(lock_file, "w")
+    fh = open(lock_file, "w")  # noqa: SIM115 -- lock file handle must outlive this scope
     try:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         fh.close()
         log.warning(f"Failed to acquire lock at {lock_file}")
-        raise LockError("Another pipeline instance is running")
+        raise LockError("Another pipeline instance is running") from None
     log.info(f"Lock acquired at {lock_file}")
     return fh
 
@@ -51,9 +51,7 @@ def check_disk_space(source_path: Path, work_dir: Path, multiplier: int = 3) -> 
     if source_path.is_file():
         source_size = source_path.stat().st_size
     else:
-        source_size = sum(
-            f.stat().st_size for f in source_path.rglob("*") if f.is_file()
-        )
+        source_size = sum(f.stat().st_size for f in source_path.rglob("*") if f.is_file())
 
     required = source_size * multiplier
     usage = shutil.disk_usage(work_dir)

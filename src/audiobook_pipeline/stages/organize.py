@@ -18,7 +18,6 @@ import click
 from loguru import logger
 
 from ..config import PipelineConfig
-from ..pipeline_db import PipelineDB
 from ..models import AUDIO_EXTENSIONS, Stage, StageStatus
 from ..ops.organize import (
     _strip_hash,
@@ -26,6 +25,7 @@ from ..ops.organize import (
     copy_to_library,
     move_in_library,
 )
+from ..pipeline_db import PipelineDB
 from ..sanitize import sanitize_filename
 
 if TYPE_CHECKING:
@@ -157,11 +157,7 @@ def run(
     # so misplaced duplicates get moved to the correct location (or cleaned up
     # when dest already has the file via same-size skip in _move_book_directory).
     if not reorganize:
-        dedup_key = (
-            f"{source_path.name}/{source_file.stem}"
-            if source_path.is_dir()
-            else source_file.stem
-        )
+        dedup_key = f"{source_path.name}/{source_file.stem}" if source_path.is_dir() else source_file.stem
         if index and index.mark_processed(dedup_key):
             click.echo(f"  SKIPPED {source_file.name} -- already processed in batch")
             manifest.set_stage(book_hash, Stage.ORGANIZE, StageStatus.COMPLETED)
@@ -193,10 +189,7 @@ def run(
     # For single-file mode, check individual file
     dest_file_path = dest_dir / library_filename
     if not reorganize:
-        if index:
-            already_exists = index.file_exists(dest_dir, library_filename)
-        else:
-            already_exists = dest_file_path.exists()
+        already_exists = index.file_exists(dest_dir, library_filename) if index else dest_file_path.exists()
         if already_exists:
             click.echo(f"  SKIPPED {library_filename} -- already exists at")
             click.echo(f"          {dest_file_path}")
@@ -234,9 +227,7 @@ def run(
             dest_filename=library_filename,
         )
     else:
-        dest_file = copy_to_library(
-            source_file, dest_dir, dry_run=False, dest_filename=library_filename
-        )
+        dest_file = copy_to_library(source_file, dest_dir, dry_run=False, dest_filename=library_filename)
 
     # Register the new file in the index
     if index:
@@ -343,11 +334,8 @@ def _move_book_directory(
         rel = item.relative_to(source_dir)
         # Apply rename if this file is in the rename map
         dest_name = (rename_map or {}).get(item.name, item.name)
-        if len(rel.parts) > 1:
-            # Nested file -- preserve subdirectory, rename leaf
-            dest_file = dest_dir / rel.parent / dest_name
-        else:
-            dest_file = dest_dir / dest_name
+        # Nested file -- preserve subdirectory, rename leaf
+        dest_file = dest_dir / rel.parent / dest_name if len(rel.parts) > 1 else dest_dir / dest_name
         dest_file.parent.mkdir(parents=True, exist_ok=True)
         if dest_file.exists() and dest_file.stat().st_size == item.stat().st_size:
             log.debug(f"Skip (same size): {rel}")
@@ -384,9 +372,7 @@ def _find_audio_file(source_path: Path) -> Path | None:
         log.debug(f"_find_audio_file: found m4b {largest}")
         return largest
 
-    audio_files = [
-        f for f in source_path.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS
-    ]
+    audio_files = [f for f in source_path.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS]
     result = audio_files[0] if audio_files else None
     log.debug(f"_find_audio_file: result={result}")
     return result

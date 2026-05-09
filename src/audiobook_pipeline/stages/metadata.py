@@ -136,10 +136,7 @@ def run(
     # Gapless playback
     tags["pgap"] = "1"
 
-    log.debug(
-        f"Tagging {output_file.name}: artist={author!r} album={album!r} "
-        f"asin={asin!r}"
-    )
+    log.debug(f"Tagging {output_file.name}: artist={author!r} album={album!r} asin={asin!r}")
 
     if dry_run:
         click.echo(f"  [DRY-RUN] Would tag {output_file.name}:")

@@ -18,7 +18,10 @@ from audiobook_pipeline.ffprobe import (
 
 def _mock_result(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
-        args=[], returncode=returncode, stdout=stdout, stderr="",
+        args=[],
+        returncode=returncode,
+        stdout=stdout,
+        stderr="",
     )
 
 
@@ -31,6 +34,7 @@ class TestGetDuration:
     @patch("audiobook_pipeline.ffprobe._run_ffprobe")
     def test_empty_output_raises(self, mock_run):
         import pytest
+
         mock_run.return_value = _mock_result("")
         with pytest.raises(ValueError, match="empty duration"):
             get_duration(Path("test.mp3"))
@@ -45,6 +49,7 @@ class TestGetBitrate:
     @patch("audiobook_pipeline.ffprobe._run_ffprobe")
     def test_empty_output_raises(self, mock_run):
         import pytest
+
         mock_run.return_value = _mock_result("")
         with pytest.raises(ValueError, match="empty bitrate"):
             get_bitrate(Path("test.mp3"))
@@ -66,6 +71,7 @@ class TestGetChannels:
     @patch("audiobook_pipeline.ffprobe._run_ffprobe")
     def test_empty_output_raises(self, mock_run):
         import pytest
+
         mock_run.return_value = _mock_result("")
         with pytest.raises(ValueError, match="empty channel count"):
             get_channels(Path("test.mp3"))
@@ -80,6 +86,7 @@ class TestGetSampleRate:
     @patch("audiobook_pipeline.ffprobe._run_ffprobe")
     def test_empty_output_raises(self, mock_run):
         import pytest
+
         mock_run.return_value = _mock_result("")
         with pytest.raises(ValueError, match="empty sample rate"):
             get_sample_rate(Path("test.mp3"))
@@ -120,9 +127,7 @@ class TestDurationToTimestamp:
 class TestCountChapters:
     @patch("subprocess.run")
     def test_with_chapters(self, mock_run):
-        mock_run.return_value = _mock_result(
-            '{"chapters": [{"id": 0}, {"id": 1}, {"id": 2}]}'
-        )
+        mock_run.return_value = _mock_result('{"chapters": [{"id": 0}, {"id": 1}, {"id": 2}]}')
         assert count_chapters(Path("test.m4b")) == 3
 
     @patch("subprocess.run")

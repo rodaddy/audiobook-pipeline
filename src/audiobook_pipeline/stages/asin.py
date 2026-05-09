@@ -77,10 +77,7 @@ def run(
     # Parse path into metadata
     if source_path.is_dir():
         # Use directory name for richer context even if audio is nested
-        if tag_file:
-            parse_target = source_path / tag_file.name
-        else:
-            parse_target = source_path / source_path.name
+        parse_target = source_path / tag_file.name if tag_file else source_path / source_path.name
         metadata = parse_path(str(parse_target), source_dir=source_path)
     else:
         metadata = parse_path(str(source_path))
@@ -107,9 +104,8 @@ def run(
 
     # Use tag title if path title looks like junk
     source_stem = tag_file.stem if tag_file else source_path.stem
-    if tag_metadata["title"] and len(tag_metadata["title"]) > 3:
-        if metadata["title"] == source_stem:
-            metadata["title"] = tag_metadata["title"]
+    if tag_metadata["title"] and len(tag_metadata["title"]) > 3 and metadata["title"] == source_stem:
+        metadata["title"] = tag_metadata["title"]
 
     # Search Audible for candidates
     audible_candidates = _search_audible(
@@ -117,8 +113,7 @@ def run(
         metadata["series"],
         config,
         author=metadata.get("author", ""),
-        widen=bool(config.pipeline_llm_base_url)
-        and config.level in (PipelineLevel.AI, PipelineLevel.FULL),
+        widen=bool(config.pipeline_llm_base_url) and config.level in (PipelineLevel.AI, PipelineLevel.FULL),
     )
 
     # Pick best Audible match via fuzzy scoring
@@ -143,13 +138,9 @@ def run(
                 "year": best.get("year", ""),
             }
             cover_url = best.get("cover_url", "")
-            log.debug(
-                f"Audible match: {best['author_str']!r} (score={best['score']:.0f})"
-            )
+            log.debug(f"Audible match: {best['author_str']!r} (score={best['score']:.0f})")
         elif has_ai:
-            client = get_client(
-                config.pipeline_llm_base_url, config.pipeline_llm_api_key
-            )
+            client = get_client(config.pipeline_llm_base_url, config.pipeline_llm_api_key)
             ai_pick = disambiguate(
                 scored[:5],
                 metadata["title"],
@@ -236,12 +227,8 @@ def run(
                 "parsed_series": metadata["series"],
                 "parsed_position": metadata["position"],
                 "parsed_asin": (audible_result["asin"] if audible_result else ""),
-                "parsed_narrator": (
-                    audible_result.get("narrator", "") if audible_result else ""
-                ),
-                "parsed_year": (
-                    audible_result.get("year", "") if audible_result else ""
-                ),
+                "parsed_narrator": (audible_result.get("narrator", "") if audible_result else ""),
+                "parsed_year": (audible_result.get("year", "") if audible_result else ""),
                 "cover_url": cover_url,
                 "parsed_subtitle": best_candidate.get("subtitle", ""),
                 "parsed_description": best_candidate.get("publisher_summary", ""),
@@ -295,9 +282,7 @@ def _find_tag_file(source_path: Path) -> Path | None:
     m4b_files = list(source_path.rglob("*.m4b"))
     if m4b_files:
         return max(m4b_files, key=lambda f: f.stat().st_size)
-    audio_files = [
-        f for f in source_path.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS
-    ]
+    audio_files = [f for f in source_path.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS]
     return audio_files[0] if audio_files else None
 
 
@@ -313,10 +298,7 @@ def _search_audible(
     When widen=True (AI available), cast a wider net with additional
     query combinations -- AI will filter the results in post.
     """
-    log.debug(
-        f"_search_audible: title={title!r} series={series!r} "
-        f"author={author!r} widen={widen}"
-    )
+    log.debug(f"_search_audible: title={title!r} series={series!r} author={author!r} widen={widen}")
 
     queries = [title]
     if series:

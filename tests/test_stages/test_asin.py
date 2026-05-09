@@ -6,10 +6,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from audiobook_pipeline.config import PipelineConfig
-from audiobook_pipeline.errors import ManifestError
+from audiobook_pipeline.models import PipelineMode, StageStatus
 from audiobook_pipeline.pipeline_db import PipelineDB
-from audiobook_pipeline.models import PipelineMode, Stage, StageStatus
-from audiobook_pipeline.stages.asin import run, _search_audible
+from audiobook_pipeline.stages.asin import _search_audible, run
 
 
 @pytest.fixture

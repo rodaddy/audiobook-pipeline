@@ -1,7 +1,5 @@
 """Tests for api/search.py -- fuzzy scoring and path parsing."""
 
-import pytest
-
 from audiobook_pipeline.api.search import (
     _strip_series_numbers,
     parse_source_path,

@@ -1,9 +1,5 @@
 """Tests for loguru-based pipeline logging."""
 
-import sys
-from io import StringIO
-from pathlib import Path
-
 from loguru import logger
 
 from audiobook_pipeline.config import PipelineConfig
@@ -14,8 +10,7 @@ class TestSetupLogging:
         logger.remove()
 
     def test_setup_creates_log_dir(self, tmp_path, monkeypatch):
-        for var in ["WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR",
-                     "ARCHIVE_DIR", "LOCK_DIR", "NFS_OUTPUT_DIR"]:
+        for var in ["WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR", "ARCHIVE_DIR", "LOCK_DIR", "NFS_OUTPUT_DIR"]:
             monkeypatch.delenv(var, raising=False)
         log_dir = tmp_path / "logs"
         config = PipelineConfig(_env_file=None, log_dir=log_dir)
@@ -23,8 +18,7 @@ class TestSetupLogging:
         assert log_dir.exists()
 
     def test_setup_adds_file_sink(self, tmp_path, monkeypatch):
-        for var in ["WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR",
-                     "ARCHIVE_DIR", "LOCK_DIR", "NFS_OUTPUT_DIR"]:
+        for var in ["WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR", "ARCHIVE_DIR", "LOCK_DIR", "NFS_OUTPUT_DIR"]:
             monkeypatch.delenv(var, raising=False)
         log_dir = tmp_path / "logs"
         config = PipelineConfig(_env_file=None, log_dir=log_dir)
@@ -36,8 +30,7 @@ class TestSetupLogging:
         assert "hello from test" in content
 
     def test_stage_context_in_output(self, tmp_path, monkeypatch):
-        for var in ["WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR",
-                     "ARCHIVE_DIR", "LOCK_DIR", "NFS_OUTPUT_DIR"]:
+        for var in ["WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR", "ARCHIVE_DIR", "LOCK_DIR", "NFS_OUTPUT_DIR"]:
             monkeypatch.delenv(var, raising=False)
         log_dir = tmp_path / "logs"
         config = PipelineConfig(_env_file=None, log_dir=log_dir)
@@ -47,8 +40,7 @@ class TestSetupLogging:
         assert "organize" in content
 
     def test_default_stage_empty(self, tmp_path, monkeypatch):
-        for var in ["WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR",
-                     "ARCHIVE_DIR", "LOCK_DIR", "NFS_OUTPUT_DIR"]:
+        for var in ["WORK_DIR", "MANIFEST_DIR", "OUTPUT_DIR", "LOG_DIR", "ARCHIVE_DIR", "LOCK_DIR", "NFS_OUTPUT_DIR"]:
             monkeypatch.delenv(var, raising=False)
         log_dir = tmp_path / "logs"
         config = PipelineConfig(_env_file=None, log_dir=log_dir)

@@ -124,10 +124,7 @@ class PipelineConfig(BaseSettings):
         """Configure loguru for the pipeline."""
         logger.remove()  # Remove default stderr handler
 
-        log_format = (
-            "{time:YYYY-MM-DDTHH:mm:ssZ} | {level:<8} | "
-            "{extra[stage]:<12} | {message}"
-        )
+        log_format = "{time:YYYY-MM-DDTHH:mm:ssZ} | {level:<8} | {extra[stage]:<12} | {message}"
 
         def _default_extra(record):
             record["extra"].setdefault("stage", "")

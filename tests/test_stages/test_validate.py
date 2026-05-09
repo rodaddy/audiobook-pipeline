@@ -1,15 +1,12 @@
 """Tests for validate stage."""
 
-import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 from audiobook_pipeline.config import PipelineConfig
+from audiobook_pipeline.models import PipelineMode
 from audiobook_pipeline.pipeline_db import PipelineDB
-from audiobook_pipeline.models import PipelineMode, Stage, StageStatus
-from audiobook_pipeline.stages.validate import run, _natural_sort_key
+from audiobook_pipeline.stages.validate import _natural_sort_key, run
 
 
 class TestNaturalSortKey:
@@ -79,9 +76,7 @@ class TestValidateStage:
         book_hash = "testhash456"
         manifest.create(book_hash, str(fake_file), PipelineMode.CONVERT)
 
-        run(
-            source_path=fake_file, book_hash=book_hash, config=config, manifest=manifest
-        )
+        run(source_path=fake_file, book_hash=book_hash, config=config, manifest=manifest)
 
         data = manifest.read(book_hash)
         assert data["stages"]["validate"]["status"] == "failed"
@@ -119,9 +114,7 @@ class TestValidateStage:
     @patch("audiobook_pipeline.stages.validate.get_bitrate", return_value=128000)
     @patch("audiobook_pipeline.stages.validate.validate_audio_file", return_value=True)
     @patch("audiobook_pipeline.stages.validate.check_disk_space", return_value=True)
-    def test_dry_run_still_writes_file_list(
-        self, mock_disk, mock_valid, mock_br, mock_dur, tmp_path
-    ):
+    def test_dry_run_still_writes_file_list(self, mock_disk, mock_valid, mock_br, mock_dur, tmp_path):
         config = self._make_config(tmp_path)
         manifest = PipelineDB(tmp_path / "test.db")
         src = self._make_source(tmp_path)

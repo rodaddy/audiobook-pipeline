@@ -1,6 +1,5 @@
 """Tests for config.py -- defaults, env var overrides."""
 
-import os
 from pathlib import Path
 
 import pytest

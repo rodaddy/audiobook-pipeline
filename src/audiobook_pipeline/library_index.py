@@ -82,8 +82,7 @@ class LibraryIndex:
                 self._authors_by_surname.setdefault(surname, []).append(actual_name)
 
         log.info(
-            f"Library index built: {folder_count} folders, "
-            f"{file_count} files under {root}",
+            f"Library index built: {folder_count} folders, {file_count} files under {root}",
         )
 
     def reuse_existing(self, parent: Path, desired: str) -> str:
@@ -214,18 +213,12 @@ class LibraryIndex:
 
         # Single candidate with same surname -- use it
         if len(candidates) == 1:
-            log.debug(
-                f"Author canonicalized (sole surname match): "
-                f"'{desired}' -> '{candidates[0]}'"
-            )
+            log.debug(f"Author canonicalized (sole surname match): '{desired}' -> '{candidates[0]}'")
             self._save_alias(desired, candidates[0])
             return candidates[0]
 
         # Multiple candidates, can't disambiguate -- return as-is
-        log.debug(
-            f"Author '{desired}' has {len(candidates)} surname matches, "
-            f"keeping as-is: {candidates}"
-        )
+        log.debug(f"Author '{desired}' has {len(candidates)} surname matches, keeping as-is: {candidates}")
         return desired
 
     def register_author(self, author_name: str) -> None:

@@ -1,7 +1,5 @@
 """Tests for filename sanitization and book hash generation."""
 
-from pathlib import Path
-
 from audiobook_pipeline.sanitize import (
     generate_book_hash,
     sanitize_chapter_title,

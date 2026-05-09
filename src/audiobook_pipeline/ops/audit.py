@@ -12,6 +12,7 @@ verify_library() in ops/verify.py:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import subprocess
@@ -269,8 +270,7 @@ def check_duplicates(library_root: Path) -> list[AuditFinding]:
                     check="duplicates",
                     severity="warning",
                     path=paths[0],
-                    message=f"Duplicate title '{norm_title}' in {len(paths)} locations: "
-                    + ", ".join(paths),
+                    message=f"Duplicate title '{norm_title}' in {len(paths)} locations: " + ", ".join(paths),
                 )
             )
 
@@ -288,8 +288,7 @@ def check_duplicates(library_root: Path) -> list[AuditFinding]:
                         check="duplicates",
                         severity="info",
                         path=dir_path,
-                        message=f"Multi-part book ({len(m4bs)} parts): "
-                        + ", ".join(Path(p).name for p in m4bs),
+                        message=f"Multi-part book ({len(m4bs)} parts): " + ", ".join(Path(p).name for p in m4bs),
                     )
                 )
             else:
@@ -320,7 +319,10 @@ def check_duplicates(library_root: Path) -> list[AuditFinding]:
                         check="duplicates",
                         severity="info",
                         path=path_a,
-                        message=f"Near-duplicate ({ratio}% similar): '{Path(path_a).name}' <-> '{Path(path_b).name}' ({path_b})",
+                        message=(
+                            f"Near-duplicate ({ratio}% similar): "
+                            f"'{Path(path_a).name}' <-> '{Path(path_b).name}' ({path_b})"
+                        ),
                     )
                 )
 
@@ -541,17 +543,13 @@ def check_leftover_sources(library_root: Path) -> list[AuditFinding]:
         if src_file.suffix.lower() not in SOURCE_EXTENSIONS:
             continue
         # Skip _unsorted and hidden dirs
-        if any(
-            p.startswith(("_", ".")) for p in src_file.relative_to(library_root).parts
-        ):
+        if any(p.startswith(("_", ".")) for p in src_file.relative_to(library_root).parts):
             continue
 
         rel = str(src_file.relative_to(library_root))
 
         # Check if an M4B exists alongside
-        sibling_m4b = any(
-            f.suffix.lower() == ".m4b" for f in src_file.parent.iterdir() if f.is_file()
-        )
+        sibling_m4b = any(f.suffix.lower() == ".m4b" for f in src_file.parent.iterdir() if f.is_file())
 
         if sibling_m4b:
             findings.append(
@@ -667,10 +665,8 @@ def check_stale_plex(
                 file_path = parts[0].get("file", "") if parts else ""
                 rel = file_path
                 if file_path and library_root:
-                    try:
+                    with contextlib.suppress(ValueError):
                         rel = str(Path(file_path).relative_to(library_root))
-                    except ValueError:
-                        pass
 
                 findings.append(
                     AuditFinding(
@@ -736,9 +732,7 @@ def run_audit(
 
     if "stale" in checks:
         log.info("Running Plex stale check...")
-        report.findings.extend(
-            check_stale_plex(library_root, plex_url=plex_url, plex_token=plex_token)
-        )
+        report.findings.extend(check_stale_plex(library_root, plex_url=plex_url, plex_token=plex_token))
 
     log.info(
         f"Audit complete: {len(report.findings)} issues "
@@ -754,9 +748,7 @@ def run_audit(
 # ---------------------------------------------------------------------------
 
 
-def apply_fixes(
-    library_root: Path, findings: list[AuditFinding], dry_run: bool = False
-) -> list[str]:
+def apply_fixes(library_root: Path, findings: list[AuditFinding], dry_run: bool = False) -> list[str]:
     """Apply auto-fixes for fixable findings.
 
     Returns list of actions taken (or would-take in dry_run mode).
@@ -772,18 +764,14 @@ def apply_fixes(
             continue
 
         if finding.fix_action == "delete":
-            label = (
-                f"{'[DRY-RUN] Would delete' if dry_run else 'Deleted'}: {finding.path}"
-            )
+            label = f"{'[DRY-RUN] Would delete' if dry_run else 'Deleted'}: {finding.path}"
             if not dry_run:
                 target.unlink()
             actions.append(label)
             log.info(label)
 
         elif finding.fix_action == "touch":
-            label = (
-                f"{'[DRY-RUN] Would touch' if dry_run else 'Touched'}: {finding.path}"
-            )
+            label = f"{'[DRY-RUN] Would touch' if dry_run else 'Touched'}: {finding.path}"
             if not dry_run:
                 target.touch()
             actions.append(label)

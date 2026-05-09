@@ -197,9 +197,7 @@ def run(
         try:
             chapter_count = count_chapters(output_m4b)
             if chapter_count != file_count:
-                log.error(
-                    f"Chapter count mismatch: expected {file_count}, got {chapter_count}"
-                )
+                log.error(f"Chapter count mismatch: expected {file_count}, got {chapter_count}")
                 manifest.set_stage(book_hash, Stage.CONVERT, StageStatus.FAILED)
                 return
         except Exception as exc:
@@ -230,7 +228,4 @@ def run(
     manifest.set_stage(book_hash, Stage.CONVERT, StageStatus.COMPLETED)
 
     # Progress output
-    click.echo(
-        f"  CONVERT: {source_path.name} -> {output_m4b.name} "
-        f"({target_bitrate}k {encoder})"
-    )
+    click.echo(f"  CONVERT: {source_path.name} -> {output_m4b.name} ({target_bitrate}k {encoder})")

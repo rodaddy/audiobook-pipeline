@@ -4,15 +4,14 @@ Organize now reads pre-resolved metadata from manifest (set by ASIN stage)
 and source file from metadata/convert stage output. No more Audible/AI mocking.
 """
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from audiobook_pipeline.config import PipelineConfig
 from audiobook_pipeline.library_index import LibraryIndex
-from audiobook_pipeline.pipeline_db import PipelineDB
 from audiobook_pipeline.models import STAGE_ORDER, PipelineMode, Stage, StageStatus
+from audiobook_pipeline.pipeline_db import PipelineDB
 from audiobook_pipeline.stages.organize import _find_audio_file, run
 
 
@@ -126,9 +125,7 @@ class TestOrganizeStage:
         source_file = tmp_path / "book.m4b"
         source_file.write_text("fake audio")
 
-        dest_file = (
-            tmp_path / "library" / "John Smith" / "Great Book" / source_file.name
-        )
+        dest_file = tmp_path / "library" / "John Smith" / "Great Book" / source_file.name
         mock_copy.return_value = dest_file
 
         _setup_manifest_with_metadata(
@@ -262,24 +259,22 @@ class TestOrganizeStage:
             position="3",
         )
 
-        with patch("audiobook_pipeline.stages.organize.copy_to_library") as mock_copy:
-            with patch(
-                "audiobook_pipeline.stages.organize.build_plex_path"
-            ) as mock_build:
-                mock_build.return_value = (
-                    tmp_path / "library" / "Correct Author" / "Correct Title"
-                )
-                mock_copy.return_value = tmp_path / "library" / "out.m4b"
+        with (
+            patch("audiobook_pipeline.stages.organize.copy_to_library") as mock_copy,
+            patch("audiobook_pipeline.stages.organize.build_plex_path") as mock_build,
+        ):
+            mock_build.return_value = tmp_path / "library" / "Correct Author" / "Correct Title"
+            mock_copy.return_value = tmp_path / "library" / "out.m4b"
 
-                run(source_file, "hash06", mock_config, mock_manifest, dry_run=False)
+            run(source_file, "hash06", mock_config, mock_manifest, dry_run=False)
 
-                # Verify build_plex_path received the pre-resolved metadata
-                call_args = mock_build.call_args
-                metadata_arg = call_args[0][1]
-                assert metadata_arg["author"] == "Correct Author"
-                assert metadata_arg["title"] == "Correct Title"
-                assert metadata_arg["series"] == "Good Series"
-                assert metadata_arg["position"] == "3"
+            # Verify build_plex_path received the pre-resolved metadata
+            call_args = mock_build.call_args
+            metadata_arg = call_args[0][1]
+            assert metadata_arg["author"] == "Correct Author"
+            assert metadata_arg["title"] == "Correct Title"
+            assert metadata_arg["series"] == "Good Series"
+            assert metadata_arg["position"] == "3"
 
 
 class TestOrganizeWithIndex:
@@ -306,9 +301,7 @@ class TestOrganizeWithIndex:
         mock_build_path.return_value = dest_dir
         index = LibraryIndex(lib)
 
-        _setup_manifest_with_metadata(
-            mock_manifest, "hash07", source_file, title="Great Book"
-        )
+        _setup_manifest_with_metadata(mock_manifest, "hash07", source_file, title="Great Book")
 
         run(
             source_file,

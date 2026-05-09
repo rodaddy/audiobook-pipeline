@@ -2,12 +2,12 @@
 
 import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from audiobook_pipeline.config import PipelineConfig
-from audiobook_pipeline.pipeline_db import PipelineDB
 from audiobook_pipeline.models import PipelineMode
-from audiobook_pipeline.stages.convert import run, _detect_encoder
+from audiobook_pipeline.pipeline_db import PipelineDB
+from audiobook_pipeline.stages.convert import _detect_encoder, run
 
 
 class TestDetectEncoder:
@@ -100,15 +100,11 @@ class TestConvertStage:
         assert data["stages"]["convert"]["status"] == "failed"
 
     @patch("audiobook_pipeline.stages.convert.count_chapters", return_value=2)
-    @patch(
-        "audiobook_pipeline.stages.convert.get_format_name", return_value="mov,mp4,m4a"
-    )
+    @patch("audiobook_pipeline.stages.convert.get_format_name", return_value="mov,mp4,m4a")
     @patch("audiobook_pipeline.stages.convert.get_codec", return_value="aac")
     @patch("audiobook_pipeline.stages.convert._detect_encoder", return_value="aac")
     @patch("audiobook_pipeline.stages.convert.subprocess.run")
-    def test_successful_conversion(
-        self, mock_run, mock_enc, mock_codec, mock_fmt, mock_ch, tmp_path
-    ):
+    def test_successful_conversion(self, mock_run, mock_enc, mock_codec, mock_fmt, mock_ch, tmp_path):
         config = self._make_config(tmp_path)
         manifest = self._create_manifest(tmp_path, config, "testconv03")
         self._setup_work_dir(config, "testconv03")
@@ -118,9 +114,7 @@ class TestConvertStage:
             output_path = Path(cmd[-1])
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text("fake m4b content")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = ffmpeg_side_effect
 
@@ -142,9 +136,7 @@ class TestConvertStage:
         manifest = self._create_manifest(tmp_path, config, "testconv04")
         self._setup_work_dir(config, "testconv04")
 
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="Error: bad input"
-        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="Error: bad input")
 
         run(
             source_path=Path("/src/book"),

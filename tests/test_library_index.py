@@ -1,7 +1,5 @@
 """Tests for library_index.py -- in-memory library index for batch operations."""
 
-from pathlib import Path
-
 import pytest
 
 from audiobook_pipeline.library_index import LibraryIndex

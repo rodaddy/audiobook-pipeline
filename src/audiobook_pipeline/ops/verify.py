@@ -157,9 +157,8 @@ def verify_dryrun_log(log_path: Path) -> dict:
     surname_map: dict[str, list[str]] = defaultdict(list)
     for author in sorted(authors):
         surname = _extract_surname(author)
-        if surname:
-            if author not in surname_map[surname]:
-                surname_map[surname].append(author)
+        if surname and author not in surname_map[surname]:
+            surname_map[surname].append(author)
 
     author_variations = []
     for surname, variants in sorted(surname_map.items()):
@@ -205,12 +204,10 @@ def verify_dryrun_log(log_path: Path) -> dict:
 def print_report(results: dict) -> None:
     """Print a human-readable data quality report."""
     summary = results.get("summary", {})
-    click.echo(f"\nData Quality Report")
+    click.echo("\nData Quality Report")
     click.echo(f"{'=' * 50}")
     click.echo(f"Authors: {summary.get('total_authors', '?')}")
-    click.echo(
-        f"Books: {summary.get('total_books', summary.get('total_destinations', '?'))}"
-    )
+    click.echo(f"Books: {summary.get('total_books', summary.get('total_destinations', '?'))}")
     click.echo(f"Issues: {summary.get('issues', '?')}")
 
     variations = results.get("author_variations", [])

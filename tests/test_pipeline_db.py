@@ -4,14 +4,14 @@ import threading
 
 import pytest
 
-from audiobook_pipeline.pipeline_db import PipelineDB
+from audiobook_pipeline.errors import ManifestError
 from audiobook_pipeline.models import (
     ErrorCategory,
     PipelineMode,
     Stage,
     StageStatus,
 )
-from audiobook_pipeline.errors import ManifestError
+from audiobook_pipeline.pipeline_db import PipelineDB
 
 
 @pytest.fixture
@@ -269,11 +269,9 @@ class TestCoverArt:
         pdb, h = book
         img = b"\x89PNG" + b"\x00" * 200
         pdb.store_cover(h, img)
-        data = pdb.read(h)
+        pdb.read(h)
         conn = pdb._get_conn()
-        row = conn.execute(
-            "SELECT cover_art_size FROM books WHERE book_hash = ?", (h,)
-        ).fetchone()
+        row = conn.execute("SELECT cover_art_size FROM books WHERE book_hash = ?", (h,)).fetchone()
         assert row["cover_art_size"] == len(img)
 
 

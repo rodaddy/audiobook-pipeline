@@ -4,8 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from audiobook_pipeline.config import PipelineConfig
-from audiobook_pipeline.pipeline_db import PipelineDB
 from audiobook_pipeline.models import PipelineMode
+from audiobook_pipeline.pipeline_db import PipelineDB
 from audiobook_pipeline.stages.concat import run
 
 

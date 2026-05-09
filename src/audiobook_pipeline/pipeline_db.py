@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -146,7 +146,7 @@ _STAGE_COLUMNS = {"status", "completed_at", "output_file", "dest_dir"}
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class PipelineDB:
@@ -237,9 +237,7 @@ class PipelineDB:
     def read(self, book_hash: str) -> dict | None:
         """Read a book record as a legacy-compatible dict."""
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT * FROM books WHERE book_hash = ?", (book_hash,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM books WHERE book_hash = ?", (book_hash,)).fetchone()
         if row is None:
             return None
         return self._row_to_dict(row, book_hash, conn)
@@ -303,9 +301,7 @@ class PipelineDB:
                 data["metadata"][key] = val
 
         # Populate stages
-        stage_rows = conn.execute(
-            "SELECT * FROM stages WHERE book_hash = ?", (book_hash,)
-        ).fetchall()
+        stage_rows = conn.execute("SELECT * FROM stages WHERE book_hash = ?", (book_hash,)).fetchall()
         for sr in stage_rows:
             stage_data: dict[str, Any] = {"status": sr["status"]}
             if sr["completed_at"]:
@@ -368,9 +364,7 @@ class PipelineDB:
         conn = self._get_conn()
 
         # Verify book exists
-        exists = conn.execute(
-            "SELECT 1 FROM books WHERE book_hash = ?", (book_hash,)
-        ).fetchone()
+        exists = conn.execute("SELECT 1 FROM books WHERE book_hash = ?", (book_hash,)).fetchone()
         if not exists:
             raise ManifestError(f"Book not found: {book_hash}")
 
@@ -408,8 +402,7 @@ class PipelineDB:
                 set_clause = ", ".join(f"{k} = ?" for k in valid)
                 values = list(valid.values()) + [book_hash, stage_name]
                 conn.execute(
-                    f"UPDATE stages SET {set_clause} "
-                    f"WHERE book_hash = ? AND stage = ?",
+                    f"UPDATE stages SET {set_clause} WHERE book_hash = ? AND stage = ?",
                     values,
                 )
 
@@ -440,9 +433,7 @@ class PipelineDB:
     def check_status(self, book_hash: str) -> str:
         """Return book processing status. Returns 'new' if no record exists."""
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT status FROM books WHERE book_hash = ?", (book_hash,)
-        ).fetchone()
+        row = conn.execute("SELECT status FROM books WHERE book_hash = ?", (book_hash,)).fetchone()
         if row is None:
             return "new"
         return row["status"]
@@ -454,9 +445,7 @@ class PipelineDB:
     ) -> Stage | None:
         """Find the next incomplete stage for this mode."""
         conn = self._get_conn()
-        exists = conn.execute(
-            "SELECT 1 FROM books WHERE book_hash = ?", (book_hash,)
-        ).fetchone()
+        exists = conn.execute("SELECT 1 FROM books WHERE book_hash = ?", (book_hash,)).fetchone()
         if not exists:
             raise ManifestError(f"Book not found: {book_hash}")
 
@@ -474,9 +463,7 @@ class PipelineDB:
     def increment_retry(self, book_hash: str) -> None:
         """Increment the retry counter."""
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT retry_count FROM books WHERE book_hash = ?", (book_hash,)
-        ).fetchone()
+        row = conn.execute("SELECT retry_count FROM books WHERE book_hash = ?", (book_hash,)).fetchone()
         if row is None:
             raise ManifestError(f"Book not found: {book_hash}")
         new_count = row["retry_count"] + 1
@@ -497,16 +484,11 @@ class PipelineDB:
     ) -> None:
         """Record an error for a book."""
         conn = self._get_conn()
-        exists = conn.execute(
-            "SELECT 1 FROM books WHERE book_hash = ?", (book_hash,)
-        ).fetchone()
+        exists = conn.execute("SELECT 1 FROM books WHERE book_hash = ?", (book_hash,)).fetchone()
         if not exists:
             raise ManifestError(f"Book not found: {book_hash}")
 
-        log.error(
-            f"set_error book_hash={book_hash} stage={stage} "
-            f"category={category} message={message}"
-        )
+        log.error(f"set_error book_hash={book_hash} stage={stage} category={category} message={message}")
         conn.execute(
             """UPDATE books SET
                error_timestamp = ?, error_stage = ?, error_exit_code = ?,
@@ -532,9 +514,7 @@ class PipelineDB:
     def get_cover(self, book_hash: str) -> bytes | None:
         """Read cover art blob. Returns None if no cover stored."""
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT cover_art FROM books WHERE book_hash = ?", (book_hash,)
-        ).fetchone()
+        row = conn.execute("SELECT cover_art FROM books WHERE book_hash = ?", (book_hash,)).fetchone()
         if row is None or row["cover_art"] is None:
             return None
         return bytes(row["cover_art"])
@@ -555,9 +535,7 @@ class PipelineDB:
     def get_alias(self, variant: str) -> str | None:
         """Look up canonical name for an author variant."""
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT canonical FROM author_aliases WHERE variant = ?", (variant,)
-        ).fetchone()
+        row = conn.execute("SELECT canonical FROM author_aliases WHERE variant = ?", (variant,)).fetchone()
         return row["canonical"] if row else None
 
     def save_alias(self, variant: str, canonical: str) -> None:
@@ -575,9 +553,7 @@ class PipelineDB:
     def get_aliases_for(self, canonical: str) -> list[str]:
         """Get all variant names that map to a canonical author name."""
         conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT variant FROM author_aliases WHERE canonical = ?", (canonical,)
-        ).fetchall()
+        rows = conn.execute("SELECT variant FROM author_aliases WHERE canonical = ?", (canonical,)).fetchall()
         return [r["variant"] for r in rows]
 
     # -- Locking API --
@@ -596,9 +572,7 @@ class PipelineDB:
             return True
         except sqlite3.IntegrityError:
             # Lock already held -- check if the holder is still alive
-            row = conn.execute(
-                "SELECT pid FROM pipeline_locks WHERE lock_name = 'reorganize'"
-            ).fetchone()
+            row = conn.execute("SELECT pid FROM pipeline_locks WHERE lock_name = 'reorganize'").fetchone()
             if row:
                 try:
                     os.kill(row["pid"], 0)  # Check if process exists
@@ -631,9 +605,7 @@ class PipelineDB:
         conn.execute("DELETE FROM books WHERE book_hash = ?", (book_hash,))
         conn.commit()
 
-    def list_books(
-        self, status: str | None = None, mode: str | None = None
-    ) -> list[dict]:
+    def list_books(self, status: str | None = None, mode: str | None = None) -> list[dict]:
         """List books, optionally filtered by status and/or mode."""
         conn = self._get_conn()
         query = "SELECT book_hash, source_path, mode, status FROM books"

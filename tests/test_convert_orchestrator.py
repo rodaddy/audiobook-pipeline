@@ -1,12 +1,9 @@
 """Tests for convert_orchestrator -- CPU-aware parallel batch processor."""
 
 import os
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 from audiobook_pipeline.config import PipelineConfig
 from audiobook_pipeline.convert_orchestrator import ConvertOrchestrator
-from audiobook_pipeline.models import BatchResult
 
 
 class TestConvertOrchestrator:

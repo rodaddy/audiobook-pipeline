@@ -26,15 +26,16 @@ def score_results(
 
     scored = []
     for idx, r in enumerate(results):
-        title_score = fuzz.token_sort_ratio(
-            title_hint.lower(), r["title"].lower(),
-        ) * 0.6
+        title_score = (
+            fuzz.token_sort_ratio(
+                title_hint.lower(),
+                r["title"].lower(),
+            )
+            * 0.6
+        )
 
         if author_hint:
-            author_scores = [
-                fuzz.partial_ratio(author_hint.lower(), a.lower())
-                for a in r["authors"]
-            ]
+            author_scores = [fuzz.partial_ratio(author_hint.lower(), a.lower()) for a in r["authors"]]
             author_score = max(author_scores, default=0) * 0.3
         else:
             author_score = 0.0

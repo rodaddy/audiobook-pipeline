@@ -40,9 +40,7 @@ log = logger.bind(stage="audit-cli")
     type=click.Path(exists=True),
     help="Path to .env file.",
 )
-@click.option(
-    "--dry-run", is_flag=True, help="Show what --fix would do without doing it."
-)
+@click.option("--dry-run", is_flag=True, help="Show what --fix would do without doing it.")
 @click.option(
     "--plex-url",
     default=None,
@@ -82,8 +80,7 @@ def main(
         lib_root = Path(os.environ.get("NFS_OUTPUT_DIR", "/mnt/media/AudioBooks"))
         if not lib_root.is_dir():
             raise click.UsageError(
-                f"Library path not found: {lib_root}. "
-                "Pass LIBRARY_PATH argument or set NFS_OUTPUT_DIR."
+                f"Library path not found: {lib_root}. Pass LIBRARY_PATH argument or set NFS_OUTPUT_DIR."
             )
 
     # Configure logging
@@ -149,9 +146,8 @@ def main(
 
 def _print_report(report, fix_actions: list[str]) -> None:
     """Print human-readable audit report to stdout."""
-    from .ops.audit import AuditReport
 
-    click.echo(f"\nLibrary Audit Report")
+    click.echo("\nLibrary Audit Report")
     click.echo("=" * 50)
     click.echo(f"Library:            {report.library_root}")
     click.echo(f"Total files:        {report.total_files}")
@@ -174,9 +170,7 @@ def _print_report(report, fix_actions: list[str]) -> None:
         click.echo(f"\n{check_name.upper()} ({len(findings)} issues)")
         click.echo("-" * 50)
         for f in findings:
-            marker = {"critical": "!!", "warning": " !", "info": "  "}.get(
-                f.severity, "  "
-            )
+            marker = {"critical": "!!", "warning": " !", "info": "  "}.get(f.severity, "  ")
             fix_hint = " [fixable]" if f.fixable else ""
             click.echo(f"  {marker} {f.path}")
             click.echo(f"     {f.message}{fix_hint}")
@@ -245,15 +239,12 @@ def _print_diff(diff, json_out: bool) -> None:
             "target_count": diff.target_count,
             "matched": len(diff.matched),
             "missing": len(diff.missing),
-            "missing_books": [
-                {"author": b.author, "title": b.title, "path": b.path}
-                for b in diff.missing
-            ],
+            "missing_books": [{"author": b.author, "title": b.title, "path": b.path} for b in diff.missing],
         }
         click.echo(json_mod.dumps(output, indent=2))
         return
 
-    click.echo(f"\nLibrary Diff Report")
+    click.echo("\nLibrary Diff Report")
     click.echo("=" * 50)
     click.echo(f"Source books:  {diff.source_count}")
     click.echo(f"Target books:  {diff.target_count}")

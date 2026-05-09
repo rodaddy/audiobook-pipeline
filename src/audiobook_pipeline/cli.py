@@ -42,9 +42,7 @@ def _load_env_file(env_file: Path) -> None:
         key = key.strip()
         value = value.strip()
         # Strip quotes
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
             value = value[1:-1]
         # Skip bash variable expansions like ${VAR:-default}
         if "${" in value:
@@ -64,15 +62,11 @@ def _load_env_file(env_file: Path) -> None:
     help="Pipeline mode. Auto-detected if omitted.",
 )
 @click.option("--asin", default=None, help="Override ASIN discovery.")
-@click.option(
-    "--dry-run", is_flag=True, help="Show what would happen without doing it."
-)
+@click.option("--dry-run", is_flag=True, help="Show what would happen without doing it.")
 @click.option("--force", is_flag=True, help="Re-process even if already completed.")
 @click.option("--no-lock", is_flag=True, help="Skip file locking.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-@click.option(
-    "--ai-all", is_flag=True, help="Run AI validation on all books, not just conflicts."
-)
+@click.option("--ai-all", is_flag=True, help="Run AI validation on all books, not just conflicts.")
 @click.option(
     "--reorganize",
     is_flag=True,
@@ -207,10 +201,7 @@ def main(
         author_override=author_override,
     )
 
-    log.info(
-        f"Starting pipeline: source={source} mode={mode} "
-        f"dry_run={dry_run} force={force}"
-    )
+    log.info(f"Starting pipeline: source={source} mode={mode} dry_run={dry_run} force={force}")
     runner.run(source_path=source, override_asin=asin, skip_lock=no_lock)
 
     # Post-run data quality verification

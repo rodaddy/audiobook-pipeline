@@ -4,16 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from audiobook_pipeline.ops.library_diff import (
-    BookEntry,
-    LibraryDiff,
     _collapse_multipart,
     _extract_books,
     compare_libraries,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -111,16 +106,12 @@ class TestAuthorMatching:
         source = _make_library(
             tmp_path,
             "source",
-            {
-                "Margaret Weis & Tracy Hickman/Dragons of Autumn/Dragons of Autumn Twilight.m4b": b"\x00"
-            },
+            {"Margaret Weis & Tracy Hickman/Dragons of Autumn/Dragons of Autumn Twilight.m4b": b"\x00"},
         )
         target = _make_library(
             tmp_path,
             "target",
-            {
-                "Margaret Weis and Tracy Hickman/Dragons of Autumn/Dragons of Autumn Twilight.m4b": b"\x00"
-            },
+            {"Margaret Weis and Tracy Hickman/Dragons of Autumn/Dragons of Autumn Twilight.m4b": b"\x00"},
         )
         diff = compare_libraries(source, target)
         assert len(diff.missing) == 0
@@ -137,16 +128,12 @@ class TestFranchiseMatching:
         source = _make_library(
             tmp_path,
             "source",
-            {
-                "Margaret Weis/Dragons of Autumn Twilight/Dragons of Autumn Twilight.m4b": b"\x00"
-            },
+            {"Margaret Weis/Dragons of Autumn Twilight/Dragons of Autumn Twilight.m4b": b"\x00"},
         )
         target = _make_library(
             tmp_path,
             "target",
-            {
-                "Dragonlance/Dragons of Autumn Twilight/Dragons of Autumn Twilight.m4b": b"\x00"
-            },
+            {"Dragonlance/Dragons of Autumn Twilight/Dragons of Autumn Twilight.m4b": b"\x00"},
         )
         diff = compare_libraries(source, target)
         # Should match via cross-author title lookup

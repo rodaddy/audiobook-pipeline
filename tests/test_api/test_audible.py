@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from audiobook_pipeline.api.audible import _extract_genre, _strip_html, search
 
 

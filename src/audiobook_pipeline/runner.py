@@ -12,7 +12,6 @@ from loguru import logger
 
 from .config import PipelineConfig
 from .errors import ExternalToolError
-from .pipeline_db import PipelineDB
 from .models import (
     AUDIO_EXTENSIONS,
     CONVERTIBLE_EXTENSIONS,
@@ -22,6 +21,7 @@ from .models import (
     Stage,
     StageStatus,
 )
+from .pipeline_db import PipelineDB
 from .stages import get_stage_runner
 
 if TYPE_CHECKING:
@@ -134,10 +134,9 @@ class PipelineRunner:
                 click.echo("[DRY-RUN] No changes will be made")
 
             # Acquire reorganize lock for batch operations
-            if self.reorganize and not skip_lock:
-                if not self.db.acquire_reorganize_lock():
-                    click.echo("ERROR: Another reorganize is already running")
-                    return
+            if self.reorganize and not skip_lock and not self.db.acquire_reorganize_lock():
+                click.echo("ERROR: Another reorganize is already running")
+                return
 
             try:
                 # Build library index once for the entire batch
@@ -193,16 +192,11 @@ class PipelineRunner:
             has_m4b = any(source_path.rglob("*.m4b"))
             if not has_m4b:
                 has_convertible = any(
-                    f
-                    for f in source_path.rglob("*")
-                    if f.is_file() and f.suffix.lower() in CONVERTIBLE_EXTENSIONS
+                    f for f in source_path.rglob("*") if f.is_file() and f.suffix.lower() in CONVERTIBLE_EXTENSIONS
                 )
                 if has_convertible:
                     effective_mode = PipelineMode.CONVERT
-                    log.info(
-                        f"Auto-promote to convert: {source_path.name} "
-                        f"(has convertible audio, no .m4b)"
-                    )
+                    log.info(f"Auto-promote to convert: {source_path.name} (has convertible audio, no .m4b)")
 
         stages = list(STAGE_ORDER.get(effective_mode, []))
 
@@ -212,9 +206,7 @@ class PipelineRunner:
 
         book_hash = generate_book_hash(source_path)
 
-        click.echo(
-            f"\nPipeline: {source_path.name} " f"(mode={self.mode}, hash={book_hash})"
-        )
+        click.echo(f"\nPipeline: {source_path.name} (mode={self.mode}, hash={book_hash})")
 
         log.debug(f"Stages: {' -> '.join(s.value for s in stages)}")
         log.debug(f"nfs_output_dir: {self.config.nfs_output_dir}")
@@ -231,9 +223,7 @@ class PipelineRunner:
                 f"stages.{stage.value}.status",
             )
             if stage_status == "completed" and not self.config.force:
-                click.echo(
-                    f"  SKIP {stage.value} -- already completed (use --force to redo)"
-                )
+                click.echo(f"  SKIP {stage.value} -- already completed (use --force to redo)")
                 continue
 
             try:
@@ -267,9 +257,7 @@ class PipelineRunner:
                 f"stages.{stage.value}.status",
             )
             if post_status == StageStatus.FAILED.value:
-                raise RuntimeError(
-                    f"Stage '{stage.value}' failed for {source_path.name}"
-                )
+                raise RuntimeError(f"Stage '{stage.value}' failed for {source_path.name}")
 
         # Simple level: copy tagged m4b back to source directory
         if self.config.level == PipelineLevel.SIMPLE:
@@ -286,9 +274,7 @@ class PipelineRunner:
         # Find the output file from metadata or convert stage
         output_file = ""
         for stage_name in ("metadata", "convert"):
-            output_file = (
-                data.get("stages", {}).get(stage_name, {}).get("output_file", "")
-            )
+            output_file = data.get("stages", {}).get(stage_name, {}).get("output_file", "")
             if output_file:
                 break
 

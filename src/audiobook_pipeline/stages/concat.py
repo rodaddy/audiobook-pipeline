@@ -54,11 +54,7 @@ def run(
         return
 
     try:
-        audio_files = [
-            Path(line.strip())
-            for line in audio_files_path.read_text().splitlines()
-            if line.strip()
-        ]
+        audio_files = [Path(line.strip()) for line in audio_files_path.read_text().splitlines() if line.strip()]
     except Exception as e:
         log.error(f"Failed to read audio_files.txt: {e}")
         manifest.set_stage(book_hash, Stage.CONCAT, StageStatus.FAILED)

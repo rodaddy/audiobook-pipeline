@@ -2,15 +2,12 @@
 
 import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 from audiobook_pipeline.config import PipelineConfig
-from audiobook_pipeline.errors import ManifestError
-from audiobook_pipeline.pipeline_db import PipelineDB
 from audiobook_pipeline.models import PipelineMode
-from audiobook_pipeline.stages.metadata import run, _build_album, _write_tags
+from audiobook_pipeline.pipeline_db import PipelineDB
+from audiobook_pipeline.stages.metadata import _build_album, run
 
 
 class TestBuildAlbum:
@@ -99,9 +96,7 @@ class TestMetadataStage:
         def ffmpeg_side_effect(cmd, **kwargs):
             temp_path = Path(cmd[-1])
             temp_path.write_text("tagged m4b")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = ffmpeg_side_effect
 
@@ -162,9 +157,7 @@ class TestMetadataStage:
 
         def ffmpeg_side_effect(cmd, **kwargs):
             Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = ffmpeg_side_effect
 
@@ -204,9 +197,7 @@ class TestMetadataStage:
 
         def ffmpeg_side_effect(cmd, **kwargs):
             Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = ffmpeg_side_effect
 
@@ -306,9 +297,7 @@ class TestMetadataStage:
             output_file,
         )
 
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="Error: bad input"
-        )
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="Error: bad input")
 
         run(
             source_path=Path("/src/book"),
@@ -338,9 +327,7 @@ class TestMetadataStage:
 
         def ffmpeg_side_effect(cmd, **kwargs):
             Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = ffmpeg_side_effect
 
@@ -370,9 +357,7 @@ class TestCoverArt:
             nfs_output_dir=tmp_path / "library",
         )
 
-    def _create_manifest_with_cover(
-        self, tmp_path, config, book_hash, output_file, cover_url
-    ):
+    def _create_manifest_with_cover(self, tmp_path, config, book_hash, output_file, cover_url):
         manifest = PipelineDB(tmp_path / "test.db")
         manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
         data = manifest.read(book_hash)
@@ -417,9 +402,7 @@ class TestCoverArt:
 
         def ffmpeg_side_effect(cmd, **kwargs):
             Path(cmd[-1]).write_text("tagged with cover")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = ffmpeg_side_effect
 
@@ -445,9 +428,7 @@ class TestCoverArt:
 
     @patch("audiobook_pipeline.stages.metadata._download_cover")
     @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_cover_download_failure_tags_without_cover(
-        self, mock_run, mock_download, tmp_path
-    ):
+    def test_cover_download_failure_tags_without_cover(self, mock_run, mock_download, tmp_path):
         """Cover download failure is non-fatal -- file gets tagged without cover."""
         config = self._make_config(tmp_path)
 
@@ -467,9 +448,7 @@ class TestCoverArt:
 
         def ffmpeg_side_effect(cmd, **kwargs):
             Path(cmd[-1]).write_text("tagged no cover")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = ffmpeg_side_effect
 
@@ -508,9 +487,7 @@ class TestCoverArt:
 
         def ffmpeg_side_effect(cmd, **kwargs):
             Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = ffmpeg_side_effect
 
@@ -561,9 +538,7 @@ class TestMetadataEnrichMode:
 
         def ffmpeg_side_effect(cmd, **kwargs):
             Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = ffmpeg_side_effect
 

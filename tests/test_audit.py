@@ -6,10 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from audiobook_pipeline.ops.audit import (
-    ALL_CHECKS,
     AuditFinding,
     AuditReport,
     _is_franchise_folder,
@@ -23,7 +20,6 @@ from audiobook_pipeline.ops.audit import (
     check_structure,
     run_audit,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -128,23 +124,17 @@ class TestCheckMetadataTags:
             tmp_path,
             {"Author/Book/book.m4b": b"\x00"},
         )
-        with patch(
-            "audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(GOOD_TAGS)
-        ):
+        with patch("audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(GOOD_TAGS)):
             findings = check_metadata_tags(lib)
         # Should have no critical or warning findings
-        critical_warning = [
-            f for f in findings if f.severity in ("critical", "warning")
-        ]
+        critical_warning = [f for f in findings if f.severity in ("critical", "warning")]
         assert len(critical_warning) == 0
 
     def test_missing_mandatory_tag(self, tmp_path):
         lib = _make_library(tmp_path, {"Author/Book/book.m4b": b"\x00"})
         tags = {**GOOD_TAGS}
         del tags["genre"]
-        with patch(
-            "audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)
-        ):
+        with patch("audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)):
             findings = check_metadata_tags(lib)
         critical = [f for f in findings if f.severity == "critical"]
         assert any("genre" in f.message for f in critical)
@@ -152,15 +142,10 @@ class TestCheckMetadataTags:
     def test_suspicious_artist_value(self, tmp_path):
         lib = _make_library(tmp_path, {"Author/Book/book.m4b": b"\x00"})
         tags = {**GOOD_TAGS, "album_artist": "Unknown"}
-        with patch(
-            "audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)
-        ):
+        with patch("audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)):
             findings = check_metadata_tags(lib)
         critical = [f for f in findings if f.severity == "critical"]
-        assert any(
-            "Suspicious value" in f.message and "album_artist" in f.message
-            for f in critical
-        )
+        assert any("Suspicious value" in f.message and "album_artist" in f.message for f in critical)
 
     def test_title_matches_author(self, tmp_path):
         lib = _make_library(tmp_path, {"Author/Book/book.m4b": b"\x00"})
@@ -169,9 +154,7 @@ class TestCheckMetadataTags:
             "title": "Brandon Sanderson",
             "album_artist": "Brandon Sanderson",
         }
-        with patch(
-            "audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)
-        ):
+        with patch("audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)):
             findings = check_metadata_tags(lib)
         warnings = [f for f in findings if f.severity == "warning"]
         assert any("matches album_artist" in f.message for f in warnings)
@@ -179,9 +162,7 @@ class TestCheckMetadataTags:
     def test_genre_audiobook_warning(self, tmp_path):
         lib = _make_library(tmp_path, {"Author/Book/book.m4b": b"\x00"})
         tags = {**GOOD_TAGS, "genre": "Audiobook"}
-        with patch(
-            "audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)
-        ):
+        with patch("audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)):
             findings = check_metadata_tags(lib)
         warnings = [f for f in findings if f.severity == "warning"]
         assert any("Audiobook" in f.message for f in warnings)
@@ -197,23 +178,15 @@ class TestCheckMetadataTags:
     def test_missing_media_type(self, tmp_path):
         lib = _make_library(tmp_path, {"Author/Book/book.m4b": b"\x00"})
         tags = {k: v for k, v in GOOD_TAGS.items() if k != "media_type"}
-        with patch(
-            "audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)
-        ):
+        with patch("audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)):
             findings = check_metadata_tags(lib)
         warnings = [f for f in findings if f.severity == "warning"]
         assert any("media_type" in f.message for f in warnings)
 
     def test_missing_recommended_tags(self, tmp_path):
         lib = _make_library(tmp_path, {"Author/Book/book.m4b": b"\x00"})
-        tags = {
-            k: v
-            for k, v in GOOD_TAGS.items()
-            if k not in ("composer", "date", "comment", "description")
-        }
-        with patch(
-            "audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)
-        ):
+        tags = {k: v for k, v in GOOD_TAGS.items() if k not in ("composer", "date", "comment", "description")}
+        with patch("audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(tags)):
             findings = check_metadata_tags(lib)
         info = [f for f in findings if f.severity == "info"]
         assert len(info) >= 3  # composer, date, comment/description
@@ -310,28 +283,19 @@ class TestNormalizeForDedup:
         assert _normalize_for_dedup("homeland part 3") == "homeland"
 
     def test_strips_asin(self):
-        assert (
-            _normalize_for_dedup("the way of kings [B00AAI79WY]") == "the way of kings"
-        )
+        assert _normalize_for_dedup("the way of kings [B00AAI79WY]") == "the way of kings"
 
     def test_strips_unabridged(self):
-        assert (
-            _normalize_for_dedup("the way of kings (unabridged)") == "the way of kings"
-        )
+        assert _normalize_for_dedup("the way of kings (unabridged)") == "the way of kings"
         assert _normalize_for_dedup("the way of kings (Abridged)") == "the way of kings"
 
     def test_strips_author_prefix(self):
-        result = _normalize_for_dedup(
-            "b. t. narro - the rhythm of rivalry", author="B. T. Narro"
-        )
+        result = _normalize_for_dedup("b. t. narro - the rhythm of rivalry", author="B. T. Narro")
         assert "rhythm of rivalry" in result
         assert "narro" not in result
 
     def test_strips_book_n_suffix(self):
-        assert (
-            _normalize_for_dedup("the rhythm of rivalry - book 1")
-            == "the rhythm of rivalry"
-        )
+        assert _normalize_for_dedup("the rhythm of rivalry - book 1") == "the rhythm of rivalry"
 
     def test_strips_series_prefix(self):
         assert _normalize_for_dedup("book 3 - homeland") == "homeland"
@@ -589,9 +553,7 @@ class TestApplyFixes:
 class TestRunAudit:
     def test_runs_selected_checks(self, tmp_path):
         lib = _make_library(tmp_path, {"Author/Book/book.m4b": b"\x00"})
-        with patch(
-            "audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(GOOD_TAGS)
-        ):
+        with patch("audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(GOOD_TAGS)):
             report = run_audit(lib, checks=("tags",))
         assert report.total_files == 1
         # Only tag findings, no structure/duplicate findings
@@ -635,9 +597,7 @@ class TestCLIAudit:
 
         # Suppress loguru to keep stdout clean for JSON parsing
         logger.remove()
-        with patch(
-            "audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(GOOD_TAGS)
-        ):
+        with patch("audiobook_pipeline.ops.audit._ffprobe_tags", _fake_ffprobe_tags(GOOD_TAGS)):
             runner = CliRunner()
             result = runner.invoke(main, [str(lib), "--json-output", "--check", "tags"])
 

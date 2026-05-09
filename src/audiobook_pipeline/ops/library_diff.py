@@ -23,8 +23,6 @@ from loguru import logger
 from rapidfuzz import fuzz
 
 from .audit import (
-    FRANCHISE_FOLDERS,
-    _is_franchise_folder,
     _normalize_author,
     _normalize_for_dedup,
 )
@@ -54,9 +52,7 @@ _CHAPTER_FILE_RE = re.compile(r"^(?:ch)?\d{1,3}[a-d]?\s*[-\.]\s*", re.IGNORECASE
 _PART_SUFFIX_RE = re.compile(r"[,\s]+part\s+\d+\s*$", re.IGNORECASE)
 
 # Pattern: numbered prefix like "1-01 Title" (disc-track) or "HP. 3 -"
-_NUMBERED_PREFIX_RE = re.compile(
-    r"^(?:\d+-\d+\s+|HP[\.\s]*\d+\s*[-\.]\s*)", re.IGNORECASE
-)
+_NUMBERED_PREFIX_RE = re.compile(r"^(?:\d+-\d+\s+|HP[\.\s]*\d+\s*[-\.]\s*)", re.IGNORECASE)
 
 
 @dataclass
@@ -189,14 +185,10 @@ def _collapse_multipart(entries: list[BookEntry]) -> list[BookEntry]:
         # (individual chapter names are meaningless for matching)
         title = representative.title
         norm_title = representative.norm_title
-        if _CHAPTER_FILE_RE.match(representative.title) or _NUMBERED_PREFIX_RE.match(
-            representative.title
-        ):
+        if _CHAPTER_FILE_RE.match(representative.title) or _NUMBERED_PREFIX_RE.match(representative.title):
             dir_name = Path(representative.path).parent.name
             title = _book_title_from_dir(dir_name)
-            norm_title = _normalize_for_dedup(
-                title.lower(), author=representative.author
-            )
+            norm_title = _normalize_for_dedup(title.lower(), author=representative.author)
 
         result.append(
             BookEntry(
@@ -279,11 +271,7 @@ def _find_match(
                 return True
 
     # 4. Fuzzy match, any author
-    for target_title in all_target_titles:
-        if fuzz.token_set_ratio(norm_title, target_title) >= FUZZY_THRESHOLD:
-            return True
-
-    return False
+    return any(fuzz.token_set_ratio(norm_title, target_title) >= FUZZY_THRESHOLD for target_title in all_target_titles)
 
 
 def compare_libraries(source: Path, target: Path) -> LibraryDiff:
@@ -306,10 +294,7 @@ def compare_libraries(source: Path, target: Path) -> LibraryDiff:
     source_entries = _collapse_multipart(source_entries)
     pre_dedup = len(source_entries)
     source_entries = _deduplicate_source(source_entries)
-    log.info(
-        f"Source: {len(source_entries)} unique books "
-        f"({pre_dedup} before dedup, after multi-part collapse)"
-    )
+    log.info(f"Source: {len(source_entries)} unique books ({pre_dedup} before dedup, after multi-part collapse)")
 
     # Build target lookup structures
     target_index = _build_target_index(target_entries)
@@ -327,13 +312,8 @@ def compare_libraries(source: Path, target: Path) -> LibraryDiff:
             diff.matched.append(book)
         else:
             diff.missing.append(book)
-            log.debug(
-                f"No match: {book.author}/{book.title} "
-                f"(norm: '{book.norm_author}' / '{book.norm_title}')"
-            )
+            log.debug(f"No match: {book.author}/{book.title} (norm: '{book.norm_author}' / '{book.norm_title}')")
 
-    log.info(
-        f"Diff complete: {len(diff.matched)} matched, " f"{len(diff.missing)} missing"
-    )
+    log.info(f"Diff complete: {len(diff.matched)} matched, {len(diff.missing)} missing")
 
     return diff

@@ -57,9 +57,7 @@ def needs_resolution(
 
     # Conflict: multiple different non-empty authors
     if len(authors) > 1:
-        logger.bind(stage="ai").debug(
-            f"Resolution needed: author conflict ({len(authors)} different)"
-        )
+        logger.bind(stage="ai").debug(f"Resolution needed: author conflict ({len(authors)} different)")
         return True
     # All empty: no author found anywhere
     if len(authors) == 0:
@@ -134,10 +132,7 @@ def resolve(
             # Show all series if available, otherwise fall back to primary
             all_series = cand.get("all_series", [])
             if all_series and len(all_series) > 1:
-                series_strs = [
-                    f"{s['name']} #{s['position']}" if s.get("position") else s["name"]
-                    for s in all_series
-                ]
+                series_strs = [f"{s['name']} #{s['position']}" if s.get("position") else s["name"] for s in all_series]
                 parts.append(f"(Series: {' / '.join(series_strs)})")
             elif cand.get("series"):
                 parts.append(f"(Series: {cand['series']}")
@@ -149,8 +144,7 @@ def resolve(
             evidence_parts.append(" ".join(parts))
 
     logger.bind(stage="ai").debug(
-        f"Evidence sources: path={has_path}, tags={has_tags}, "
-        f"audible={audible_count} candidates"
+        f"Evidence sources: path={has_path}, tags={has_tags}, audible={audible_count} candidates"
     )
 
     if not evidence_parts:
@@ -213,8 +207,7 @@ def disambiguate(
         return None
 
     candidate_text = "\n".join(
-        f'{i+1}. "{c["title"]}" by {c["author_str"]} (ASIN: {c["asin"]})'
-        for i, c in enumerate(candidates[:5])
+        f'{i + 1}. "{c["title"]}" by {c["author_str"]} (ASIN: {c["asin"]})' for i, c in enumerate(candidates[:5])
     )
 
     nonce = uuid.uuid4().hex[:8]

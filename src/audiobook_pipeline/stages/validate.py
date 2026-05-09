@@ -54,20 +54,12 @@ def run(
 
     # Find all audio files (excluding .m4b since we're converting TO m4b)
     valid_extensions = AUDIO_EXTENSIONS - {".m4b"}
-    all_files = [
-        f
-        for f in source_path.rglob("*")
-        if f.is_file() and f.suffix.lower() in valid_extensions
-    ]
+    all_files = [f for f in source_path.rglob("*") if f.is_file() and f.suffix.lower() in valid_extensions]
 
     # If no convertible files found, check for chaptered m4b (multiple
     # m4b files that need concatenation into a single m4b)
     if not all_files:
-        m4b_files = [
-            f
-            for f in source_path.rglob("*")
-            if f.is_file() and f.suffix.lower() == ".m4b"
-        ]
+        m4b_files = [f for f in source_path.rglob("*") if f.is_file() and f.suffix.lower() == ".m4b"]
         if len(m4b_files) > 1:
             log.info(f"Chaptered m4b detected: {len(m4b_files)} files")
             all_files = m4b_files
@@ -106,9 +98,7 @@ def run(
     try:
         first_bitrate_bps = get_bitrate(valid_files[0])
         target_bitrate = min(first_bitrate_bps // 1000, config.max_bitrate)
-        log.debug(
-            f"Detected bitrate: {first_bitrate_bps} bps, target: {target_bitrate}k"
-        )
+        log.debug(f"Detected bitrate: {first_bitrate_bps} bps, target: {target_bitrate}k")
     except (ValueError, OSError) as e:
         log.warning(f"Failed to detect bitrate from {valid_files[0].name}: {e}")
         target_bitrate = config.max_bitrate
@@ -121,9 +111,7 @@ def run(
         except (ValueError, OSError) as e:
             log.warning(f"Failed to get duration for {f.name}: {e}")
 
-    log.debug(
-        f"Total duration: {total_duration:.2f}s ({duration_to_timestamp(total_duration)})"
-    )
+    log.debug(f"Total duration: {total_duration:.2f}s ({duration_to_timestamp(total_duration)})")
 
     # Create work directory and write file list (always -- it's lightweight metadata)
     work_dir = config.work_dir / book_hash
@@ -133,10 +121,7 @@ def run(
     log.debug(f"Wrote file list to {file_list_path}")
 
     prefix = "  VALIDATE (dry-run)" if dry_run else "  VALIDATE"
-    click.echo(
-        f"{prefix}: {len(valid_files)} files, "
-        f"{duration_to_timestamp(total_duration)}, target {target_bitrate}k"
-    )
+    click.echo(f"{prefix}: {len(valid_files)} files, {duration_to_timestamp(total_duration)}, target {target_bitrate}k")
 
     # Update manifest with metadata
     data = manifest.read(book_hash)
