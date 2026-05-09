@@ -26,12 +26,16 @@ def _find_config_file() -> Path | None:
 
 
 def _load_env_file(env_file: Path) -> None:
-    """Load a shell-style .env file into os.environ (without overriding)."""
+    """Load a shell-style .env file into os.environ (without overriding).
+
+    Used by cli_audit.py to resolve NFS_OUTPUT_DIR and other env vars
+    without constructing a full PipelineConfig. The main CLI entry point
+    uses pydantic-settings' native _env_file parameter instead.
+    """
     for line in env_file.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # Handle VAR=value and VAR="value" and VAR=${VAR:-default}
         if "=" not in line:
             continue
         key, _, value = line.partition("=")
@@ -124,13 +128,10 @@ def main(
         ai_all = True
         log.info("Reorganize mode: implies --mode organize --ai-all")
 
-    # Load .env into environment before PipelineConfig reads env vars
+    # Resolve env file: CLI --config > auto-discovery > pydantic-settings default
     env_file = Path(config_file) if config_file else _find_config_file()
-    if env_file and env_file.is_file():
-        _load_env_file(env_file)
-        log.debug(f"Loaded env from {env_file}")
-    else:
-        log.debug("No .env found")
+    if env_file:
+        log.debug(f"Using env file: {env_file}")
 
     # Auto-detect mode
     auto_detected = mode is None
@@ -176,15 +177,25 @@ def main(
     if verbose:
         config_kwargs["log_level"] = "DEBUG"
 
-    config = PipelineConfig(**config_kwargs)  # type: ignore[arg-type]
+    # Let pydantic-settings handle .env loading natively via _env_file
+    config = PipelineConfig(
+        _env_file=env_file or ".env",
+        **config_kwargs,
+    )  # type: ignore[arg-type]
 
     # Enforce level semantics on ai_all
     if config.level in (PipelineLevel.AI, PipelineLevel.FULL):
         config_kwargs["ai_all"] = True
-        config = PipelineConfig(**config_kwargs)  # type: ignore[arg-type]
+        config = PipelineConfig(
+            _env_file=env_file or ".env",
+            **config_kwargs,
+        )  # type: ignore[arg-type]
     elif config.level in (PipelineLevel.SIMPLE, PipelineLevel.NORMAL):
         config_kwargs["ai_all"] = False
-        config = PipelineConfig(**config_kwargs)  # type: ignore[arg-type]
+        config = PipelineConfig(
+            _env_file=env_file or ".env",
+            **config_kwargs,
+        )  # type: ignore[arg-type]
 
     config.setup_logging()
     log.info(f"Pipeline level: {config.level.value}")
