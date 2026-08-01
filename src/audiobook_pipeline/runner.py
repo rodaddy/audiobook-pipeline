@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,6 +29,14 @@ if TYPE_CHECKING:
     from .library_index import LibraryIndex
 
 log = logger.bind(stage="runner")
+
+# Subdirectories that are PARTS of the enclosing book rather than books of
+# their own: "CD1", "Disc 2", "Part 3". A book split this way legitimately has
+# audio in both itself and its children.
+_DISC_DIR_RE = re.compile(
+    r"^(?:cd|disc|disk|part|vol(?:ume)?)[\s_-]*\d+$",
+    re.IGNORECASE,
+)
 
 
 def _find_book_directories(
@@ -58,12 +67,53 @@ def _find_book_directories(
         if not has_audio and include_chaptered_m4b:
             m4b_count = sum(1 for f in filenames if f.lower().endswith(".m4b"))
             has_audio = m4b_count > 1
-        if has_audio:
-            book_dirs.append(Path(dirpath))
-            # Prune children so os.walk doesn't descend into subdirs
-            # (treats this as the book root for multi-disc/nested structures)
-            dirnames.clear()
+        if not has_audio:
+            continue
+
+        # A directory holding audio AND subdirectories that hold audio is a
+        # COLLECTION, not a book -- descend instead of claiming it.
+        #
+        # Claiming it prunes every real book beneath it. Measured 2026-08-01:
+        # one stray "$100M Offers.mp3" sitting at the top of a collection of
+        # six author folders reduced discovery from 11 book directories to 1,
+        # and the pipeline then planned to concatenate all 76 loose files into
+        # a single 139-hour M4B named after the containing folder. A loose file
+        # at a collection root is common and must not be able to swallow the
+        # tree beneath it.
+        if _has_audio_below(Path(dirpath), dirnames, extensions):
+            continue
+
+        book_dirs.append(Path(dirpath))
+        # Prune children so os.walk doesn't descend into subdirs
+        # (treats this as the book root for multi-disc/nested structures)
+        dirnames.clear()
     return sorted(book_dirs)
+
+
+def _has_audio_below(
+    dirpath: Path,
+    dirnames: list[str],
+    extensions: frozenset[str],
+) -> bool:
+    """True when any subdirectory of dirpath contains audio at any depth.
+
+    Distinguishes a collection root from a multi-disc book root: a CD1/CD2
+    book has audio in its children too, so this deliberately checks that the
+    child subtree looks like a SEPARATE book -- it holds audio in a directory
+    that is not itself a bare disc folder. Kept conservative: when in doubt,
+    treat the directory as a book and preserve the previous behaviour.
+    """
+    for name in dirnames:
+        child = dirpath / name
+        if name.startswith("."):
+            continue
+        # A disc folder is a part of THIS book, not a book of its own.
+        if _DISC_DIR_RE.match(name):
+            continue
+        for sub in child.rglob("*"):
+            if sub.is_file() and sub.suffix.lower() in extensions:
+                return True
+    return False
 
 
 class PipelineRunner:
@@ -213,7 +263,7 @@ class PipelineRunner:
         book_hash = generate_book_hash(source_path)
 
         click.echo(
-            f"\nPipeline: {source_path.name} " f"(mode={self.mode}, hash={book_hash})"
+            f"\nPipeline: {source_path.name} (mode={self.mode}, hash={book_hash})"
         )
 
         log.debug(f"Stages: {' -> '.join(s.value for s in stages)}")
