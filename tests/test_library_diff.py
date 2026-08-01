@@ -277,3 +277,297 @@ class TestFullCoverage:
         assert len(diff.missing) == 0
         assert len(diff.matched) == 0
         assert diff.source_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Unconverted source formats
+#
+# The whole point of a source library is that it holds material that has NOT
+# been through the pipeline yet -- loose mp3/m4a/flac, not m4b. Scanning only
+# for *.m4b made every such book INVISIBLE to the diff: not missing, not
+# matched, simply absent from source_count.
+#
+# Measured 2026-08-01 against the real trees. A diff of
+# CleanDesktop/tFiles/Done reported "50 source books, 43 matched, 7 missing"
+# while 71 mp3 (Brian McClellan, Powder Mage) and 4 m4a (C S Friedman, Coldfire)
+# sat in that source and appeared in NEITHER column -- and neither author had a
+# folder in the target library at all. The headline was read as "43 already
+# converted", so those books would have been skipped as done.
+# ---------------------------------------------------------------------------
+
+
+class TestUnconvertedSourceFormats:
+    """Source books that are still mp3/m4a/flac must be seen by the diff."""
+
+    def test_mp3_source_book_is_reported_missing(self, tmp_path):
+        """An mp3-only book absent from the target is MISSING, not invisible."""
+        source = _make_library(
+            tmp_path,
+            "source",
+            {"Brian McClellan/Promise of Blood/Promise of Blood.mp3": b"\x00"},
+        )
+        target = _make_library(
+            tmp_path,
+            "target",
+            {"Andy Weir/Project Hail Mary/Project Hail Mary.m4b": b"\x00"},
+        )
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 1
+        assert len(diff.missing) == 1
+        assert diff.missing[0].author == "Brian McClellan"
+
+    def test_m4a_source_book_is_reported_missing(self, tmp_path):
+        """.m4a is neither m4b nor in SOURCE_EXTENSIONS -- it was missed twice."""
+        source = _make_library(
+            tmp_path,
+            "source",
+            {"C S Friedman/Black Sun Rising/Black Sun Rising.m4a": b"\x00"},
+        )
+        target = _make_library(
+            tmp_path,
+            "target",
+            {"Andy Weir/Project Hail Mary/Project Hail Mary.m4b": b"\x00"},
+        )
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 1
+        assert len(diff.missing) == 1
+
+    def test_mp3_source_matches_converted_m4b_target(self, tmp_path):
+        """The converted copy in the target counts as a match across formats.
+
+        This is the other half: having made mp3 visible, an mp3 whose m4b
+        already exists must NOT be re-reported as missing.
+        """
+        source = _make_library(
+            tmp_path,
+            "source",
+            {"Andy Weir/The Martian/The Martian.mp3": b"\x00"},
+        )
+        target = _make_library(
+            tmp_path,
+            "target",
+            {"Andy Weir/The Martian/The Martian.m4b": b"\x00"},
+        )
+        diff = compare_libraries(source, target)
+        assert len(diff.missing) == 0
+        assert len(diff.matched) == 1
+
+    def test_chapter_per_file_mp3_collapses_to_one_book(self, tmp_path):
+        """71 loose mp3 chapters are one book, not 71 missing books."""
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                f"Brian McClellan/Promise of Blood/{n:02d}- Chapter.mp3": b"\x00"
+                for n in range(1, 25)
+            },
+        )
+        target = _make_library(
+            tmp_path,
+            "target",
+            {"Andy Weir/Project Hail Mary/Project Hail Mary.m4b": b"\x00"},
+        )
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 1
+        assert len(diff.missing) == 1
+
+    def test_target_scan_still_counts_only_m4b(self, tmp_path):
+        """A stray mp3 in the TARGET is not a converted book.
+
+        The target library is the ground truth of what the pipeline has already
+        produced, and it produces m4b. Counting a leftover source file there as
+        a finished book would mask the very gap this tool exists to find.
+        """
+        source = _make_library(
+            tmp_path,
+            "source",
+            {"Author/Book One/Book One.mp3": b"\x00"},
+        )
+        target = _make_library(
+            tmp_path,
+            "target",
+            {"Author/Book One/Book One.mp3": b"\x00"},
+        )
+        diff = compare_libraries(source, target)
+        assert diff.target_count == 0
+        assert len(diff.missing) == 1
+
+
+# ---------------------------------------------------------------------------
+# Multi-part naming styles found in real source trees
+#
+# Each of these appeared in CleanDesktop/tFiles/Done and matched NONE of the
+# three original patterns, so every part counted as its own missing book: one
+# Powder Mage novel reported as 19 missing books, the trilogy as 75 rather
+# than 6. Probed directly against the regexes on 2026-08-01.
+# ---------------------------------------------------------------------------
+
+
+class TestRealWorldPartNaming:
+    """Part-marker spellings that must collapse to one book."""
+
+    def test_part_n_of_m_collapses(self, tmp_path):
+        """'Part 1 of 3' -- the dominant spelling, previously unmatched."""
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                f"Brian McClellan/Servant of the Crown/"
+                f"Servant of the Crown Part {n} of 3.mp3": b"\x00"
+                for n in (1, 2, 3)
+            },
+        )
+        target = _make_library(tmp_path, "target", {})
+        target.mkdir(parents=True, exist_ok=True)
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 1
+        assert diff.missing[0].title == "Servant of the Crown"
+
+    def test_glued_numeric_part_suffix_collapses(self, tmp_path):
+        """'Promise of Blood01-19' -- part marker with no separator."""
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                f"Brian McClellan/Promise of Blood/Promise of Blood{n:02d}-19.mp3": (
+                    b"\x00"
+                )
+                for n in range(1, 20)
+            },
+        )
+        target = _make_library(tmp_path, "target", {})
+        target.mkdir(parents=True, exist_ok=True)
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 1
+        assert diff.missing[0].title == "Promise of Blood"
+
+    def test_glued_suffix_book_matches_target(self, tmp_path):
+        """The collapsed title must match the converted book in the target.
+
+        Collapsing to the wrong title is as bad as not collapsing: the group
+        used to keep the literal stem 'Promise of Blood01-19', which no real
+        title equals, so it read as missing even once converted.
+        """
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                f"Brian McClellan/Promise of Blood/Promise of Blood{n:02d}-19.mp3": (
+                    b"\x00"
+                )
+                for n in range(1, 20)
+            },
+        )
+        target = _make_library(
+            tmp_path,
+            "target",
+            {"Brian McClellan/Promise of Blood/Promise of Blood.m4b": b"\x00"},
+        )
+        diff = compare_libraries(source, target)
+        assert len(diff.missing) == 0
+        assert len(diff.matched) == 1
+
+    def test_parenthetical_before_part_marker_collapses(self, tmp_path):
+        """'The Autumn Republic (Unabridged) Part 01 of 19'."""
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                f"Brian McClellan/The Autumn Republic/"
+                f"The Autumn Republic (Unabridged) Part {n:02d} of 19.mp3": b"\x00"
+                for n in range(1, 20)
+            },
+        )
+        target = _make_library(tmp_path, "target", {})
+        target.mkdir(parents=True, exist_ok=True)
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 1
+
+    def test_hyphenated_title_is_not_a_part_marker(self, tmp_path):
+        """A real hyphenated title must NOT be eaten as a part suffix.
+
+        The glued-suffix pattern is deliberately anchored to digits-hyphen-
+        digits at end of string. 'Catch-22' has a hyphen and a number and is
+        one whole book; treating it as part 22 of nothing would merge
+        unrelated books under an empty title.
+        """
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                "Joseph Heller/Catch-22/Catch-22.mp3": b"\x00",
+                "Joseph Heller/Something Happened/Something Happened.mp3": b"\x00",
+            },
+        )
+        target = _make_library(tmp_path, "target", {})
+        target.mkdir(parents=True, exist_ok=True)
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 2
+        assert {b.title for b in diff.missing} == {"Catch-22", "Something Happened"}
+
+    def test_distinct_books_in_series_folder_stay_distinct(self, tmp_path):
+        """Coldfire: 4 one-file books under one series dir are 4 books.
+
+        The chapter pattern groups by DIRECTORY, so a book-per-subdirectory
+        layout must not be collapsed into one entry by the series folder.
+        """
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                "C S Friedman/The Coldfire Trilogy/0.5 - Dominion/"
+                "0.5 - Dominion.m4a": b"\x00",
+                "C S Friedman/The Coldfire Trilogy/01 - Black Sun Rising/"
+                "01 - Black Sun Rising.m4a": b"\x00",
+                "C S Friedman/The Coldfire Trilogy/02 - When True Night Falls/"
+                "02 - When True Night Falls.m4a": b"\x00",
+                "C S Friedman/The Coldfire Trilogy/03 - Crown of Shadows/"
+                "03 - Crown of Shadows.m4a": b"\x00",
+            },
+        )
+        target = _make_library(tmp_path, "target", {})
+        target.mkdir(parents=True, exist_ok=True)
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 4
+
+    def test_two_level_numbering_collapses_to_one_book(self, tmp_path):
+        """'The Crimson Campaign 01 Part 3 of 7' -- disc AND part number.
+
+        21 files, one book. Stripping only the 'Part N of 7' half left three
+        groups (01/02/03), reporting one novel as three missing books.
+        """
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                f"Brian McClellan/Powder Mage 02 - The Crimson Campaign/"
+                f"The Crimson Campaign {disc:02d} Part {part} of 7.mp3": b"\x00"
+                for disc in (1, 2, 3)
+                for part in range(1, 8)
+            },
+        )
+        target = _make_library(tmp_path, "target", {})
+        target.mkdir(parents=True, exist_ok=True)
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 1
+        assert diff.missing[0].title == "The Crimson Campaign"
+
+    def test_title_ending_in_a_year_keeps_its_number(self, tmp_path):
+        """The disc-number strip must not eat a number that is the title.
+
+        Bounded to 1-2 digits for exactly this reason: '1984' and
+        'Fahrenheit 451' end in numbers that are part of the name.
+        """
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                "Ray Bradbury/Fahrenheit 451/Fahrenheit 451, Part 1.mp3": b"\x00",
+                "Ray Bradbury/Fahrenheit 451/Fahrenheit 451, Part 2.mp3": b"\x00",
+            },
+        )
+        target = _make_library(tmp_path, "target", {})
+        target.mkdir(parents=True, exist_ok=True)
+        diff = compare_libraries(source, target)
+        assert diff.source_count == 1
+        assert diff.missing[0].title == "Fahrenheit 451"
