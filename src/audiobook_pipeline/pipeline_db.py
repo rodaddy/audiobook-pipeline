@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS books (
     file_count        INTEGER,
     total_duration    REAL,
     chapter_count     INTEGER,
+    chapter_source    TEXT,
     codec             TEXT,
     bitrate           TEXT,
     parsed_author     TEXT,
@@ -103,6 +104,29 @@ CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
 CREATE INDEX IF NOT EXISTS idx_author_canonical ON author_aliases(canonical);
 """
 
+
+def _books_column_types() -> dict[str, str]:
+    """Parse the books table's column names and types out of _SCHEMA.
+
+    Derived rather than hand-listed so the migration below cannot drift from
+    the schema it is supposed to be catching up to -- a second hand-maintained
+    copy of the column list would be one more thing to forget to update, which
+    is the exact failure it exists to prevent.
+    """
+    body = _SCHEMA.split("CREATE TABLE IF NOT EXISTS books (", 1)[1].split(");", 1)[0]
+    types: dict[str, str] = {}
+    for raw in body.splitlines():
+        line = raw.strip().rstrip(",")
+        if not line or line.startswith(("--", "PRIMARY", "FOREIGN", "UNIQUE", "CHECK")):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            types[parts[0]] = parts[1]
+    return types
+
+
+_BOOKS_COLUMN_TYPES = _books_column_types()
+
 # Columns that live in the books table (for flattened update mapping)
 _BOOKS_COLUMNS = {
     "source_path",
@@ -121,6 +145,7 @@ _BOOKS_COLUMNS = {
     "file_count",
     "total_duration",
     "chapter_count",
+    "chapter_source",
     "codec",
     "bitrate",
     "parsed_author",
@@ -179,10 +204,33 @@ class PipelineDB:
         return conn
 
     def _init_schema(self) -> None:
-        """Create tables if they don't exist."""
+        """Create tables if they don't exist, then add any missing columns."""
         conn = self._get_conn()
         conn.executescript(_SCHEMA)
+        self._add_missing_columns(conn)
         conn.commit()
+
+    def _add_missing_columns(self, conn: sqlite3.Connection) -> None:
+        """Add columns present in _SCHEMA but missing from an existing table.
+
+        CREATE TABLE IF NOT EXISTS does nothing to a table that already exists,
+        so a database created before a column was added keeps its old shape and
+        every write to the new column fails. There was no migration path at all
+        before this: the documented behaviour was that a schema change applied
+        to NEW databases only, which means the pipeline silently drops data on
+        any machine that has run it before.
+
+        Deliberately additive only -- it adds columns and never drops, renames,
+        retypes, or backfills. That is enough for the way this schema grows and
+        it cannot destroy an existing row.
+        """
+        have = {row[1] for row in conn.execute("PRAGMA table_info(books)")}
+        if not have:
+            return
+        for name, decl in _BOOKS_COLUMN_TYPES.items():
+            if name not in have:
+                log.info(f"Adding missing column books.{name}")
+                conn.execute(f"ALTER TABLE books ADD COLUMN {name} {decl}")
 
     def close(self) -> None:
         """Close the current thread's connection."""
@@ -275,11 +323,17 @@ class PipelineDB:
             }
 
         # Populate metadata from flattened columns
+        # NOTE: a column must be added in THREE places to survive a round trip
+        # -- _SCHEMA, _BOOKS_COLUMNS (write path), and this list (read path).
+        # Miss the third and the value writes to the database and silently
+        # reads back as absent, which is how chapter_source first appeared to
+        # work and then returned None.
         meta_keys = [
             "target_bitrate",
             "file_count",
             "total_duration",
             "chapter_count",
+            "chapter_source",
             "codec",
             "bitrate",
             "parsed_author",
@@ -408,8 +462,7 @@ class PipelineDB:
                 set_clause = ", ".join(f"{k} = ?" for k in valid)
                 values = list(valid.values()) + [book_hash, stage_name]
                 conn.execute(
-                    f"UPDATE stages SET {set_clause} "
-                    f"WHERE book_hash = ? AND stage = ?",
+                    f"UPDATE stages SET {set_clause} WHERE book_hash = ? AND stage = ?",
                     values,
                 )
 

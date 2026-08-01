@@ -25,9 +25,16 @@ Stages:
               measured duration), else the file itself as one chapter. A
               single already-chaptered M4B therefore keeps all its marks --
               it previously produced a header with none, discarding 160
-              chapters from a book like The Martian. Updates manifest with
-              chapter_count. Handles path escaping for single quotes in
-              filenames. Uses ffprobe to get duration for each audio file.
+              chapters from a book like The Martian.
+              When NOTHING in the audio carries marks, falls back to Audnexus
+              by resolved ASIN (api.audnexus): 19 hour-long encoding splits
+              become the book's real 42 chapters. Embedded marks are never
+              replaced by remote data and skip the lookup entirely. Records
+              which source won in chapter_source -- embedded / audnexus /
+              file-boundary -- so an inferred table is never mistaken for an
+              authoritative one. Updates manifest with chapter_count. Handles
+              path escaping for single quotes in filenames. Uses ffprobe to
+              get duration for each audio file.
     convert -- Wraps ffmpeg MP3-to-M4B conversion as subprocess. Auto-detects
                aac_at (Apple AudioToolbox) encoder, falls back to aac. Validates
                output codec, format, and chapter count (for multi-file books).

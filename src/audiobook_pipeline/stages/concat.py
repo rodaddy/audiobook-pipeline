@@ -16,13 +16,127 @@ import click
 from loguru import logger
 
 from ..ffprobe import get_duration, read_chapters
-from ..models import Stage, StageStatus
+from ..models import AUDIO_EXTENSIONS, Stage, StageStatus
 
 if TYPE_CHECKING:
     from ..config import PipelineConfig
     from ..pipeline_db import PipelineDB
 
 log = logger.bind(stage="concat")
+
+# Parsed titles that name front matter rather than the book. The sorted-first
+# file in a book directory is frequently one of these ("00 - Intro.mp3"), and
+# searching Audible for "Intro" finds nothing, costing the book its chapters.
+_FRONT_MATTER_TITLES = frozenset(
+    {
+        "intro",
+        "introduction",
+        "outro",
+        "prologue",
+        "preface",
+        "foreword",
+        "opening credits",
+        "end credits",
+        "credits",
+        "dedication",
+        "epilogue",
+        "afterword",
+        "acknowledgments",
+        "acknowledgements",
+        "",
+    }
+)
+
+
+def _remote_chapters(
+    source_path: Path,
+    local_duration_sec: float,
+    config: PipelineConfig,
+) -> list[tuple[int, int, str]]:
+    """Look up chapter timings for a book whose audio carries none.
+
+    Resolves the ASIN from the path the same way the asin stage does, then asks
+    Audnexus. Returns [] on any miss -- unknown book, wrong edition, network
+    failure -- and the caller keeps its file-boundary chapters.
+
+    Done HERE rather than in the asin stage because concat runs first (see
+    STAGE_ORDER) and the chapter table has to exist before the encode. The
+    lookup is skipped entirely when the audio already has embedded marks, so
+    the usual case costs no network call.
+    """
+    # Imported inside the function: this path is only reached for books with no
+    # embedded chapters, and importing the API clients at module scope would
+    # pull httpx into every concat run that does not need it.
+    from ..api.audnexus import get_chapters
+    from ..api.search import score_results
+    from ..ops.organize import parse_path
+
+    audio = next(
+        (
+            f
+            for f in sorted(source_path.rglob("*"))
+            if f.suffix.lower() in AUDIO_EXTENSIONS
+        ),
+        None,
+    )
+    if audio is None:
+        return []
+
+    # Parse a FILE path, which is what parse_path expects -- handed a bare
+    # directory it treats the parent as the book and returns the raw folder
+    # name ("Powder Mage 02 - The Crimson Campaign"), which then matches a
+    # 10.78h omnibus instead of the 20.10h novel.
+    #
+    # The remaining trap is that the sorted-first file is often front matter:
+    # "00 - Intro.mp3" parses as the title "Intro". So prefer a file whose
+    # parsed title is not obvious front matter, and fall back to the first.
+    meta: dict = {}
+    for candidate in sorted(source_path.rglob("*")):
+        if candidate.suffix.lower() not in AUDIO_EXTENSIONS:
+            continue
+        parsed = parse_path(str(candidate), source_dir=source_path)
+        if parsed.get("title", "").strip().lower() not in _FRONT_MATTER_TITLES:
+            meta = parsed
+            break
+    if not meta:
+        meta = parse_path(str(audio), source_dir=source_path)
+
+    title = meta.get("title", "")
+    author = meta.get("author", "")
+    if not title:
+        log.debug("No parsed title -- skipping remote chapter lookup")
+        return []
+
+    from ..api.audible import search
+
+    try:
+        candidates = search(f"{author} {title}".strip(), config.audible_region)
+    except Exception as e:  # noqa: BLE001 -- a lookup miss must never fail concat
+        log.warning(f"Audible search failed during chapter lookup: {e}")
+        return []
+
+    if not candidates:
+        log.info(f"No Audible match for {title!r} -- keeping file-boundary chapters")
+        return []
+
+    best = score_results(candidates, title, author)[0]
+    if best["score"] < config.asin_search_threshold:
+        log.info(
+            f"Best Audible match for {title!r} scored {best['score']:.0f}, below "
+            f"threshold {config.asin_search_threshold} -- not trusting its chapters"
+        )
+        return []
+
+    remote = get_chapters(
+        best["asin"], local_duration_sec, region=config.audnexus_region
+    )
+    if not remote:
+        return []
+
+    log.info(
+        f"Using {len(remote)} Audnexus chapters for {title!r} (ASIN {best['asin']})"
+    )
+    return [(c["start_ms"], c["end_ms"], c["title"]) for c in remote]
 
 
 def run(
@@ -104,7 +218,9 @@ def run(
     ]
 
     chapters: list[tuple[int, int, str]] = []
+    provenance = "file-boundary"
     cumulative_ms = 0
+    any_embedded = False
     for audio_file in audio_files:
         try:
             duration_sec = get_duration(audio_file)
@@ -117,6 +233,7 @@ def run(
         embedded = read_chapters(audio_file)
 
         if embedded:
+            any_embedded = True
             # Offset each embedded mark by this file's position in the concat.
             # Clamped to the measured duration so a bad END in the source
             # cannot push a chapter past the end of the joined file.
@@ -133,6 +250,23 @@ def run(
             )
 
         cumulative_ms += duration_ms
+
+    if any_embedded:
+        provenance = "embedded"
+    else:
+        # Nothing in the audio carries marks, so every "chapter" above is just
+        # a file boundary -- an encoding split, not a chapter. Measured
+        # 2026-08-01: Promise of Blood is 19 files of ~60 minutes, which is 19
+        # useless chapters for a book that really has 42.
+        #
+        # Only now is it worth a network call. EMBEDDED MARKS ALWAYS WIN and
+        # are never replaced by remote data: they came from the actual file,
+        # while Audnexus is describing an edition we are inferring is the same
+        # one.
+        remote = _remote_chapters(source_path, cumulative_ms / 1000.0, config)
+        if remote:
+            chapters = remote
+            provenance = "audnexus"
 
     for start_ms, end_ms, chapter_title in chapters:
         metadata_lines.extend(
@@ -169,6 +303,15 @@ def run(
                 "metadata": {
                     **existing_metadata,
                     "chapter_count": chapter_count,
+                    # WHERE the chapters came from, recorded so a later reader
+                    # can tell an authoritative table from an inferred one:
+                    #   embedded      -- read out of the source audio itself
+                    #   audnexus      -- fetched for a matched ASIN/edition
+                    #   file-boundary -- one chapter per input file, which for
+                    #                    encoding splits is not really chapters
+                    # Without this, all three look identical in the output and
+                    # a re-run would treat a guess as ground truth.
+                    "chapter_source": provenance,
                 }
             },
         )

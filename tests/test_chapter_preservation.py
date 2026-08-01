@@ -214,3 +214,86 @@ class TestConcatWritesChapters:
         )
         assert "END=10000" in md
         assert "999999" not in md
+
+
+class TestRemoteChapterFallback:
+    """Audnexus fills in only when the audio itself carries no marks."""
+
+    def _run(self, tmp_path, files, embedded, durations, remote=None):
+        from audiobook_pipeline.config import PipelineConfig
+        from audiobook_pipeline.pipeline_db import PipelineDB
+        from audiobook_pipeline.stages import concat
+
+        book = tmp_path / "Book"
+        book.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for name in files:
+            f = book / name
+            f.write_bytes(b"\x00")
+            paths.append(f)
+
+        cfg = PipelineConfig(_env_file=None, work_dir=str(tmp_path / "work"))
+        db = PipelineDB(cfg.db_path)
+        h = "r" * 16
+        db.create(h, str(book), "convert")
+        work = Path(cfg.work_dir) / h
+        work.mkdir(parents=True, exist_ok=True)
+        (work / "audio_files.txt").write_text("\n".join(str(p) for p in paths) + "\n")
+
+        with (
+            patch(
+                "audiobook_pipeline.stages.concat.get_duration",
+                side_effect=lambda p: durations[p.name],
+            ),
+            patch(
+                "audiobook_pipeline.stages.concat.read_chapters",
+                side_effect=lambda p: embedded.get(p.name, []),
+            ),
+            patch(
+                "audiobook_pipeline.stages.concat._remote_chapters",
+                return_value=remote or [],
+            ) as mock_remote,
+        ):
+            concat.run(book, h, cfg, db, dry_run=False)
+
+        md = (work / "metadata.txt").read_text()
+        prov = ((db.read(h) or {}).get("metadata") or {}).get("chapter_source")
+        return md, prov, mock_remote
+
+    def test_remote_chapters_used_when_none_embedded(self, tmp_path):
+        """19 hour-long file splits become the book's 42 real chapters."""
+        files = [f"Part {n:02d}.mp3" for n in range(1, 20)]
+        remote = [(i * 1000, (i + 1) * 1000, f"Chapter {i + 1}") for i in range(42)]
+        md, prov, _ = self._run(
+            tmp_path, files, {}, dict.fromkeys(files, 3600.0), remote
+        )
+        assert md.count("[CHAPTER]") == 42
+        assert prov == "audnexus"
+
+    def test_embedded_chapters_are_never_replaced(self, tmp_path):
+        """Marks from the actual file always beat a remote guess."""
+        embedded = {
+            "Book.m4b": [{"start_ms": 0, "end_ms": 500, "title": "Real Chapter"}]
+        }
+        remote = [(0, 1000, "Remote Chapter")]
+        md, prov, mock_remote = self._run(
+            tmp_path, ["Book.m4b"], embedded, {"Book.m4b": 1.0}, remote
+        )
+        assert "title=Real Chapter" in md
+        assert "Remote Chapter" not in md
+        assert prov == "embedded"
+        mock_remote.assert_not_called()
+
+    def test_falls_back_to_file_boundaries_when_remote_has_nothing(self, tmp_path):
+        """A rejected or missing remote table keeps the file-boundary chapters.
+
+        This is the Servant of the Crown case: Audnexus described a different
+        edition (13.42% duration gap) and was refused, so the 3 source files
+        stay as 3 chapters rather than the book getting a wrong chapter map.
+        """
+        files = ["Part 1.mp3", "Part 2.mp3", "Part 3.mp3"]
+        md, prov, _ = self._run(
+            tmp_path, files, {}, dict.fromkeys(files, 3600.0), remote=[]
+        )
+        assert md.count("[CHAPTER]") == 3
+        assert prov == "file-boundary"
