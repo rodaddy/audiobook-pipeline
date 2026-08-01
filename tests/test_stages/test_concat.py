@@ -112,9 +112,18 @@ class TestConcatStage:
             manifest=manifest,
         )
 
+        # A single unchaptered file is ONE chapter, not zero.
+        #
+        # This used to assert "[CHAPTER]" not in metadata, pinning the bug it
+        # was meant to guard: the single-file branch wrote a header only, so a
+        # book arriving as one already-chaptered M4B lost every mark it had
+        # (measured 2026-08-01 -- The Martian.m4b, 160 chapters in, 0 out).
+        # Emitting one chapter spanning the file keeps the output navigable
+        # and matches what the multi-file path does for each of its files.
         metadata = (config.work_dir / book_hash / "metadata.txt").read_text()
         assert ";FFMETADATA1" in metadata
-        assert "[CHAPTER]" not in metadata
+        assert metadata.count("[CHAPTER]") == 1
+        assert "title=audiobook" in metadata
 
     def test_missing_audio_files_txt_fails(self, tmp_path):
         config = self._make_config(tmp_path)

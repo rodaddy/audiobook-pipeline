@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import click
 from loguru import logger
 
-from ..ffprobe import get_duration
+from ..ffprobe import get_duration, read_chapters
 from ..models import Stage, StageStatus
 
 if TYPE_CHECKING:
@@ -81,50 +81,72 @@ def run(
     metadata_txt_path = work_path / "metadata.txt"
     book_title = source_path.name
 
-    # For single-file books, write header only (no chapters)
-    single_file = len(audio_files) == 1
+    # Build the chapter list.
+    #
+    # Chapters come from TWO sources and both matter:
+    #   1. Marks already EMBEDDED in a source file. A book that arrives as one
+    #      finished M4B carries its chapters inside the container.
+    #   2. FILE BOUNDARIES, when a book arrives as one file per chapter.
+    #
+    # Only (2) used to be implemented, and the single-file branch wrote a
+    # header with no chapters at all. Measured 2026-08-01: "The Martian.m4b"
+    # has 160 embedded chapters and this stage emitted zero, flattening an
+    # 11-hour book into one unnavigable block. Hormozi's "$100M Leads" (29)
+    # and each Legend of Drizzt book (40) hit the same path.
+    #
+    # Preferring embedded marks per file also fixes the multi-file case: a
+    # 19-part book whose parts each carry their own chapters kept only 19
+    # boundaries and discarded the rest.
+    metadata_lines = [
+        ";FFMETADATA1",
+        f"title={book_title}",
+        "",
+    ]
 
-    if single_file:
-        metadata_lines = [
-            ";FFMETADATA1",
-            f"title={book_title}",
-            "",
-        ]
-        chapter_count = 0
-    else:
-        # Multi-file book: generate chapter markers
-        metadata_lines = [
-            ";FFMETADATA1",
-            f"title={book_title}",
-            "",
-        ]
+    chapters: list[tuple[int, int, str]] = []
+    cumulative_ms = 0
+    for audio_file in audio_files:
+        try:
+            duration_sec = get_duration(audio_file)
+        except Exception as e:
+            log.error(f"Failed to get duration for {audio_file}: {e}")
+            manifest.set_stage(book_hash, Stage.CONCAT, StageStatus.FAILED)
+            return
 
-        cumulative_ms = 0
-        for audio_file in audio_files:
-            try:
-                duration_sec = get_duration(audio_file)
-            except Exception as e:
-                log.error(f"Failed to get duration for {audio_file}: {e}")
-                manifest.set_stage(book_hash, Stage.CONCAT, StageStatus.FAILED)
-                return
+        duration_ms = int(duration_sec * 1000)
+        embedded = read_chapters(audio_file)
 
-            duration_ms = int(duration_sec * 1000)
-            chapter_title = audio_file.stem
-
-            metadata_lines.extend(
-                [
-                    "[CHAPTER]",
-                    "TIMEBASE=1/1000",
-                    f"START={cumulative_ms}",
-                    f"END={cumulative_ms + duration_ms}",
-                    f"title={chapter_title}",
-                    "",
-                ]
+        if embedded:
+            # Offset each embedded mark by this file's position in the concat.
+            # Clamped to the measured duration so a bad END in the source
+            # cannot push a chapter past the end of the joined file.
+            for ch in embedded:
+                start = cumulative_ms + min(ch["start_ms"], duration_ms)
+                end = cumulative_ms + min(ch["end_ms"], duration_ms)
+                if end > start:
+                    chapters.append((start, end, ch["title"]))
+            log.debug(f"{audio_file.name}: {len(embedded)} embedded chapters")
+        else:
+            # No marks inside: the file itself is one chapter.
+            chapters.append(
+                (cumulative_ms, cumulative_ms + duration_ms, audio_file.stem)
             )
 
-            cumulative_ms += duration_ms
+        cumulative_ms += duration_ms
 
-        chapter_count = len(audio_files)
+    for start_ms, end_ms, chapter_title in chapters:
+        metadata_lines.extend(
+            [
+                "[CHAPTER]",
+                "TIMEBASE=1/1000",
+                f"START={start_ms}",
+                f"END={end_ms}",
+                f"title={chapter_title}",
+                "",
+            ]
+        )
+
+    chapter_count = len(chapters)
 
     # Write files (always -- lightweight text manifests, not the conversion)
     try:

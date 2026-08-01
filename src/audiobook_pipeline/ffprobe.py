@@ -301,6 +301,52 @@ def count_chapters(file: Path) -> int:
         return 0
 
 
+def read_chapters(file: Path) -> list[dict]:
+    """Read embedded chapter marks as [{start_ms, end_ms, title}, ...].
+
+    Returns [] when the file has no chapters or cannot be probed.
+
+    Exists because a book that arrives as ONE already-chaptered M4B carries its
+    chapter marks inside the container rather than as separate files, and the
+    concat stage derives chapters from file boundaries alone. Measured
+    2026-08-01: "The Martian.m4b" holds 160 chapters and the pipeline wrote a
+    metadata file with zero, flattening an 11-hour book into one unnavigable
+    block. Times are normalised to milliseconds here so callers do not have to
+    reason about ffprobe's per-file timebase.
+    """
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_chapters", "-of", "json", str(file)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        log.warning(f"Could not read chapters from {file.name}")
+        return []
+
+    try:
+        raw = json.loads(result.stdout).get("chapters", [])
+    except (json.JSONDecodeError, KeyError):
+        log.warning(f"Unparseable chapter data in {file.name}")
+        return []
+
+    chapters: list[dict] = []
+    for idx, ch in enumerate(raw, start=1):
+        try:
+            start_ms = int(float(ch["start_time"]) * 1000)
+            end_ms = int(float(ch["end_time"]) * 1000)
+        except (KeyError, TypeError, ValueError):
+            log.warning(f"Skipping malformed chapter {idx} in {file.name}")
+            continue
+        if end_ms <= start_ms:
+            log.warning(f"Skipping zero-length chapter {idx} in {file.name}")
+            continue
+        title = (ch.get("tags") or {}).get("title", "") or f"Chapter {idx}"
+        chapters.append({"start_ms": start_ms, "end_ms": end_ms, "title": title})
+
+    log.debug(f"Read {len(chapters)} chapters from {file.name}")
+    return chapters
+
+
 # A finished audiobook is hours long; a chapter of one is not. Books shorter
 # than this exist (novellas, kids' titles) but are rare, and the cost of the
 # two errors is not symmetric -- see are_separate_books below.

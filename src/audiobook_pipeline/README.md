@@ -91,6 +91,10 @@ Core modules:
                            for container format validation. Logs every subprocess call, tag
                            extraction, and parse result. Numeric functions raise ValueError on
                            empty ffprobe output (corrupt files, missing binary).
+                           read_chapters() returns embedded chapter marks as
+                           [{start_ms, end_ms, title}], normalised to milliseconds and
+                           filtered of zero-length/malformed entries, so the concat stage
+                           can preserve the chapters a finished M4B already carries.
                            are_separate_books() decides whether several .m4b files in one
                            directory are whole books or chapters of one book, by median
                            duration against SEPARATE_BOOK_MIN_DURATION (2h) -- file COUNT
