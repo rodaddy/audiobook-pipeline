@@ -68,3 +68,26 @@ class TestDecimalSeriesPosition:
         """'1984' is a title, not a position -- the strip must not empty it."""
         r = parse_path("/lib/George Orwell/1984/1984.m4b")
         assert r["title"]
+
+
+class TestPartMarkerNotInTitle:
+    """'Part N of M' is a file's position in a split book, not its title."""
+
+    def test_part_of_marker_stripped(self):
+        r = parse_path(
+            "/lib/Brian McClellan/Powder Mage 0.2 - Servant of the Crown/"
+            "Servant of the Crown Part 1 of 3.mp3"
+        )
+        assert r["title"] == "Servant of the Crown"
+
+    def test_zero_padded_part_marker_stripped(self):
+        r = parse_path(
+            "/lib/Brian McClellan/The Autumn Republic/"
+            "The Autumn Republic Part 07 of 19.mp3"
+        )
+        assert r["title"] == "The Autumn Republic"
+
+    def test_title_ending_in_part_n_is_kept(self):
+        """No 'of M' total: 'Part 2' may genuinely be the title."""
+        r = parse_path("/lib/Some Author/Kill Bill Part 2/Kill Bill Part 2.m4b")
+        assert "Part 2" in r["title"]

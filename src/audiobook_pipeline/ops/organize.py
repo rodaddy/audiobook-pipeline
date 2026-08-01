@@ -58,6 +58,14 @@ _GENERIC_BASENAMES = frozenset(
 # 2026-08-01 on the Coldfire Trilogy.
 _LEADING_POSITION_RE = re.compile(r"^\d+(?:\.\d+)?\s*[-–]?\s*")
 
+# "Part 1 of 3" / ", Part 02 of 19" -- a file's position within a split book,
+# never part of the book's own title. The "of M" total is REQUIRED so a title
+# that genuinely ends "Part 2" is not truncated.
+_PART_OF_MARKER_RE = re.compile(
+    r"[,\s]*\bpart\s+\d+\s+of\s+\d+\s*$",
+    re.IGNORECASE,
+)
+
 # How far above the great-grandparent to keep looking for an author folder.
 # 3 covers Author/Series/Subseries/Book/file.ext, which is the deepest real
 # layout seen. Bounded so a parse can never walk out toward the filesystem
@@ -291,6 +299,17 @@ def parse_path(source_path: str, source_dir: Path | None = None) -> dict:
     # Strip "(The AudioBook)", "(Audiobook)", "(Unabridged)", etc.
     title = re.sub(r"\s*\((?:The\s+)?Audio\s*Book\)", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s*\(Unabridged\)", "", title, flags=re.IGNORECASE)
+    # Strip a multi-part marker: the title of a book is not "... Part 1 of 3".
+    #
+    # These come from the per-file naming of a book split across several files,
+    # and the title is derived from one of those files. Measured 2026-08-01:
+    # "Servant of the Crown Part 1 of 3" was carried through to the ASIN
+    # search and the M4B tags as the book's title.
+    #
+    # Requires the "of M" total, so a real title ending in "Part N"
+    # ("Kill Bill Part 2") is left alone -- only the N-of-M spelling, which
+    # cannot be a title, is removed.
+    title = _PART_OF_MARKER_RE.sub("", title).strip()
     # Strip dash artifacts: "Food- A Love Story" -> "Food A Love Story"
     title = re.sub(r"(\w)-\s", r"\1 ", title)
     title = re.sub(r"-$", "", title).strip()
