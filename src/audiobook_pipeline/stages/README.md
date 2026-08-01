@@ -12,6 +12,10 @@ Stages:
                 sums total duration, creates work_dir, writes audio_files.txt
                 with absolute paths. Updates manifest with target_bitrate,
                 file_count, total_duration. Supports dry_run.
+                When a directory holds only .m4b files, uses
+                ffprobe.are_separate_books() to tell a chaptered book from a
+                series: a series FAILS the stage with an explicit message
+                rather than being concatenated into one file.
     concat -- Generate ffmpeg input files from validated audio list. Creates
               files.txt (concat demuxer format with escaped paths) and
               metadata.txt (FFMETADATA1 chapter markers with cumulative

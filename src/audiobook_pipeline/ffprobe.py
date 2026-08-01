@@ -299,3 +299,61 @@ def count_chapters(file: Path) -> int:
         return count
     except (json.JSONDecodeError, KeyError):
         return 0
+
+
+# A finished audiobook is hours long; a chapter of one is not. Books shorter
+# than this exist (novellas, kids' titles) but are rare, and the cost of the
+# two errors is not symmetric -- see are_separate_books below.
+SEPARATE_BOOK_MIN_DURATION = 2 * 3600.0
+
+
+def are_separate_books(files: list[Path]) -> bool:
+    """True when a set of M4B files are whole books, not chapters of one book.
+
+    Multiple .m4b files in one directory are ambiguous: either a chaptered
+    book that needs concatenating, or a folder holding a whole series. Counting
+    them cannot tell the difference. Duration can.
+
+    Measured 2026-08-01 on the real trees:
+        40 Legend of Drizzt books   10.19-15.71h each (median 12.75h)
+         8 Noobtown books            9.07-17.39h each
+        19 Promise of Blood chapters  0.95-1.01h each
+
+    Median, not mean or min: an intro/outro track of a few minutes must not
+    drag a set of real books below the line, and one long file must not lift a
+    set of chapters above it.
+
+    Fails SAFE. On any probe failure this returns True (treat as separate
+    books), because the two mistakes are not equally costly: leaving books
+    unconcatenated is visible and reversible, while concatenating a 40-book
+    series produces one 510-hour file and destroys the boundaries -- which is
+    exactly what the previous `count > 1` rule planned to do.
+    """
+    if len(files) < 2:
+        return True
+
+    durations = []
+    for f in files:
+        try:
+            d = get_duration(f)
+        except Exception as exc:  # noqa: BLE001 -- fail safe, see docstring
+            log.warning(f"Could not probe {f.name}, treating as separate book: {exc}")
+            return True
+        if d <= 0:
+            log.warning(f"Zero/unknown duration for {f.name}, treating as separate")
+            return True
+        durations.append(d)
+
+    durations.sort()
+    mid = len(durations) // 2
+    median = (
+        durations[mid]
+        if len(durations) % 2
+        else (durations[mid - 1] + durations[mid]) / 2
+    )
+    separate = median >= SEPARATE_BOOK_MIN_DURATION
+    log.debug(
+        f"{len(files)} m4b files, median {median / 3600:.2f}h -> "
+        f"{'separate books' if separate else 'chapters of one book'}"
+    )
+    return separate

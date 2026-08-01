@@ -13,6 +13,7 @@ from loguru import logger
 
 from .config import PipelineConfig
 from .errors import ExternalToolError
+from .ffprobe import are_separate_books
 from .pipeline_db import PipelineDB
 from .models import (
     AUDIO_EXTENSIONS,
@@ -63,10 +64,12 @@ def _find_book_directories(
     book_dirs: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         has_audio = any(Path(f).suffix.lower() in extensions for f in filenames)
-        # Also detect chaptered m4b: multiple .m4b files = needs concat
+        # Also detect chaptered m4b: multiple .m4b files = needs concat.
+        # Duration decides, not count -- a folder of 40 whole books is not a
+        # 40-chapter book. See ffprobe.are_separate_books.
         if not has_audio and include_chaptered_m4b:
-            m4b_count = sum(1 for f in filenames if f.lower().endswith(".m4b"))
-            has_audio = m4b_count > 1
+            m4bs = [Path(dirpath) / f for f in filenames if f.lower().endswith(".m4b")]
+            has_audio = len(m4bs) > 1 and not are_separate_books(m4bs)
         if not has_audio:
             continue
 

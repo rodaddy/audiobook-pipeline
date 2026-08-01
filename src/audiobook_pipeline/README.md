@@ -91,6 +91,11 @@ Core modules:
                            for container format validation. Logs every subprocess call, tag
                            extraction, and parse result. Numeric functions raise ValueError on
                            empty ffprobe output (corrupt files, missing binary).
+                           are_separate_books() decides whether several .m4b files in one
+                           directory are whole books or chapters of one book, by median
+                           duration against SEPARATE_BOOK_MIN_DURATION (2h) -- file COUNT
+                           cannot tell a 40-book series from a 40-chapter book. Fails safe
+                           toward "separate books" so a series is never concatenated.
     sanitize            -- Filename sanitization and book hash generation. Logs truncation
                            events and hash results.
     concurrency         -- File locking and disk space checks. Logs lock acquisition and

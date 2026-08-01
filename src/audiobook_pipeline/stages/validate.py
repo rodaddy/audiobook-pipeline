@@ -11,6 +11,7 @@ from loguru import logger
 
 from ..concurrency import check_disk_space
 from ..ffprobe import (
+    are_separate_books,
     duration_to_timestamp,
     get_bitrate,
     get_duration,
@@ -61,13 +62,28 @@ def run(
     ]
 
     # If no convertible files found, check for chaptered m4b (multiple
-    # m4b files that need concatenation into a single m4b)
+    # m4b files that need concatenation into a single m4b).
+    #
+    # COUNT ALONE CANNOT DECIDE THIS. A directory of 40 .m4b files is either
+    # one book in 40 chapters or a 40-book series, and the old `count > 1`
+    # rule called both "chaptered": pointed at a Legend of Drizzt folder it
+    # planned a single 510-hour M4B tagged as one album. are_separate_books
+    # probes durations instead and fails safe toward leaving them alone.
     if not all_files:
         m4b_files = [
             f
             for f in source_path.rglob("*")
             if f.is_file() and f.suffix.lower() == ".m4b"
         ]
+        if len(m4b_files) > 1 and are_separate_books(m4b_files):
+            log.error(
+                f"{len(m4b_files)} .m4b files in {source_path} look like "
+                f"SEPARATE BOOKS, not chapters -- refusing to concatenate them. "
+                f"Point the pipeline at each book directory, or organize them "
+                f"instead of converting."
+            )
+            manifest.set_stage(book_hash, Stage.VALIDATE, StageStatus.FAILED)
+            return
         if len(m4b_files) > 1:
             log.info(f"Chaptered m4b detected: {len(m4b_files)} files")
             all_files = m4b_files
