@@ -50,6 +50,35 @@ _GENERIC_BASENAMES = frozenset(
     }
 )
 
+# A leading series position, stripped to leave the bare title.
+#
+# The decimal is required: novella positions like "0.5 - Dominion" and
+# "0.1 - Forsworn" are how a series numbers its in-between entries, and a bare
+# `^\d+` matched only the "0", leaving the title as ".5 - Dominion". Measured
+# 2026-08-01 on the Coldfire Trilogy.
+_LEADING_POSITION_RE = re.compile(r"^\d+(?:\.\d+)?\s*[-–]?\s*")
+
+# How far above the great-grandparent to keep looking for an author folder.
+# 3 covers Author/Series/Subseries/Book/file.ext, which is the deepest real
+# layout seen. Bounded so a parse can never walk out toward the filesystem
+# root looking for something that looks like a name.
+_MAX_AUTHOR_CLIMB = 3
+
+
+def _ancestor_names(start: Path, limit: int) -> list[str]:
+    """Directory names from `start` upward, nearest first, at most `limit`.
+
+    Stops at the filesystem root and at "." so a relative path cannot loop.
+    """
+    names: list[str] = []
+    current = start
+    while len(names) < limit and current not in (Path("/"), Path("."), current.parent):
+        name = _strip_hash(current.name)
+        if name:
+            names.append(name)
+        current = current.parent
+    return names
+
 
 # ---------------------------------------------------------------------------
 # Path parsing
@@ -99,9 +128,8 @@ def parse_path(source_path: str, source_dir: Path | None = None) -> dict:
         else ""
     )
 
-    # Great-grandparent for deeper nesting
+    # Great-grandparent and above, walked lazily by Pattern C
     ggp = grandparent.parent
-    ggp_name = _strip_hash(ggp.name) if ggp not in (Path("/"), Path(".")) else ""
 
     author = ""
     title = ""
@@ -195,24 +223,36 @@ def parse_path(source_path: str, source_dir: Path | None = None) -> dict:
                     f"Pattern E: extracted author={gp_author} series={gp_series} from grandparent"
                 )
 
-    # Pattern C: grandparent as author
-    if parent_name == basename and gp_name:
-        if not author:
-            extracted = _extract_author(gp_name)
-            if _looks_like_author(extracted):
-                author = extracted
-                log.debug(f"Pattern C: extracted author={author} from grandparent")
-    elif gp_name and not author:
-        if _looks_like_author(gp_name):
-            author = _extract_author(gp_name)
-            log.debug(f"Pattern C: extracted author={author} from grandparent")
-        elif ggp_name and _looks_like_author(ggp_name):
-            author = _extract_author(ggp_name)
-            if not series:
+    # Pattern C: an ancestor directory names the author.
+    #
+    # Walks UP from the grandparent instead of checking two fixed levels. The
+    # fixed-level form missed the author whenever a series folder sat between
+    # the author and the book. Measured 2026-08-01:
+    #   C S Friedman/The Coldfire Trilogy/03 - Crown of Shadows/03 - ...m4a
+    # Here parent==basename (the book dir repeats the filename), so the old
+    # code took its first branch, tested only "The Coldfire Trilogy", rejected
+    # it as a collection word, and stopped -- leaving author=''. The empty
+    # author then let Audible rank K. M. Shea's identically-titled book first.
+    #
+    # Bounded by _MAX_AUTHOR_CLIMB and gated by _looks_like_author, which
+    # rejects collection roots ("Done", "tFiles"), digit-bearing names, and
+    # collection words -- so this stops at a real name or not at all, and
+    # cannot wander toward the filesystem root.
+    if not author and gp_name:
+        for ancestor in [gp_name, *_ancestor_names(ggp, _MAX_AUTHOR_CLIMB)]:
+            extracted = _extract_author(ancestor)
+            if not _looks_like_author(extracted):
+                continue
+            author = extracted
+            # Anything between the author and the book is the series, but only
+            # when the path actually nests that way (ancestor above gp_name).
+            if not series and ancestor != gp_name:
                 series = _clean_collection_suffix(gp_name)
             log.debug(
-                f"Pattern C: extracted author={author} from great-grandparent, series={series}"
+                f"Pattern C: extracted author={author} from {ancestor!r}, "
+                f"series={series!r}"
             )
+            break
 
     # Author-Title split from parent: "Author-Title" or "Author - Title"
     if not author and not series and "-" in parent_name and not title:
@@ -241,7 +281,7 @@ def parse_path(source_path: str, source_dir: Path | None = None) -> dict:
         bracket_match = re.match(r"^\[(.+)\]$", title.strip())
         if bracket_match:
             title = bracket_match.group(1)
-        title = re.sub(r"^\d+\s*[-\u2013]?\s*", "", title)
+        title = _LEADING_POSITION_RE.sub("", title)
         title = re.sub(r"\s+", " ", title).strip()
 
     # Clean metadata junk from title
@@ -700,7 +740,7 @@ def _clean_title_fallback(basename: str) -> str:
     log.debug(f"_clean_title_fallback: basename={basename}")
     title = basename
     title = re.sub(r"\[\d+\]", "", title)
-    title = re.sub(r"^\d+\s*[-\u2013]?\s*", "", title)
+    title = _LEADING_POSITION_RE.sub("", title)
     title = re.sub(r"\s+", " ", title).strip()
     return title if title else basename
 

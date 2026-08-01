@@ -129,7 +129,17 @@ def run(
         PipelineLevel.FULL,
     )
     if audible_candidates:
-        scored = score_results(audible_candidates, metadata["title"], "")
+        # Pass the author. score_results weights it at 30% and the caller used
+        # to hand it "", so that weight was permanently zero and ranking came
+        # down to title plus result order. Different authors publish books with
+        # the same title, and the search returns them all: measured 2026-08-01,
+        # "Forsworn" in a `Brian McClellan/` folder resolved to David Estes,
+        # and "Crown of Shadows" in a `C S Friedman/` folder to K. M. Shea.
+        # The author was already parsed from the path and used to SEARCH -- it
+        # was only being dropped for the ranking.
+        scored = score_results(
+            audible_candidates, metadata["title"], metadata.get("author", "")
+        )
         best = scored[0]
 
         if best["score"] >= config.asin_search_threshold:
