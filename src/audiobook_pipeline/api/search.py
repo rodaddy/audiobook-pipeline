@@ -13,6 +13,36 @@ from rapidfuzz import fuzz
 log = logger.bind(stage="search")
 
 
+# Audible titles routinely carry an edition/series subtitle after a colon or a
+# dash: "Forsworn: A Powder Mage Novella", "Exile - Book Two of the Dark Elf
+# Trilogy". The source folder almost never repeats it.
+_SUBTITLE_RE = re.compile(r"\s*[:–-]\s+.*$")
+
+
+def _title_score(title_hint: str, candidate: str) -> float:
+    """Fuzzy-match a title, not penalising a subtitle the source omits.
+
+    Scores the full candidate AND its pre-subtitle head, taking the better.
+    A plain ratio punishes the extra tokens so hard that the WRONG book wins:
+    measured 2026-08-01, hint "Forsworn" scored David Estes's exact-title
+    "Forsworn" at 100 and Brian McClellan's "Forsworn: A Powder Mage Novella"
+    at 41 -- a 35-point weighted gap the 30% author weight could not close,
+    even though the folder said "Brian McClellan".
+
+    Taking the MAX (not replacing the full-title score) keeps an exact full
+    match ranked at 100, so a candidate whose complete title matches is never
+    beaten by one that only matches up to its colon.
+    """
+    hint = title_hint.lower().strip()
+    full = candidate.lower().strip()
+    best = fuzz.token_sort_ratio(hint, full)
+
+    head = _SUBTITLE_RE.sub("", full).strip()
+    if head and head != full:
+        best = max(best, fuzz.token_sort_ratio(hint, head))
+    return best
+
+
 def score_results(
     results: list[dict],
     title_hint: str,
@@ -26,14 +56,11 @@ def score_results(
 
     scored = []
     for idx, r in enumerate(results):
-        title_score = fuzz.token_sort_ratio(
-            title_hint.lower(), r["title"].lower(),
-        ) * 0.6
+        title_score = _title_score(title_hint, r["title"]) * 0.6
 
         if author_hint:
             author_scores = [
-                fuzz.partial_ratio(author_hint.lower(), a.lower())
-                for a in r["authors"]
+                fuzz.partial_ratio(author_hint.lower(), a.lower()) for a in r["authors"]
             ]
             author_score = max(author_scores, default=0) * 0.3
         else:

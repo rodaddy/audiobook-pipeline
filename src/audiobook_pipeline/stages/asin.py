@@ -332,10 +332,19 @@ def _search_audible(
     if series:
         queries.append(series)
         queries.append(f"{series} {title}")
-    if widen and author:
+    # "<author> <title>" whenever the author is KNOWN, not only when widening.
+    #
+    # A bare title search returns every book of that name, and the right one
+    # can lose on title score alone: measured 2026-08-01, "Forsworn" ranked
+    # David Estes's exact-title book at 78.2 and Brian McClellan's
+    # "Forsworn: A Powder Mage Novella" at 54.6 -- the subtitle costs more
+    # than the 30% author weight can recover. The author-qualified query
+    # returns the correct book as the only hit. Results are deduped by ASIN
+    # below, so adding a query can only widen the candidate pool.
+    if author:
         queries.append(f"{author} {title}")
-        if series:
-            queries.append(f"{author} {series}")
+    if widen and author and series:
+        queries.append(f"{author} {series}")
 
     seen_asins: set[str] = set()
     all_results: list[dict] = []
