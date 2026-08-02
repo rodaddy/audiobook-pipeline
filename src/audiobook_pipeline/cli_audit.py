@@ -9,6 +9,8 @@ from pathlib import Path
 import click
 from loguru import logger
 
+from .config import PipelineConfig
+
 log = logger.bind(stage="audit-cli")
 
 
@@ -75,26 +77,28 @@ def main(
     if env_file and env_file.is_file():
         _load_env_file(env_file)
 
+    # Config is built ONCE and is the only reader of the environment.
+    # This used to call os.environ.get("NFS_OUTPUT_DIR", "/mnt/media/AudioBooks")
+    # directly, which both bypassed PipelineConfig and hardcoded one machine's
+    # layout as the fallback for everyone.
+    config = PipelineConfig()
+
     # Resolve library path
     if library_path:
         lib_root = Path(library_path).resolve()
     else:
-        lib_root = Path(os.environ.get("NFS_OUTPUT_DIR", "/mnt/media/AudioBooks"))
+        lib_root = config.nfs_output_dir
         if not lib_root.is_dir():
             raise click.UsageError(
                 f"Library path not found: {lib_root}. "
                 "Pass LIBRARY_PATH argument or set NFS_OUTPUT_DIR."
             )
 
-    # Configure logging
-    logger.remove()
-    level = "DEBUG" if verbose else "INFO"
-    logger.add(
-        lambda msg: click.echo(msg, err=True),
-        format="{level:<8} | {message}",
-        level=level,
-        filter=lambda r: r["extra"].get("stage", "") in ("audit", "library-diff"),
-    )
+    # Logging is configured by config.py and NOWHERE else -- see
+    # _DOCS/STANDARDS-python.md ## Logging. This used to call logger.remove()
+    # and logger.add() inline, so the pipeline had two independent definitions
+    # of where log output goes.
+    config.setup_cli_logging(verbose=verbose, stages=("audit", "library-diff"))
 
     # Handle --diff mode (separate workflow from audit checks)
     if diff_target:

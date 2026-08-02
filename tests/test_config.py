@@ -68,8 +68,26 @@ class TestDefaults:
 
     def test_default_paths(self):
         config = PipelineConfig(_env_file=None)
-        assert config.work_dir == Path("/var/lib/audiobook-pipeline/work")
-        assert config.nfs_output_dir == Path("/mnt/media/AudioBooks")
+        assert config.work_dir == Path("data/work")
+        assert config.nfs_output_dir == Path("data/library")
+
+    def test_no_default_path_escapes_the_project(self):
+        """A fresh clone must write nothing outside its own directory.
+
+        Every path default used to be absolute -- /var/lib, /var/log,
+        /mnt/media -- so a first run on any non-root account, and on every Mac,
+        failed on permissions before converting a book. Asserted as a property
+        over ALL path fields rather than a list of names, so a new setting
+        cannot reintroduce the problem without failing here.
+        """
+        config = PipelineConfig(_env_file=None)
+        escaped = [
+            name
+            for name in PipelineConfig.model_fields
+            if isinstance(getattr(config, name), Path)
+            and getattr(config, name).is_absolute()
+        ]
+        assert escaped == [], f"absolute path defaults: {escaped}"
 
     def test_metadata_defaults(self):
         config = PipelineConfig(_env_file=None)
