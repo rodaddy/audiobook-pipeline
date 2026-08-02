@@ -77,6 +77,32 @@ def get_codec(file: Path) -> str:
     return codec
 
 
+def get_stream_info(file: Path) -> dict:
+    """Codec, sample rate and channel count for the first audio stream.
+
+    One ffprobe call instead of three. Used to decide whether a set of files can
+    be concatenated with -c copy: that requires all parts to agree on codec,
+    sample rate and channels, and probing each field separately would triple the
+    cost over a book with dozens of parts.
+    """
+    result = _run_ffprobe(
+        [
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_name,sample_rate,channels",
+            "-of",
+            "json",
+            str(file),
+        ]
+    )
+    try:
+        streams = json.loads(result.stdout).get("streams", [])
+    except (ValueError, AttributeError):
+        return {}
+    return streams[0] if streams else {}
+
+
 def get_channels(file: Path) -> int:
     """Get audio channel count."""
     result = _run_ffprobe(

@@ -103,6 +103,24 @@ def _remote_chapters(
 
     title = meta.get("title", "")
     author = meta.get("author", "")
+
+    # For a chapter set the parsed title names the CHAPTER, not the book, so a
+    # remote lookup on it finds a different book entirely (measured: "One" ->
+    # a Jennifer Lynn Barnes novel). The album tag is the book and is identical
+    # across every file in the set.
+    from ..stages.asin import _is_chapter_set, _strip_edition_noise
+
+    if _is_chapter_set(source_path):
+        from ..ffprobe import get_tags
+
+        try:
+            album = _strip_edition_noise(get_tags(audio).get("album", ""))
+        except Exception:  # noqa: BLE001 -- tag read failure is not fatal here
+            album = ""
+        if album and len(album) > 3:
+            log.debug(f"Chapter set -- using album {album!r} for chapter lookup")
+            title = album
+
     if not title:
         log.debug("No parsed title -- skipping remote chapter lookup")
         return []

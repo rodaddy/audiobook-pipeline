@@ -177,3 +177,90 @@ class TestConvertStage:
         # But we can verify the manifest was updated
         data = manifest.read("testconv05")
         assert data["stages"]["convert"]["status"] == "completed"
+
+
+class TestStreamCopyDecision:
+    """When it is safe to join sources without re-encoding.
+
+    A wrong "yes" produces an audiobook that plays as noise after the first
+    file boundary, so every check here is a refusal case. Re-encoding AAC to
+    AAC at the same bitrate is pure generation loss for hours of CPU.
+    """
+
+    def _cfg(self, tmp_path):
+        return PipelineConfig(
+            _env_file=None, work_dir=tmp_path / "w", nfs_output_dir=tmp_path / "l"
+        )
+
+    def test_uniform_aac_is_copyable(self, tmp_path):
+        from audiobook_pipeline.stages.convert import _can_stream_copy
+
+        info = {"codec_name": "aac", "sample_rate": "44100", "channels": 2}
+        with patch(
+            "audiobook_pipeline.stages.convert.get_stream_info", return_value=info
+        ):
+            assert _can_stream_copy(
+                [Path("a.m4b"), Path("b.m4b")], 64, self._cfg(tmp_path)
+            )
+
+    def test_mp3_sources_are_not_copyable(self, tmp_path):
+        from audiobook_pipeline.stages.convert import _can_stream_copy
+
+        info = {"codec_name": "mp3", "sample_rate": "44100", "channels": 2}
+        with patch(
+            "audiobook_pipeline.stages.convert.get_stream_info", return_value=info
+        ):
+            assert not _can_stream_copy([Path("a.mp3")], 64, self._cfg(tmp_path))
+
+    def test_mixed_sample_rates_refused(self, tmp_path):
+        """Concat with -c copy requires identical stream parameters."""
+        from audiobook_pipeline.stages.convert import _can_stream_copy
+
+        infos = [
+            {"codec_name": "aac", "sample_rate": "44100", "channels": 2},
+            {"codec_name": "aac", "sample_rate": "22050", "channels": 2},
+        ]
+        with patch(
+            "audiobook_pipeline.stages.convert.get_stream_info", side_effect=infos
+        ):
+            assert not _can_stream_copy(
+                [Path("a.m4b"), Path("b.m4b")], 64, self._cfg(tmp_path)
+            )
+
+    def test_mixed_channel_counts_refused(self, tmp_path):
+        from audiobook_pipeline.stages.convert import _can_stream_copy
+
+        infos = [
+            {"codec_name": "aac", "sample_rate": "44100", "channels": 2},
+            {"codec_name": "aac", "sample_rate": "44100", "channels": 1},
+        ]
+        with patch(
+            "audiobook_pipeline.stages.convert.get_stream_info", side_effect=infos
+        ):
+            assert not _can_stream_copy(
+                [Path("a.m4b"), Path("b.m4b")], 64, self._cfg(tmp_path)
+            )
+
+    def test_low_bitrate_is_not_worth_keeping(self, tmp_path):
+        from audiobook_pipeline.stages.convert import _can_stream_copy
+
+        info = {"codec_name": "aac", "sample_rate": "44100", "channels": 2}
+        with patch(
+            "audiobook_pipeline.stages.convert.get_stream_info", return_value=info
+        ):
+            assert not _can_stream_copy([Path("a.m4b")], 32, self._cfg(tmp_path))
+
+    def test_unprobeable_file_refused(self, tmp_path):
+        """Cannot read it means cannot claim it is safe."""
+        from audiobook_pipeline.stages.convert import _can_stream_copy
+
+        with patch(
+            "audiobook_pipeline.stages.convert.get_stream_info",
+            side_effect=OSError("gone"),
+        ):
+            assert not _can_stream_copy([Path("a.m4b")], 64, self._cfg(tmp_path))
+
+    def test_empty_list_refused(self, tmp_path):
+        from audiobook_pipeline.stages.convert import _can_stream_copy
+
+        assert not _can_stream_copy([], 64, self._cfg(tmp_path))

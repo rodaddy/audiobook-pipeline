@@ -15,6 +15,7 @@ to populate metadata for correct library placement.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,7 +25,7 @@ from loguru import logger
 from ..ai import disambiguate, get_client, needs_resolution, resolve
 from ..api.audible import search
 from ..api.search import score_results
-from ..ffprobe import extract_author_from_tags, get_tags
+from ..ffprobe import extract_author_from_tags, get_duration, get_tags
 from ..models import PipelineLevel, Stage, StageStatus
 from ..ops.organize import parse_path
 
@@ -110,6 +111,29 @@ def run(
     if tag_metadata["title"] and len(tag_metadata["title"]) > 3:
         if metadata["title"] == source_stem:
             metadata["title"] = tag_metadata["title"]
+
+    # A CHAPTER FILE'S NAME IS NOT THE BOOK'S TITLE.
+    #
+    # When a book arrives as one file per chapter ("01 - One.m4b" ...
+    # "12 - Twelve.m4b"), both the path title and the per-file `title` tag name
+    # the CHAPTER. Measured 2026-08-01 on Penric's Mission: the parsed title was
+    # "One", Audible's best match for it scored 48, and the pipeline resolved the
+    # book to "Twelve" by Jennifer Lynn Barnes -- a different author's novel.
+    #
+    # The album tag is the book ("Penric's Mission: A Novella in the World of the
+    # Five Gods") and is identical across every chapter file, which is exactly
+    # what makes it the right source of truth here.
+    if source_path.is_dir() and tag_metadata["album"]:
+        album = _strip_edition_noise(tag_metadata["album"])
+        if album and len(album) > 3 and album.lower() != metadata["title"].lower():
+            if _is_chapter_set(source_path):
+                log.info(
+                    f"Chapter set detected -- using album tag {album!r} as the "
+                    f"book title instead of parsed {metadata['title']!r}"
+                )
+                metadata["title"] = album
+                if not metadata.get("author") and tag_author:
+                    metadata["author"] = tag_author
 
     # Search Audible for candidates
     audible_candidates = _search_audible(
@@ -296,6 +320,51 @@ def _find_best_candidate(
         if candidate.get("asin") == asin:
             return candidate
     return {}
+
+
+# An album tag routinely carries edition wording the Audible title does not.
+_EDITION_NOISE_RE = re.compile(
+    r"\s*[\(\[]?\s*\b(unabridged|abridged|audiobook|audio\s*edition|"
+    r"dramatized\s*adaptation)\b\s*[\)\]]?\s*$",
+    re.IGNORECASE,
+)
+
+# A book split one-file-per-chapter: many files, each far shorter than a book.
+_CHAPTER_SET_MIN_FILES = 5
+_CHAPTER_SET_MAX_FILE_SEC = 75 * 60
+
+
+def _strip_edition_noise(album: str) -> str:
+    """Album tag minus trailing edition wording, e.g. '(Unabridged)'."""
+    prev = None
+    out = album.strip()
+    while out != prev:
+        prev = out
+        out = _EDITION_NOISE_RE.sub("", out).strip()
+    return out
+
+
+def _is_chapter_set(source_path: Path) -> bool:
+    """True when this directory holds one audio file per chapter.
+
+    Deliberately conservative: it takes several files AND every one of them
+    being short. A two-part book, or a folder holding a book plus a bonus
+    track, must not be mistaken for a chapter set -- that would let an album
+    tag override a correctly parsed title.
+    """
+    from ..models import AUDIO_EXTENSIONS
+
+    files = [f for f in source_path.rglob("*") if f.suffix.lower() in AUDIO_EXTENSIONS]
+    if len(files) < _CHAPTER_SET_MIN_FILES:
+        return False
+
+    for f in files:
+        try:
+            if get_duration(f) >= _CHAPTER_SET_MAX_FILE_SEC:
+                return False
+        except Exception:  # noqa: BLE001 -- an unreadable file is not evidence
+            return False
+    return True
 
 
 def _find_tag_file(source_path: Path) -> Path | None:
