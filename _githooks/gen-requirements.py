@@ -5,7 +5,7 @@ Reads the [project.dependencies] section from pyproject.toml and writes
 a requirements.txt file for environments that don't use uv/pip-tools.
 
 Usage (pre-commit hook or manual):
-    python scripts/gen-requirements.py
+    python _githooks/gen-requirements.py
 """
 
 import re
@@ -17,7 +17,7 @@ PYPROJECT = PROJECT_ROOT / "pyproject.toml"
 REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
 
 HEADER = """\
-# Auto-generated from pyproject.toml by scripts/gen-requirements.py
+# Auto-generated from pyproject.toml by _githooks/gen-requirements.py
 # Do not edit manually -- update pyproject.toml instead.
 """
 

@@ -5,7 +5,7 @@ Walks the package tree, extracts module docstrings from __init__.py files,
 and writes a README.md in each directory that has one.
 
 Usage (pre-commit hook or manual):
-    python scripts/gen-readme.py
+    python _githooks/gen-readme.py
 """
 
 import ast
@@ -31,7 +31,7 @@ def generate_readme(package_dir: Path, docstring: str) -> str:
     lines.extend(docstring.splitlines())
     lines.append("")
     lines.append("---")
-    lines.append("*Auto-generated from `__init__.py` docstring by `scripts/gen-readme.py`.*")
+    lines.append("*Auto-generated from `__init__.py` docstring by `_githooks/gen-readme.py`.*")
     lines.append("")
     return "\n".join(lines)
 

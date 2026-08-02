@@ -1,0 +1,161 @@
+#!/opt/homebrew/bin/bash
+# pre-commit -- block the commit when the staged tree violates the standard.
+#
+# Runs against STAGED CONTENT ONLY, via a temporary index checkout. Checking the
+# working tree instead is the single most common way a hook lies: you stage a
+# fix, leave a broken edit unstaged, and the hook passes on code that is not
+# what you are committing.
+#
+# Every check here is also in .github/workflows/ci.yml, running the same
+# command. A hook that CI does not repeat is bypassable with --no-verify; a CI
+# check the hook does not run wastes a push round-trip to discover.
+#
+# FAIL CLOSED. A missing tool is a failure, not a skip.
+#
+# COMPOSES WITH THE GLOBAL HOOK. Rico's ~/.config/git/hooks/pre-commit runs
+# gitleaks and the README generator and is installed via core.hooksPath. This
+# hook does NOT duplicate those; ./_githooks/install.sh chains to the global
+# one so both run. See that script for why the chaining is necessary.
+
+set -uo pipefail
+
+fail=0
+note() { printf '  %s\n' "$*"; }
+step() { printf '\n[pre-commit] %s\n' "$*"; }
+
+require() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    step "MISSING TOOL: $1"
+    note "This hook fails closed. Install it, do not bypass."
+    note "  uv sync --extra dev"
+    exit 1
+  fi
+}
+
+require uv
+
+# FAIL LOUDLY AND DIFFERENTLY when the environment is missing, rather than
+# reporting it as a code violation. `uv run --no-sync ruff` in a tree with no
+# .venv dies with "Failed to spawn: ruff", which the checks below would print
+# under a "FAILED. Fix with: ruff format ." banner -- sending you to fix code
+# that is fine. Observed in a fresh worktree on 2026-08-01.
+if ! uv run --no-sync ruff --version >/dev/null 2>&1; then
+  step "ENVIRONMENT NOT READY: ruff is not runnable in this tree"
+  note "This is NOT a code violation -- the checks never ran."
+  note "  uv sync --extra dev"
+  exit 1
+fi
+
+# Same class of problem: a hook running in a tree without the repo's scripts/
+# silently loses the size gate. Name it instead of blaming the code.
+if [[ ! -f "$(git rev-parse --show-toplevel)/_githooks/check_code_size.py" ]]; then
+  step "ENVIRONMENT NOT READY: _githooks/check_code_size.py is missing"
+  note "This is NOT a code violation -- the size gate never ran."
+  exit 1
+fi
+
+# Staged Python files, filtered to those that still exist (a delete stages a
+# path that is gone; running ruff on it errors out for the wrong reason).
+mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACMR -- '*.py')
+existing=()
+for f in "${staged[@]}"; do
+  [[ -f "$f" ]] && existing+=("$f")
+done
+
+if [[ ${#existing[@]} -eq 0 ]]; then
+  step "no staged Python files -- nothing to check"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Check the STAGED content, not the working tree.
+#
+# git stash --keep-index is the usual trick and it is dangerous here: it touches
+# the working tree, and an interrupted hook can leave uncommitted work in a
+# stash nobody asked for. Checking the index out into a scratch tree is
+# read-only with respect to what the developer has open.
+# ---------------------------------------------------------------------------
+repo_root="$(git rev-parse --show-toplevel)"
+scratch="$(git rev-parse --git-dir)/pre-commit-staged"
+mkdir -p "$scratch"
+trap 'rm -rf "$scratch"' EXIT
+git checkout-index --prefix="$scratch/" -af
+
+# Tools are INVOKED from the repo root (that is where .venv and pyproject.toml
+# live) but POINTED AT the staged copies under $scratch. Running them with cwd
+# inside $scratch means `uv run --no-sync` finds no environment there and dies
+# with "Failed to spawn: ruff" -- which the hook would then report as a
+# violation, so every commit fails for a reason unrelated to the code.
+staged_paths=()
+for f in "${existing[@]}"; do
+  staged_paths+=("$scratch/$f")
+done
+
+cd "$repo_root" || exit 1
+
+step "ruff format --check (staged content)"
+if ! uv run --no-sync ruff format --check "${staged_paths[@]}" 2>&1 | sed 's/^/  /'; then
+  note "FAILED. Fix with: uv run ruff format ."
+  fail=1
+fi
+
+# The five function-shape rules are EXCLUDED here and handled by the ratchet in
+# CI instead. They must be, and the reason is not laziness:
+#
+# This hook checks whole staged FILES, so with those rules on, adding a comment
+# to stages/asin.py fails the commit on `run` being too complex -- a violation
+# that predates the change and that the committer did not cause. Measured
+# 2026-08-01 with a one-line comment touch. A gate that punishes unrelated
+# edits is a gate people route around with --no-verify, which costs the
+# genuinely useful checks above too.
+#
+# CI runs check_baseline.py over the whole tree, which fails on any NEW
+# shape violation. So new ones are still caught -- one push later, not one
+# commit later, and without blocking work on untouched code.
+step "ruff check (staged content)"
+if ! uv run --no-sync ruff check \
+  --ignore C901,PLR0912,PLR0913,PLR0915,PLR1702 \
+  "${staged_paths[@]}" 2>&1 | sed 's/^/  /'; then
+  note "FAILED. Some are auto-fixable: uv run ruff check --fix ."
+  fail=1
+fi
+
+# ruff has NO file-length rule, and its size rule (PLR0915) counts STATEMENTS,
+# not lines -- a 500-code-line file split into small functions passes ruff
+# completely. This is the third leg: complexity and nesting catch tangled flow,
+# this catches sprawl.
+#
+# Same reasoning as the shape rules above: this measures whole staged FILES,
+# and 25 of them are already over the ceiling, so enforcing it here would block
+# any edit to them. The ratchet in CI is what stops the backlog growing. This
+# step therefore REPORTS without failing -- so a file you are editing tells you
+# it is oversized, at the moment you are in it, without refusing the commit.
+# mypy runs over the whole configured package, not just the staged files: a
+# change in one module breaks type contracts in its CALLERS, and per-file mypy
+# cannot see that. `files` in pyproject.toml governs the scope.
+#
+# Run against the working tree rather than $scratch, because mypy needs the
+# installed package and its dependencies resolvable. The tree and the index
+# agree for the file being committed in the normal case.
+step "mypy (whole package)"
+if ! uv run --no-sync mypy 2>&1 | sed 's/^/  /'; then
+  note "FAILED. Type errors block the commit."
+  fail=1
+fi
+
+step "code size (500 lines/file, 50/function -- code only, comments free)"
+if ! uv run --no-sync python _githooks/check_code_size.py --check "${staged_paths[@]}" 2>&1 | sed 's/^/  /'; then
+  note "Advisory only -- NOT blocking, because this file is in the known"
+  note "backlog (_githooks/baseline.json). CI fails on anything NEW."
+  note "If you are already in here, splitting it is the fix."
+fi
+
+if [[ $fail -ne 0 ]]; then
+  printf '\n[pre-commit] BLOCKED. Nothing was committed.\n'
+  printf '  Fix the above, re-stage, and commit again.\n'
+  printf '  --no-verify is not an approved workaround in a durable repo.\n\n'
+  exit 1
+fi
+
+printf '\n[pre-commit] all checks passed\n'
+exit 0

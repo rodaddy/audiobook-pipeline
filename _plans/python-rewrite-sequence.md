@@ -53,6 +53,26 @@ verbatim in spirit; 4 and 6 are specific to this repo.
    that fails because the rewrite changed a shape gets its *shape* updated; a
    test that fails because behaviour regressed means stop.
 
+   **THE DARK WINDOW IS THE REAL HAZARD OF THIS PLAN.** From step 0 until
+   enough of the package exists to import, `pytest` does not report 590 green
+   — it reports 31 collection errors, because the package it imports is gone.
+   Measured immediately after step 0 on 2026-08-02. That is expected and it is
+   also exactly how a rewrite goes wrong: the net is down, nothing says so
+   loudly, and the natural response is to keep building until "it's ready."
+
+   Two rules while the window is open:
+
+   - **Re-run the suite the moment a module lands**, even partially. A test
+     that cannot import yet is a `SKIP` to work toward, not noise to silence.
+     Never delete or `xfail` a test to make the run green — that converts the
+     safety net into decoration, and defect 10 (chapters discarded) is exactly
+     the class of bug that only a real assertion catches.
+   - **The baseline is recoverable, always.** `git show <sha>:src/...` returns
+     any pre-move file, and `_DOCS/legacy-source/` holds the tree. Verified
+     2026-08-02: stashing step 0's changes restored the package and the suite
+     reported **590 passed in 3.52s**. If the rewrite goes sideways, the
+     comparison point is one command away — do not rebuild from memory.
+
 5. **Testing budget.** Goal is all pieces DONE, not each piece tested to death.
    After-the-fact testing stays well under 30% of coding time per piece. Cheap
    gates every step (`pytest`, `ruff`, `mypy`, `check_code_size`); ONE hard
@@ -307,17 +327,24 @@ src/audiobook_pipeline/
 Outside `src/`, at the repo root — **shell scripts and dev tooling never live
 inside the package**:
 
+**Two kinds of script, two homes.** The split is by WHO runs it:
+
 ```
-scripts/                   NOT importable, NOT shipped in the wheel
-├── dev/                   developer tooling
-│   ├── check_code_size.py     the 500/50 ceiling enforcement
-│   ├── gen-readme.py          docstring -> README generation
-│   ├── gen-requirements.py
-│   └── demo-hooks.sh          proves each hook rejects its own violation
+scripts/                   what a USER runs. Shipped experience.
+├── run                    the launcher: lists helpers, dispatches by name
 ├── setup/
-│   └── setup.sh               the guided installer (moves from examples/)
+│   └── setup.sh               guided installer (moved from examples/)
 └── ops/
-    └── find_untagged.py       library maintenance one-offs
+    └── find_untagged.py       library maintenance
+_githooks/                 what the REPO runs on ITSELF. Machinery.
+├── pre-commit                 also the standalone checker (--all / --working)
+├── commit-msg, pre-push, post-merge
+├── install.sh, verify.sh
+├── check_code_size.py         the 500/50 ceiling
+├── check_config_compliance.py the keystone rules
+├── check_baseline.py          the ratchet
+├── gen-readme.py              docstring -> README
+└── gen-requirements.py
 config/                    NON-secret config layers. COMMITTED.
 ├── config.json                shared defaults
 └── config.{profile}.json      per-profile layers
@@ -330,10 +357,22 @@ data/                      runtime state, gitignored
 logs/                      gitignored
 ```
 
-**Today this is wrong in two ways** (measured 2026-08-02): `scripts/` holds
-three loose files with no subdirectories, and `examples/scripts/setup.sh` puts
-executable tooling in a directory meant for samples a user reads. Step 0 fixes
-both. The rule is that `examples/` is read, `scripts/` is run.
+Enforcement scripts live NEXT TO the hooks that invoke them, not in a
+`scripts/dev/` that a user has to mentally filter past. Someone converting an
+audiobook has no use for the README generator, and burying the installer among
+enforcement machinery is how a first-time user fails to find it.
+
+`./scripts/run check` is the one bridge — it runs the repo's own gates on
+demand, so compliance is checkable BEFORE staging rather than discovered when a
+commit is refused. A developer who can only find a violation by attempting a
+commit learns to pass `--no-verify`.
+
+**Today this is wrong in three ways** (measured 2026-08-02): `scripts/` held
+three loose files with no subdirectories, `examples/scripts/setup.sh` put
+executable tooling in a directory meant for samples a user reads, and the
+enforcement scripts were mixed in with user helpers. Step 0 fixes all three.
+The rule is that `examples/` is read, `scripts/` is run by a user, and
+`_githooks/` is run by the repo.
 
 `utils/` is the shared floor, not a junk drawer. A module earns a place by being
 needed in two or more services AND depending on none of them. A helper used by
