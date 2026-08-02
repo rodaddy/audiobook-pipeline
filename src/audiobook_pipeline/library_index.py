@@ -212,8 +212,15 @@ class LibraryIndex:
                 self._save_alias(desired, existing)
                 return existing
 
-        # Single candidate with same surname -- use it
-        if len(candidates) == 1:
+        # Sole surname match -- ONLY when the given names are compatible.
+        #
+        # A shared surname is not identity. This rule used to accept any single
+        # candidate, which merged 'Michael Williams' into 'Tad Williams' and
+        # filed one author's books under another's name. Requiring the given
+        # names to agree -- or one side to be an initial form of the other --
+        # keeps 'J.R.R. Tolkien'/'J. R. R. Tolkien' together while keeping
+        # 'Michael'/'Tad' apart.
+        if len(candidates) == 1 and _given_names_compatible(cleaned, candidates[0]):
             log.debug(
                 f"Author canonicalized (sole surname match): "
                 f"'{desired}' -> '{candidates[0]}'"
@@ -265,6 +272,54 @@ class LibraryIndex:
     def file_count(self) -> int:
         """Total number of indexed files."""
         return len(self._files)
+
+
+def _given_names_compatible(a: str, b: str) -> bool:
+    """True when two same-surname names can be the same person.
+
+    A shared surname is not identity. Two forms are compatible only when their
+    given names match outright, or when one is an initial form of the other:
+
+        "J.R.R. Tolkien"  ~ "J. R. R. Tolkien"   -> True  (same initials)
+        "R.A. Salvatore"  ~ "R. A. Salvatore"    -> True
+        "Richard Morgan"  ~ "Richard K. Morgan"  -> True  (extra middle)
+        "Michael Williams" ~ "Tad Williams"      -> False (different people)
+        "Glen Cook"       ~ "Tonya C. Cook"      -> False
+
+    Measured 2026-08-01: without this, the sole-surname-match fallback filed
+    Michael Williams's book under Tad Williams.
+    """
+
+    def parts(name: str) -> list[str]:
+        cleaned = _clean_author_name(name)
+        if "," in cleaned:
+            head, _, tail = cleaned.partition(",")
+            cleaned = f"{tail.strip()} {head.strip()}"
+        toks = re.sub(r"[^A-Za-z ]", " ", cleaned).split()
+        return [t for t in toks[:-1] if t] if len(toks) > 1 else []
+
+    ga, gb = parts(a), parts(b)
+    if not ga or not gb:
+        # No given name on one side: an initial-only or bare surname form
+        # cannot be told apart from anyone else with that surname.
+        return False
+
+    la = [t.lower() for t in ga]
+    lb = [t.lower() for t in gb]
+    if la == lb:
+        return True
+
+    # Initial-compatible: every given name agrees on its first letter, in order,
+    # for as far as the shorter one goes. Catches "J R R" vs "J.R.R." and
+    # "Richard" vs "Richard K", but not "Michael" vs "Tad".
+    shorter, longer = (la, lb) if len(la) <= len(lb) else (lb, la)
+    for s, lg in zip(shorter, longer):
+        if s[0] != lg[0]:
+            return False
+        # Two spelled-out names that differ are different people.
+        if len(s) > 1 and len(lg) > 1 and s != lg:
+            return False
+    return True
 
 
 def _extract_surname(name: str) -> str:
