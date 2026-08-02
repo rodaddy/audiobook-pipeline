@@ -1,6 +1,11 @@
 [project]
 name = "audiobook-pipeline"
-version = "1.1.0"
+# 1.0.0 is the community release this rewrite is building toward. The repo
+# previously carried pyproject 1.1.0 against a VERSION file reading 0.1.0 --
+# two numbers, neither of which had ever been released.
+version = "1.0.0"
+description = "Convert loose audio files into chaptered, tagged M4B audiobooks with Audible metadata."
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
@@ -8,12 +13,38 @@ dependencies = [
     "loguru>=0.7",
     "openai>=1.0",
     "rapidfuzz>=3.0",
-    "pydantic-settings[toml]>=2.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.6",
     "psutil>=7.2.2",
+    # Retry with backoff and jitter. Replaces hand-rolled loops, which encode
+    # decisions nobody notices making -- whether the delay before attempt N
+    # uses N or N-1, whether jitter is additive (and breaks the max-delay
+    # bound) or subtractive. See _DOCS/STANDARDS-python.md ## do not hand-roll.
+    "tenacity>=9.0",
+    # MP4 tag writing, including the freeform atoms ffmpeg silently drops
+    # (----:com.apple.iTunes:ASIN). Replaces the external mp4tags/mp4v2 binary,
+    # which was an OPTIONAL install whose absence cost ASIN tags with no error.
+    "mutagen>=1.47",
 ]
 
 [project.scripts]
-audiobook-convert = "audiobook_pipeline.cli:main"
+audiobook-convert = "audiobook_pipeline.apps.convert.__main__:main"
+audiobook-audit = "audiobook_pipeline.apps.audit.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-httpx>=0.30",
+    # The hooks and CI invoke these by name and fail closed when they are
+    # missing. Before this, CLAUDE.md documented `ruff format` as the repo
+    # formatter while ruff was in no dependency list at all -- `uv run ruff`
+    # died with "Failed to spawn: ruff" (measured 2026-07-31).
+    "ruff>=0.9",
+    "mypy>=1.14",
+    # psutil ships no inline types. Without this stub package mypy reports
+    # import-untyped rather than checking the modules that use it.
+    "types-psutil>=6.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -21,6 +52,158 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/audiobook_pipeline"]
+# PEP 561. Without this marker mypy treats the package as untyped -- including
+# for anyone who installs it -- and reports `import-untyped` rather than
+# checking it, which silently voids strict mode at the package boundary.
+artifacts = ["src/audiobook_pipeline/py.typed"]
 
-[project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-httpx>=0.30", "pre-commit>=3.0"]
+
+# ---------------------------------------------------------------------------
+# ruff -- formatter AND linter, per _DOCS/STANDARDS-python.md.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+# Matches requires-python above. Both must agree; a mismatch means the linter
+# permits syntax the interpreter rejects.
+target-version = "py311"
+line-length = 88
+src = ["src", "tests"]
+
+# `ruff format` reformats Python code blocks INSIDE markdown, and _DOCS/ holds
+# generated copies of the Development standards whose examples use deliberate
+# column alignment. Running `ruff format .` silently rewrote
+# _DOCS/STANDARDS-python.md on 2026-08-01, which made the sync script report it
+# as MODIFIED -- a generated file reading as authoritative while diverging from
+# its source. _DOCS/legacy-source/ is the pre-rewrite tree: reference material,
+# deliberately NOT held to the new standard.
+extend-exclude = ["_DOCS", "planning", "_reports", "_plans"]
+
+# Required for PLR1702 (too-many-nested-blocks), the mechanical enforcement of
+# the no-nested-conditionals LAW. Without preview, selecting it silently does
+# nothing -- ruff warns and exits 0, which is the exact failure mode the
+# standard is about.
+preview = true
+
+[tool.ruff.lint]
+# Named families, each earning its place. A bare `select = ["ALL"]` enables
+# rules that contradict each other and trains people to add blanket ignores.
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes -- unused imports, undefined names
+    "I",      # isort -- import ordering
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear -- mutable default args and friends
+    "A",      # flake8-builtins -- shadowing `id`, `type`, `list`
+    "C4",     # flake8-comprehensions
+    "DTZ",    # flake8-datetimez -- naive datetimes
+    "T10",    # flake8-debugger -- a committed set_trace() hangs CI on stdin
+    "SIM",    # flake8-simplify
+    "PTH",    # flake8-use-pathlib
+    "RUF",    # ruff's own rules
+    "RET",    # flake8-return -- else-after-return, the usual cause of nesting
+    "TRY",    # tryceratops -- try/except antipatterns
+    "BLE",    # flake8-blind-except -- bare `except:` / `except Exception`
+    "D",      # pydocstyle -- the docstring LAW needs a mechanism
+    "ERA",    # eradicate -- commented-out code
+    # Control-flow shape. Rico's LAW: no nested if/else, no long if/elif
+    # chains. Named individually rather than as the whole `PL` family, which
+    # drags in ~40 unrelated pylint rules.
+    # Written as ruff's long names rather than codes -- RUF201 rewrites the
+    # codes to these on autofix, so using codes here makes the config fight
+    # its own linter on every run.
+    "too-many-nested-blocks",  # PLR1702 -- THE nested-if enforcement
+    "too-many-branches",       # PLR0912 -- the long if/elif chain
+    "complex-structure",       # C901 -- mccabe complexity
+    "too-many-statements",     # PLR0915
+    "too-many-arguments",      # PLR0913
+    "empty-comment",           # PLR2044 -- the fluff-comment rule's checkable slice
+]
+
+ignore = [
+    # E501. The formatter owns line wrapping. Leaving it on makes `ruff format`
+    # and `ruff check` disagree about the same line, which is unwinnable.
+    "line-too-long",
+    # RUF105. Its autofix REWRITES a working `# noqa: BLE001` into
+    # `# ruff: ignore[blind-except]`, which this ruff does NOT honour -- so
+    # `ruff check --fix` silently converts every suppression in the repo into a
+    # no-op and the findings all come back. Measured with an isolated two-case
+    # probe on 2026-07-31.
+    "noqa-comments",
+    # D203/D213: mutually exclusive with D211/D212, which ruff's own default
+    # style prefers. Selecting all four makes the linter contradict itself.
+    "incorrect-blank-line-before-class",
+    "multi-line-summary-second-line",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# S101 (`assert` is what a test is made of) and BLE001: a concurrency test
+# captures whatever a worker thread raised so it can assert the list is empty
+# -- the broad catch IS the assertion mechanism, not a swallowed error.
+# TRY003: a test raising a described error is documenting the scenario.
+# D: a test's name is its documentation; requiring a docstring on every
+# `test_x_rejects_y` produces restatement, which the standard calls fluff.
+"tests/**" = ["assert", "blind-except", "raise-vanilla-args", "D"]
+# scripts/ and _githooks/ are CLIs; printing is their job.
+"scripts/**" = ["T20"]
+"_githooks/**" = ["T20"]
+
+[tool.ruff.lint.pylint]
+# ruff's default is 5, which permits exactly the pyramid the LAW bans. 3, not
+# 2: PLR1702 counts EVERY block type, so a legitimate `try:` -> `for` -> `with`
+# is three levels deep with no branching at all. 3 still refuses `if` inside
+# `if` inside `if`, which is the actual target.
+max-nested-blocks = 3
+max-branches = 12
+# Counts STATEMENTS, not code lines -- roughly a third of line count in
+# practice. This is NOT the 50-code-line-per-function ceiling from the
+# standard, which ruff has no rule for; _githooks/check_code_size.py owns that.
+# 25 per the standard: it sits above the busiest legitimate function and still
+# refuses genuine statement pile-up.
+max-statements = 25
+# ruff excludes self/cls AND **kwargs, so 5 means five real parameters.
+max-args = 5
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+
+# ---------------------------------------------------------------------------
+# mypy -- strict. The standard's LAW, and it was not running on this branch at
+# all before now: the config lived only on the unmerged rails branch.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src/audiobook_pipeline", "tests"]
+strict = true
+
+# NO blanket ignore_missing_imports. It is a global mute that hides a genuinely
+# untyped dependency behind the same silence as a typo'd module name. Any
+# untyped third-party package gets a NAMED override below, so the list of what
+# is unchecked is visible rather than implied.
+warn_unused_ignores = true
+warn_unreachable = true
+show_error_codes = true
+
+# Reference material, held to the standard it predates -- not to this one.
+exclude = ["_DOCS/legacy-source/"]
+
+[[tool.mypy.overrides]]
+# openai ships partial types; its dynamic client attributes defeat strict mode.
+# Named, so the gap is documented rather than global.
+module = ["openai.*"]
+ignore_missing_imports = true
+
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Fail on an unregistered mark rather than silently skipping the test it was
+# meant to select -- a typo'd `@pytest.mark.slwo` otherwise runs nothing and
+# reports success.
+addopts = "--strict-markers --strict-config"
