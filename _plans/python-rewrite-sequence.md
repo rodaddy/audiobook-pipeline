@@ -110,7 +110,7 @@ Contract rule 2, applied. Verified 2026-08-02. **A decision here is settled.**
 | Retry / backoff | **`tenacity`** | Actively maintained. `stop_after_attempt` + `wait_exponential_jitter` + `retry_if_exception_type`. What survives as ours is the genuinely domain part: *which* exceptions deserve a retry. |
 | HTTP | **`httpx`** | Already a dependency. Keep. |
 | Fuzzy matching | **`rapidfuzz`** | Already a dependency. Keep. |
-| Database | **SQLModel** *(provisional)* | Pydantic + SQLAlchemy; a contributor recognizes it. Retires 22 raw statements. **Provisional** — SQLAlchemy is the proven layer and SQLModel the newer skin; confirm at step 5 before writing the migration. |
+| Database | **stdlib `sqlite3` + a Pydantic row factory** | No ORM, no third-party layer. See `## Why no ORM` below. |
 | **ffmpeg / ffprobe** | **OWNED — documented exception** | `ffmpeg-python` is unmaintained. `ffmpy` (522 stars) only builds a command line and would remove zero lines of our parsing. `pyffmpeg` bundles its own binary — worse for us. Per `STANDARDS-python.md`, the module docstring names each rejected library and why. |
 | **Chapter writing** | **OWNED — documented exception** | Verified against mutagen's own API reference: `MP4Chapters` is **read-only** (`moov.udta.chpl`). No maintained library writes chapters. FFMETADATA1 via ffmpeg is the real mechanism and is what we do. |
 
@@ -118,6 +118,54 @@ Contract rule 2, applied. Verified 2026-08-02. **A decision here is settled.**
 it, the docstring names the library rejected and why, and states that its
 implementation is what ours was checked against. Owning ffmpeg glue is not a
 licence to skip reading the reference implementations.
+
+### Why no ORM
+
+**Decision: stdlib `sqlite3` plus a Pydantic row factory. No SQLAlchemy, no
+SQLModel, no third-party database layer.**
+
+The rewrite's actual problem with `pipeline_db.py` was never "it uses SQL." It
+was that rows cross the boundary as unvalidated dicts — 10 of the 68
+`dict[str, Any]` sites live in that one file. An ORM fixes that as a side effect
+of a great deal of other machinery. A row factory fixes exactly that.
+
+Each table gets a Pydantic model whose fields match its columns:
+
+```python
+row = cursor.fetchone()                  # sqlite3.Row
+record = StageRecord.model_validate(dict(row))   # validated on the way out
+cursor.execute(INSERT, record.model_dump())      # typed on the way in
+```
+
+The schema derives from the model's fields, so the table and the type cannot
+drift. That is what an ORM was supposed to buy — typed rows, validation, one
+declaration of shape — without the session, the identity map, lazy loading,
+relationship cascades, or a migration graph.
+
+**Why an ORM is the wrong size here.** This is a single-writer local SQLite file
+tracking stage status per book, recording failures for retry, and caching
+lookups. There are no relationships to traverse and no query builder needed.
+SQLAlchemy's surface — detached instances, `flush` vs `commit` timing, N+1 from
+lazy loads — is real cost paid for capability this application does not use.
+SQLModel does not avoid that; it is a thinner skin over the same engine.
+
+**This also corrects a rule-2 misapplication.** The first draft of this plan
+reached for "a well-known maintained library" and landed on SQLModel. The honest
+reading of the preference order is that the **stdlib** rung comes before custom
+code, and `sqlite3` is stdlib. The thing actually wanted from SQLModel was
+Pydantic — which is already a dependency for `models/`. Reaching past the stdlib
+for a dependency that supplies something already present is not applying the
+rule, it is pattern-matching on the word "library."
+
+**Deliberately NOT a hand-rolled ORM.** The factory validates and serializes; it
+does not grow a query builder, relationship handling, or lazy loading. The
+moment it wants one of those, that is the signal the data model outgrew SQLite,
+and the answer is a real database — not a homegrown SQLAlchemy.
+
+**Open at step 5, not now:** what `pipeline_db.py`'s existing version handling
+and `test_db_migration.py` actually cover, and whether row models live in `db/`
+or `models/`. Leaning `db/` — a table row is not a domain model, and conflating
+the two is how ORMs earn their reputation.
 
 ### Why JSON plus pydantic-settings
 
@@ -239,9 +287,10 @@ src/audiobook_pipeline/
 │   ├── ffmpeg.py          OWNED subprocess glue. Rejections in the docstring.
 │   ├── http.py            httpx + tenacity. No hand-rolled backoff.
 │   └── paths.py           sanitize, path building
-├── db/                SQLModel. Retires 22 raw statements.
-│   ├── engine.py
-│   └── models.py
+├── db/                stdlib sqlite3 + Pydantic row factory. No ORM.
+│   ├── connection.py      connect, pragmas, schema init
+│   ├── rows.py            row models; fields match columns exactly
+│   └── queries.py         the SQL, one named function per statement
 ├── services/          business logic, ONE concern per module
 │   ├── discover.py        find book directories  (defects 3, 4)
 │   ├── concat.py          chapter preservation   (defect 10)
@@ -340,9 +389,11 @@ construction naming the field, instead of `KeyError` three frames later.
 loops (`rg 'for attempt' src/` → no matches).
 
 ### Step 5 — `db/`
-Confirm SQLModel vs SQLAlchemy FIRST (see Library decisions), then port.
+stdlib `sqlite3` + Pydantic row factory (see `## Why no ORM`). Read what the
+existing version handling actually does BEFORE writing the schema path — that
+is the one genuinely open question here.
 **Proves:** `test_pipeline_db.py` + `test_db_migration.py` green against an
-existing `pipeline.db`.
+existing `pipeline.db`; zero `dict[str, Any]` crossing the db boundary.
 
 ### Step 6 — THE SPINE. End-to-end before hardening.
 Minimum path for ONE real book: discover → concat → convert → identify → tag →
@@ -392,9 +443,11 @@ test that decides whether v1.0.0 publishes.**
 Contract rule 1: a fact that lives only in the old code goes here, not into a
 guess.
 
-1. **SQLModel vs SQLAlchemy** — settle before step 5 writes a migration.
-   SQLModel is Pydantic + SQLAlchemy and a contributor recognizes it; SQLAlchemy
-   is the older proven layer. Decide on evidence, record the decision here.
+1. **Existing schema/migration behaviour** — settle before step 5 writes the
+   schema path. What does `pipeline_db.py`'s version handling actually do, and
+   what does `test_db_migration.py` cover? A model-derived schema makes adding a
+   column trivial; whether it covers what is already there is unverified.
+   *(The ORM question is closed — see `## Why no ORM`.)*
 2. **`.author-override` marker semantics** — confirm the exact precedence rule
    during step 6's `organize.py` re-derivation rather than reading it out of the
    old implementation. Specifically: does the marker beat an Audible-supplied
@@ -424,6 +477,10 @@ blocker to it.
 - Any file over 500 code lines except `config.py`.
 - A silently optional external binary whose absence costs metadata without
   saying so (today: `mp4tags`).
+- An ORM. Also: a hand-rolled one. The row factory validates and serializes;
+  if it starts wanting a query builder or relationship handling, the data model
+  has outgrown SQLite and the answer is a real database, not homegrown
+  SQLAlchemy.
 
 ---
 
