@@ -105,7 +105,7 @@ Contract rule 2, applied. Verified 2026-08-02. **A decision here is settled.**
 
 | Mechanism | Decision | Verified reason |
 |---|---|---|
-| Config loading | **`pydantic-settings`** | Already a dependency. Replaces the 22-line hand-rolled `.env` parser. `settings_customise_sources` makes the documented precedence a property of the mechanism, not a docstring claim — this is the exact bug the exemplar's own `config.py` shipped and fixed. |
+| Config loading | **JSON file + `pydantic-settings`** | See `## Why JSON plus pydantic-settings` below — the two are not alternatives. Already a dependency. Replaces the 22-line hand-rolled `.env` parser. |
 | MP4 tag writing | **`mutagen`** | Confirmed against mutagen's MP4 API docs: freeform atoms (`----:com.apple.iTunes:ASIN`) are supported for write. **Removes the external `mp4tags`/mp4v2 dependency**, which today is an optional install whose absence silently costs ASIN tags. |
 | Retry / backoff | **`tenacity`** | Actively maintained. `stop_after_attempt` + `wait_exponential_jitter` + `retry_if_exception_type`. What survives as ours is the genuinely domain part: *which* exceptions deserve a retry. |
 | HTTP | **`httpx`** | Already a dependency. Keep. |
@@ -118,6 +118,74 @@ Contract rule 2, applied. Verified 2026-08-02. **A decision here is settled.**
 it, the docstring names the library rejected and why, and states that its
 implementation is what ours was checked against. Owning ffmpeg glue is not a
 licence to skip reading the reference implementations.
+
+### Why JSON plus pydantic-settings
+
+**These are not competing choices.** JSON stays the config FORMAT;
+pydantic-settings is HOW it is loaded, layered, and validated. A `config.json`
+is exactly what `JsonConfigSettingsSource` reads. Recorded here because the
+question came up as a candidate for the wider standard, and the answer is
+"both", not "one or the other".
+
+What the library adds over reading the file yourself:
+
+1. **Precedence becomes a property of the mechanism.** The source tuple returned
+   by `settings_customise_sources` IS the order, highest first — init kwargs,
+   then env vars, then the JSON layers. Nobody traces code to learn whether an
+   env var beats a file.
+
+2. **Layering without a hand-written merge.** `json_file=[config.json,
+   config.{env}.json]` with `deep_merge=True` layers the per-environment file
+   over the base, so a file setting only `logging.level` leaves its siblings
+   intact. That is the recursive merge we do not have to own — and per the
+   standard's own table, "whether env vars beat files, or files beat env vars"
+   is precisely the decision a hand-rolled merge makes invisibly.
+
+3. **`extra="forbid"` turns a typo into a startup error.** A misspelled key is
+   otherwise dropped silently and the default used, which presents as "my
+   setting does nothing" with no error to search for.
+
+4. **Validation at load, naming the field.** `Field(default=30, ge=5, le=3600)`
+   fails at startup saying `convert.interval_seconds`, not 200 lines later
+   inside a call that received a string.
+
+**The receipt.** The exemplar shipped this bug and documents it: `config.py`
+originally read the JSON itself and passed the result as `Settings(**values)`.
+Init kwargs are pydantic's HIGHEST-priority source, so the JSON files silently
+outranked environment variables — the exact reverse of what its own module
+docstring promised. `EXEMPLAR_LOGGING__LEVEL=CRITICAL` against a file saying
+`DEBUG` produced `DEBUG`, with nothing logged to show the variable had been read
+and discarded. A documented precedence order the code does not implement is
+worse than no documentation, because it is trusted.
+
+**`.env` keeps one job:** naming which environment to load and holding secrets
+for local development. It does not become a second config surface — two
+competing file conventions is one too many.
+
+**Where the files live: `config/`, not `secrets/`.** The exemplar puts its
+layers in `secrets/` because everything it configures happens to be sensitive.
+That is a property of that example, not a rule, and inheriting it mislabels an
+entire directory — a reader who sees `secrets/config.json` reasonably assumes it
+cannot be committed, and then the non-sensitive defaults everyone needs go
+unshared.
+
+This repo splits them by what they actually are:
+
+```
+config/                    NON-secret, COMMITTED, the shared defaults
+├── config.json                base layer, safe to read and share
+├── config.plex.json           per-environment layers
+└── config.audiobookshelf.json
+secrets/                   gitignored EXCEPT *.example and README.md
+├── config.example.json        shows the SHAPE of the secret keys, no values
+└── README.md
+```
+
+Only the API key and any tokens land in `secrets/`. Everything else — paths,
+bitrates, regions, thresholds, the six named profiles — is `config/`, committed,
+and diffable. The precedence chain reads both, secrets last so a key can
+override, and the split costs nothing because `json_file=[...]` already takes a
+list.
 
 ---
 
@@ -187,6 +255,37 @@ src/audiobook_pipeline/
     └── audit/
 ```
 
+Outside `src/`, at the repo root — **shell scripts and dev tooling never live
+inside the package**:
+
+```
+scripts/                   NOT importable, NOT shipped in the wheel
+├── dev/                   developer tooling
+│   ├── check_code_size.py     the 500/50 ceiling enforcement
+│   ├── gen-readme.py          docstring -> README generation
+│   ├── gen-requirements.py
+│   └── demo-hooks.sh          proves each hook rejects its own violation
+├── setup/
+│   └── setup.sh               the guided installer (moves from examples/)
+└── ops/
+    └── find_untagged.py       library maintenance one-offs
+config/                    NON-secret config layers. COMMITTED.
+├── config.json                shared defaults
+└── config.{profile}.json      per-profile layers
+secrets/                   gitignored EXCEPT *.example and README.md
+├── config.example.json        shape of the secret keys only, no values
+└── README.md
+examples/                  user-facing samples ONLY, no executable tooling
+└── config/                the six named profiles
+data/                      runtime state, gitignored
+logs/                      gitignored
+```
+
+**Today this is wrong in two ways** (measured 2026-08-02): `scripts/` holds
+three loose files with no subdirectories, and `examples/scripts/setup.sh` puts
+executable tooling in a directory meant for samples a user reads. Step 0 fixes
+both. The rule is that `examples/` is read, `scripts/` is run.
+
 `utils/` is the shared floor, not a junk drawer. A module earns a place by being
 needed in two or more services AND depending on none of them. A helper used by
 exactly one service belongs in that service.
@@ -207,7 +306,12 @@ a step is DONE when its proof line has been run and its output seen.
 Move `src/audiobook_pipeline/` → `_DOCS/legacy-source/`. Propose retirement of
 `bin/`, `lib/`, `stages/` (3,781 lines of superseded bash) to Rico by `mv`.
 Tests stay exactly where they are.
-**Proves:** `git status` shows the move; no test file touched.
+
+Also lay out `scripts/` properly, since the rewrite should not inherit the
+current mess: `scripts/{dev,setup,ops}/`, with `examples/scripts/setup.sh`
+moving to `scripts/setup/setup.sh`. `examples/` keeps config profiles only.
+**Proves:** `git status` shows the moves; no test file touched; `fd . scripts`
+shows every file inside a subdirectory.
 
 ### Step 1 — `config.py`, the keystone
 Nested typed `BaseModel` sections replacing 44 flat fields. `secrets/config.json`
@@ -269,9 +373,17 @@ dependencies), CHANGELOG, AI on/off guide, reconcile `VERSION` 0.1.0 vs
 **Proves:** clean clone → `setup.sh` → convert a book, on a machine that is not
 this one.
 
-### Step 11 — ACCEPTANCE
-The real conversion run against `tFiles/Done/`. **This is the test that decides
-whether v1.0.0 publishes.**
+### Step 11 — ACCEPTANCE, and the library fix
+The real conversion run against `tFiles/Done/`, using the finished v1.0.0 code.
+
+**This step is not only a test — it is the repair.** The library drift noted
+below gets reconciled here, by the tool, which is the entire reason the tool
+exists. Re-measure the baseline first (source count, library count, diff
+report) so the run has a known starting point, then convert.
+
+**Proves:** the diff report goes to zero missing books, every converted file
+carries chapters and an ASIN (`mp4info`), and Plex sees them. **This is the
+test that decides whether v1.0.0 publishes.**
 
 ---
 
@@ -280,15 +392,25 @@ whether v1.0.0 publishes.**
 Contract rule 1: a fact that lives only in the old code goes here, not into a
 guess.
 
-- **Library baseline drifted mid-session.** Source `m4b` dropped 50 → 24 (26
-  Salvatore files) and the library grew 703 → 712, outside this session. Rico:
-  *"I wouldn't really worry about it."* Recorded because step 11's acceptance
-  run needs a known starting state to prove anything — re-measure at step 11,
-  do not reconcile now.
-- **SQLModel vs SQLAlchemy** — settle before step 5 writes a migration.
-- **`.author-override` marker semantics** — confirm the exact precedence rule
-  during step 6's `organize.py` re-derivation rather than reading it out of the
-  old implementation.
+1. **SQLModel vs SQLAlchemy** — settle before step 5 writes a migration.
+   SQLModel is Pydantic + SQLAlchemy and a contributor recognizes it; SQLAlchemy
+   is the older proven layer. Decide on evidence, record the decision here.
+2. **`.author-override` marker semantics** — confirm the exact precedence rule
+   during step 6's `organize.py` re-derivation rather than reading it out of the
+   old implementation. Specifically: does the marker beat an Audible-supplied
+   author, or only a derived one?
+3. **`PIPELINE_LEVEL` × stage filtering** — the four levels (simple / normal /
+   ai / full) gate which stages run. Re-derive the matrix from the tests and the
+   docs at step 6; do not copy the branch conditions forward.
+
+**Not an open question — the library drift.** Source `m4b` dropped 50 → 24 (26
+Salvatore files) and the library grew 703 → 712 outside this session. This is
+not a mystery to be solved before starting and it is not a reason to hold the
+plan. **Fixing it is what step 11 is for**: the acceptance run is the thing that
+reconciles the library, using the finished v1.0.0 code. Re-measure the baseline
+at step 11 so the run has a known starting point, then let the tool do its job.
+That is the whole point of the acceptance test — the drift is the work, not a
+blocker to it.
 
 ---
 
