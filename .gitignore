@@ -33,3 +33,16 @@ __pycache__/
 # OMC / PRD session artifacts
 .omc/
 .prd/
+
+# qmd project-local search index: the database is rebuildable
+# and never committed; the allowlist config is tracked.
+.qmd/*
+!.qmd/index.yml
+
+# Runtime state. Every path default lives under data/ so a fresh clone is
+# self-contained -- which also means a first run would otherwise stage work
+# files, the SQLite db, logs, and converted AUDIO for commit.
+data/
+
+# Backups written by examples/scripts/setup.sh before it overwrites .env
+.env.backup.*
