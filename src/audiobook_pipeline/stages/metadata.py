@@ -137,8 +137,7 @@ def run(
     tags["pgap"] = "1"
 
     log.debug(
-        f"Tagging {output_file.name}: artist={author!r} album={album!r} "
-        f"asin={asin!r}"
+        f"Tagging {output_file.name}: artist={author!r} album={album!r} asin={asin!r}"
     )
 
     if dry_run:
@@ -162,6 +161,18 @@ def run(
 
         # Write tags via ffmpeg
         success = _write_tags(output_file, tags, cover_path=cover_path)
+        if success:
+            # ffmpeg silently DROPS any tag that is not a standard MP4 atom.
+            # Verified 2026-08-01: `-metadata ASIN=...` writes nothing at all,
+            # and the same is true of sort_album, publisher and the Apple Books
+            # series tags. The write appears to succeed and the tag is simply
+            # absent -- which is why books in the library carry no ASIN even
+            # though the pipeline resolved one.
+            #
+            # ASIN is the one that matters most: Prologue/Audiobookshelf use it
+            # to fetch a chapter table, so an untagged file stays unnavigable in
+            # the client even when the audio is fine.
+            _write_mp4_atoms(output_file, tags)
     finally:
         # Always clean up cover temp file, even on unexpected exceptions
         if cover_path and cover_path.exists():
@@ -266,6 +277,61 @@ def _build_album(title: str, series: str, position: str) -> str:
     if series:
         return series
     return title
+
+
+# Tags ffmpeg cannot write to an MP4 container, mapped to their mp4tags flag.
+# Verified 2026-08-01 by writing each with ffmpeg and reading the result back:
+# every one of these was silently absent afterwards.
+_MP4TAGS_FLAGS: tuple[tuple[str, str], ...] = (
+    ("sort_album", "-sortalbum"),
+    ("show", "-show"),
+    ("MOVEMENTNAME", "-sorttvshow"),
+)
+
+
+def _write_mp4_atoms(output_file: Path, tags: dict[str, str]) -> None:
+    """Write the MP4 atoms ffmpeg drops, using mp4tags.
+
+    Best-effort and never fatal: the audio and the standard tags are already
+    written by this point, so a missing mp4v2 install costs metadata richness,
+    not the book. A warning is logged so the gap is visible rather than silent.
+
+    ASIN goes into the `xid` atom as "ASIN:<value>", which is the spelling
+    Audiobookshelf and Prologue look for when deciding whether they can fetch a
+    chapter table for a file that carries none.
+    """
+    mp4tags = shutil.which("mp4tags")
+    if not mp4tags:
+        log.warning(
+            "mp4tags (mp4v2) not installed -- ASIN and series atoms cannot be "
+            "written, so clients will not auto-fetch chapters for this file"
+        )
+        return
+
+    cmd = [mp4tags]
+    if tags.get("ASIN"):
+        cmd += ["-xid", f"ASIN:{tags['ASIN']}"]
+    for key, flag in _MP4TAGS_FLAGS:
+        if tags.get(key):
+            cmd += [flag, tags[key]]
+
+    if len(cmd) == 1:
+        return
+
+    cmd.append(str(output_file))
+    log.info(f"mp4tags: {' '.join(cmd[:-1])} <file>")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning(f"mp4tags failed for {output_file.name}: {e}")
+        return
+
+    if result.returncode != 0:
+        log.warning(f"mp4tags returned {result.returncode}: {result.stderr.strip()}")
+    else:
+        log.debug(
+            f"Wrote MP4 atoms (asin={tags.get('ASIN', '')!r}) to {output_file.name}"
+        )
 
 
 def _write_tags(

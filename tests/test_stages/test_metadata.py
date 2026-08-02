@@ -10,7 +10,25 @@ from audiobook_pipeline.config import PipelineConfig
 from audiobook_pipeline.errors import ManifestError
 from audiobook_pipeline.pipeline_db import PipelineDB
 from audiobook_pipeline.models import PipelineMode
-from audiobook_pipeline.stages.metadata import run, _build_album, _write_tags
+from audiobook_pipeline.stages.metadata import (
+    run,
+    _build_album,
+    _write_mp4_atoms,
+    _write_tags,
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_mp4tags():
+    """Disable the mp4tags atom pass for tests that assert on ffmpeg.
+
+    These tests patch subprocess.run globally and their side effects write to
+    cmd[-1] -- which for an mp4tags invocation is the FINAL output file, not a
+    temp file, so an un-stubbed atom pass overwrites the tagged m4b the test
+    just produced. Tests that specifically cover the atom pass override this.
+    """
+    with patch("audiobook_pipeline.stages.metadata.shutil.which", return_value=None):
+        yield
 
 
 class TestBuildAlbum:
@@ -580,3 +598,89 @@ class TestMetadataEnrichMode:
 
         data = manifest.read("enrich01")
         assert data["stages"]["metadata"]["status"] == "completed"
+
+
+class TestMp4Atoms:
+    """The tags ffmpeg silently drops from an MP4 container.
+
+    Verified against ffmpeg 2026-08-01: `-metadata ASIN=...` writes nothing,
+    and the tag is simply absent afterwards with no error. ASIN matters most --
+    Prologue/Audiobookshelf use it to fetch a chapter table for a file that
+    carries none, so an untagged book stays unnavigable in the client.
+    """
+
+    def test_asin_written_as_xid_atom(self, tmp_path):
+        f = tmp_path / "book.m4b"
+        f.write_text("m4b")
+        with (
+            patch(
+                "audiobook_pipeline.stages.metadata.shutil.which",
+                return_value="/usr/local/bin/mp4tags",
+            ),
+            patch("audiobook_pipeline.stages.metadata.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
+            _write_mp4_atoms(f, {"ASIN": "B01MUCWLLY"})
+
+        cmd = mock_run.call_args[0][0]
+        assert "-xid" in cmd
+        assert cmd[cmd.index("-xid") + 1] == "ASIN:B01MUCWLLY"
+        assert cmd[-1] == str(f)
+
+    def test_series_atoms_written(self, tmp_path):
+        f = tmp_path / "book.m4b"
+        f.write_text("m4b")
+        with (
+            patch(
+                "audiobook_pipeline.stages.metadata.shutil.which",
+                return_value="/usr/local/bin/mp4tags",
+            ),
+            patch("audiobook_pipeline.stages.metadata.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
+            _write_mp4_atoms(
+                f,
+                {"sort_album": "Chalion 1.7 - Penric", "show": "The Curse of Chalion"},
+            )
+
+        cmd = mock_run.call_args[0][0]
+        assert cmd[cmd.index("-sortalbum") + 1] == "Chalion 1.7 - Penric"
+        assert cmd[cmd.index("-show") + 1] == "The Curse of Chalion"
+
+    def test_no_atoms_no_call(self, tmp_path):
+        """Nothing to write means mp4tags is never invoked."""
+        f = tmp_path / "book.m4b"
+        f.write_text("m4b")
+        with (
+            patch(
+                "audiobook_pipeline.stages.metadata.shutil.which",
+                return_value="/usr/local/bin/mp4tags",
+            ),
+            patch("audiobook_pipeline.stages.metadata.subprocess.run") as mock_run,
+        ):
+            _write_mp4_atoms(f, {"title": "Book", "artist": "Someone"})
+        mock_run.assert_not_called()
+
+    def test_missing_mp4tags_is_not_fatal(self, tmp_path):
+        """A missing mp4v2 install costs metadata, never the book."""
+        f = tmp_path / "book.m4b"
+        f.write_text("m4b")
+        with (
+            patch("audiobook_pipeline.stages.metadata.shutil.which", return_value=None),
+            patch("audiobook_pipeline.stages.metadata.subprocess.run") as mock_run,
+        ):
+            _write_mp4_atoms(f, {"ASIN": "B01MUCWLLY"})
+        mock_run.assert_not_called()
+
+    def test_mp4tags_failure_is_not_fatal(self, tmp_path):
+        f = tmp_path / "book.m4b"
+        f.write_text("m4b")
+        with (
+            patch(
+                "audiobook_pipeline.stages.metadata.shutil.which",
+                return_value="/usr/local/bin/mp4tags",
+            ),
+            patch("audiobook_pipeline.stages.metadata.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = subprocess.CompletedProcess([], 1, "", "boom")
+            _write_mp4_atoms(f, {"ASIN": "B01MUCWLLY"})  # must not raise
