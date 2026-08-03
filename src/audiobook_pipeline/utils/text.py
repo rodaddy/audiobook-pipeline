@@ -78,6 +78,28 @@ _DIGIT = re.compile(r"\d")
 #: An HTML tag, as catalogue summaries arrive full of them.
 _TAG = re.compile(r"<[^>]+>")
 
+#: A leading "Book N - " or bare "N - ", as series folders and Audible
+#: downloads both spell it. The "Book" word is optional and so is the dot in
+#: "3.5", because half-numbered novellas are real.
+_NUMBERED_PREFIX = re.compile(r"^(?:book\s+)?[\d.]+\s*[-.]\s*", re.IGNORECASE)
+
+#: An Audible ASIN in brackets: "[B00AAI79WY]". Always B0 followed by
+#: alphanumerics, which is what keeps it from eating "[01]" or "[Unabridged]".
+_ASIN_BRACKET = re.compile(r"\[B0[A-Z0-9]+\]", re.IGNORECASE)
+
+#: An edition word Audible appends, with or without parentheses around it.
+#: ``strip_brackets`` removes the parenthesised spelling; this catches the bare
+#: one, which is why both exist.
+_EDITION_WORD = re.compile(r"\s*\b(?:un)?abridged\b\s*", re.IGNORECASE)
+
+#: A trailing part marker in any of the spellings seen in the wild:
+#: ", Part 1", "Part 01 of 19", and the bare "01-19" glued to the title.
+#: Requiring BOTH numbers in the bare form keeps "Catch-22" intact.
+_PART_SUFFIX = re.compile(
+    r"(?:[,\s]+part\s+\d+(?:\s+of\s+\d+)?|\s*\d{1,3}-\d{1,3})\s*$",
+    re.IGNORECASE,
+)
+
 
 def collapse_whitespace(value: str) -> str:
     """Reduce every whitespace run to one space and trim the ends.
@@ -186,6 +208,59 @@ def fold_accents(value: str) -> str:
     """
     decomposed = unicodedata.normalize("NFD", value)
     return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+
+def strip_numbered_prefix(value: str) -> str:
+    """Remove a leading "Book N - " or "N - " ordinal.
+
+    Args:
+        value: A title or folder name, e.g. "Book 3 - Sojourn".
+
+    Returns:
+        The name without its position marker. The position belongs in the
+        tags; two libraries number the same book differently.
+    """
+    return _NUMBERED_PREFIX.sub("", value).strip()
+
+
+def strip_asin(value: str) -> str:
+    """Remove a bracketed Audible ASIN.
+
+    Args:
+        value: A filename stem, e.g. "Homeland [B00AAI79WY]".
+
+    Returns:
+        The name without it. The ASIN is metadata that leaked into a filename.
+    """
+    return _ASIN_BRACKET.sub("", value).strip()
+
+
+def strip_edition(value: str) -> str:
+    """Remove an "(Unabridged)" or bare "Abridged" edition word.
+
+    Args:
+        value: A title, e.g. "The Autumn Republic (Unabridged)".
+
+    Returns:
+        The title without the edition word and with spacing collapsed.
+    """
+    return collapse_whitespace(_EDITION_WORD.sub(" ", strip_brackets(value)))
+
+
+def strip_part_suffix(value: str) -> str:
+    """Remove a trailing multi-part marker.
+
+    One book arrives as nineteen files, and every one of them carries a
+    different marker. Removing it is what lets those nineteen collapse back
+    into the single book they came from.
+
+    Args:
+        value: A filename stem, e.g. "Promise of Blood Part 1 of 19".
+
+    Returns:
+        The book title without the part marker.
+    """
+    return _PART_SUFFIX.sub("", value).strip()
 
 
 def has_digit(value: str) -> bool:

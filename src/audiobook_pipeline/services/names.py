@@ -38,7 +38,13 @@ import re
 
 from loguru import logger
 
-from audiobook_pipeline.utils.text import has_digit, strip_brackets
+from audiobook_pipeline.utils.text import (
+    collapse_whitespace,
+    fold_accents,
+    has_digit,
+    strip_brackets,
+    strip_punctuation,
+)
 
 log = logger.bind(stage="names")
 
@@ -102,6 +108,11 @@ _LABEL_SUFFIX = re.compile(
     r"\s+-\s+(?:Audiobook|Audio|Unabridged|Abridged)$", re.IGNORECASE
 )
 
+#: A single letter followed by another single letter: the "r a" of "r a
+#: salvatore" once the periods are gone. Joining these is what makes an
+#: initialled name match the same name spelled without spaces.
+_INITIAL_RUN = re.compile(r"\b([a-z])\s+(?=[a-z]\b)")
+
 
 def strip_hash(name: str) -> str:
     """Remove a trailing pipeline hash from a directory name.
@@ -137,6 +148,32 @@ def clean_collection_suffix(name: str) -> str:
         The name without them, e.g. "Temeraire".
     """
     return strip_brackets(name)
+
+
+def normalize_author(name: str) -> str:
+    """Reduce an author name to a key two libraries can be compared on.
+
+    The same person is spelled several ways across two libraries: "R.A.
+    Salvatore" and "R A Salvatore", "Weis & Hickman" and "Weis and Hickman".
+    All of them must reduce to one key or the same book reads as missing.
+
+    Args:
+        name: An author folder name.
+
+    Returns:
+        A lowercase key with punctuation, accents, and initial spacing gone.
+
+    Example:
+        >>> normalize_author("R.A. Salvatore")
+        'ra salvatore'
+        >>> normalize_author("Weis & Hickman") == normalize_author("Weis and Hickman")
+        True
+    """
+    folded = fold_accents(name).lower().replace("&", "and")
+    collapsed = strip_punctuation(folded)
+    # "r a salvatore" -> "ra salvatore": join runs of single letters, so an
+    # initialled name matches the same name written without spaces.
+    return collapse_whitespace(_INITIAL_RUN.sub(r"\1", collapsed))
 
 
 def extract_author(name: str) -> str:

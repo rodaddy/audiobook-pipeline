@@ -11,6 +11,7 @@ from audiobook_pipeline.services.names import (
     clean_collection_suffix,
     extract_author,
     looks_like_author,
+    normalize_author,
     split_credits,
     strip_hash,
     strip_label_suffix,
@@ -63,6 +64,16 @@ def test_extract_author_isolates_the_person() -> None:
     assert extract_author("Powder Mage 01 - Promise of Blood") == (
         "Powder Mage 01 - Promise of Blood"
     )
+
+
+def test_normalize_author_gives_one_key_per_person() -> None:
+    """Two libraries spell the same person several ways; all must reduce."""
+    assert normalize_author("R.A. Salvatore") == "ra salvatore"
+    assert normalize_author("R A Salvatore") == "ra salvatore"
+    assert normalize_author("Weis & Hickman") == normalize_author("Weis and Hickman")
+    assert normalize_author("Brian McClellan") == "brian mcclellan"
+    # An accent must not split one author into two.
+    assert normalize_author("Émile Zola") == normalize_author("Emile Zola")
 
 
 def test_suffixes_are_stripped_without_eating_real_names() -> None:

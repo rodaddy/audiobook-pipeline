@@ -27,6 +27,15 @@ Key Components:
     - organize: build the library path -- ``Author/Series/Book N - Title/Book N
       - Title.m4b``, copied from the shape the existing library already uses --
       and place the finished file without overwriting anything
+    - names: what a person's name looks like, decided by EXCLUSION -- there is
+      no positive test for "is an author", only a reliable list of what an
+      author is not -- plus one normalized key per person for matching
+    - patterns: one function per path layout, each returning a ParsedPath and
+      each testable with a single string
+    - parse: compose those patterns strongest-first, walking up from the file
+      until some ancestor names an author, bounded by the run root
+    - matching: reduce two spellings of one book to one comparable key, so
+      "already converted?" is a set lookup rather than a judgement
     - pipeline: the spine that runs the stages in order, skipping any the
       database already records as done, and falling back to what the SOURCE
       TREE knows when the catalogue cannot identify a book

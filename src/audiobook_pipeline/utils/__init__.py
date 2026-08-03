@@ -14,6 +14,12 @@ Key Components:
       libraries evaluated and why each was rejected.
     - http: an httpx client with tenacity retry. No hand-rolled backoff.
     - paths: filename sanitizing and library path construction.
+    - tagging: the M4B atom vocabulary and the read/write of it.
+    - text: one named function per string transformation -- stripping a
+      subtitle, a year, an ASIN, an edition word, a part marker, a leading
+      ordinal. Callers ask for what they WANT and never carry the regex.
+      These compose: ``services.matching`` is a list of them in order, and
+      ``services.names`` builds an author key from three.
 
 Architecture:
     ``utils/`` is the shared floor, not a junk drawer. A module earns a place

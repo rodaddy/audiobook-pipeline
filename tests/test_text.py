@@ -14,8 +14,12 @@ from audiobook_pipeline.utils.text import (
     collapse_whitespace,
     fold_accents,
     has_digit,
+    strip_asin,
     strip_brackets,
+    strip_edition,
     strip_html,
+    strip_numbered_prefix,
+    strip_part_suffix,
     strip_punctuation,
     strip_subtitle,
     strip_subtitle_or_dash,
@@ -100,3 +104,46 @@ def test_the_comparison_helpers_normalise_away_what_should_not_differ() -> None:
 )
 def test_has_digit(raw: str, expected: bool) -> None:
     assert has_digit(raw) is expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Book 3 - Sojourn", "Sojourn"),
+        ("01 - Homeland", "Homeland"),
+        ("Book 0.5 - The Girl", "The Girl"),
+        # Both must survive: a hyphen mid-title is not an ordinal.
+        ("Catch-22", "Catch-22"),
+        ("Homeland", "Homeland"),
+    ],
+)
+def test_strip_numbered_prefix(raw: str, expected: str) -> None:
+    assert strip_numbered_prefix(raw) == expected
+
+
+def test_strip_asin_only_takes_a_real_asin() -> None:
+    assert strip_asin("Homeland [B00AAI79WY]") == "Homeland"
+    # "[01]" is a position, not an ASIN, and the position still matters here.
+    assert strip_asin("Mistborn [01]") == "Mistborn [01]"
+
+
+def test_strip_edition_catches_both_spellings() -> None:
+    assert strip_edition("The Autumn Republic (Unabridged)") == "The Autumn Republic"
+    assert strip_edition("The Autumn Republic Unabridged") == "The Autumn Republic"
+    assert strip_edition("Homeland") == "Homeland"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Servant of the Crown Part 1 of 3", "Servant of the Crown"),
+        ("The Autumn Republic, Part 01", "The Autumn Republic"),
+        # No separator at all -- part 1 of 19 glued to the title.
+        ("Promise of Blood01-19", "Promise of Blood"),
+        # Both numbers are required, so an ordinary title survives.
+        ("Catch-22", "Catch-22"),
+        ("Homeland", "Homeland"),
+    ],
+)
+def test_strip_part_suffix(raw: str, expected: str) -> None:
+    assert strip_part_suffix(raw) == expected
