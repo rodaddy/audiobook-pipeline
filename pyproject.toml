@@ -194,7 +194,10 @@ files = [
     "tests/test_concat.py",
     "tests/test_convert.py",
     "tests/test_identify.py",
+    "tests/test_names.py",
     "tests/test_organize_service.py",
+    "tests/test_patterns.py",
+    "tests/test_text.py",
     "tests/test_pipeline.py",
     "tests/test_apps.py",
 ]
@@ -263,7 +266,10 @@ testpaths = [
     "tests/test_concat.py",
     "tests/test_convert.py",
     "tests/test_identify.py",
+    "tests/test_names.py",
     "tests/test_organize_service.py",
+    "tests/test_patterns.py",
+    "tests/test_text.py",
     "tests/test_pipeline.py",
     "tests/test_apps.py",
 ]

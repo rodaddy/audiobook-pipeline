@@ -33,7 +33,6 @@ See Also:
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import httpx
@@ -43,17 +42,13 @@ from rapidfuzz import fuzz
 from audiobook_pipeline.models.chapter import Chapter, ChapterSet, FetchedChapters
 from audiobook_pipeline.models.metadata import BookMetadata
 from audiobook_pipeline.utils.http import get_json
+from audiobook_pipeline.utils.text import strip_subtitle_or_dash
 
 log = logger.bind(stage="identify")
 
 AUDNEXUS_BASE = "https://api.audnex.us"
 
 #: An edition or series subtitle after a colon or dash: "Forsworn: A Powder
-#: Mage Novella", "Exile - Book Two of the Dark Elf Trilogy".
-# \u2013 is an EN DASH, written as an escape rather than literally: it is
-# visually identical to the ASCII hyphen beside it, and Audible really does
-# use both ("Exile \u2013 Book Two" and "Exile - Book Two").
-_SUBTITLE = re.compile(r"\s*[:\u2013-]\s+.*$")
 
 #: Relative and absolute bounds, BOTH of which must hold before fetched
 #: chapters are accepted. Percentage alone lets a 20-hour book drift ten
@@ -86,7 +81,7 @@ def _title_score(title_hint: str, candidate: str) -> float:
     full = candidate.lower().strip()
     best = float(fuzz.token_sort_ratio(hint, full))
 
-    head = _SUBTITLE.sub("", full).strip()
+    head = strip_subtitle_or_dash(full)
     if head and head != full:
         best = max(best, float(fuzz.token_sort_ratio(hint, head)))
     return best

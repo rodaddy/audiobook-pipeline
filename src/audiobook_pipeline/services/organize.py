@@ -36,13 +36,18 @@ from __future__ import annotations
 
 import re
 import shutil
-import unicodedata
 from pathlib import Path
 
 from loguru import logger
 
 from audiobook_pipeline.models.metadata import BookMetadata
 from audiobook_pipeline.utils.paths import sanitize_filename
+from audiobook_pipeline.utils.text import (
+    fold_accents,
+    strip_punctuation,
+    strip_subtitle,
+    strip_year,
+)
 
 log = logger.bind(stage="organize")
 
@@ -98,7 +103,6 @@ _SIMILARITY_THRESHOLD = 0.85
 #: becomes once its punctuation is gone: "r a salvatore", "j r r tolkien".
 _INITIAL_RUN = re.compile(r"\b(?:[a-z] ){1,}[a-z]\b")
 
-_YEAR = re.compile(r"\s*\(\d{4}\)")
 
 #: Parentheticals that describe the EDITION rather than distinguish the work.
 #: Deliberately a fixed list, not "anything in brackets": a library really does
@@ -111,14 +115,6 @@ _EDITION_NOTE = re.compile(
     r"deluxe|special|anniversary|revised|reissue|remastered)[^)]*\)",
     re.IGNORECASE,
 )
-_PUNCTUATION = re.compile(r"[^\w\s]")
-_WHITESPACE = re.compile(r"\s+")
-
-#: An edition subtitle, which Audible appends after a colon and the shelf does
-#: not carry: "Forsworn: A Powder Mage Novella", "The Name of the Wind:
-#: Kingkiller Chronicle Day One". Requires text on BOTH sides of the colon, so
-#: a title that merely opens with one keeps its head.
-_SUBTITLE = re.compile(r"(?<=\S)\s*:\s*\S.*$")
 
 
 def _normalize(name: str) -> str:
@@ -138,13 +134,11 @@ def _normalize(name: str) -> str:
     # library. NFD splits a letter from its accent so the combining marks can be
     # dropped; this ALSO settles macOS's decomposed storage, where the same
     # title compares unequal to itself depending on where it was typed.
-    text = unicodedata.normalize("NFD", name.lower())
-    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = fold_accents(name.lower())
 
-    text = _YEAR.sub("", text)
+    text = strip_year(text)
     text = _EDITION_NOTE.sub("", text)
-    text = _PUNCTUATION.sub("", text)
-    text = _WHITESPACE.sub(" ", text).strip()
+    text = strip_punctuation(text)
 
     # Join runs of single letters. "R.A. Salvatore" loses its dots to become
     # "ra salvatore" (2 tokens) while "R A Salvatore" is "r a salvatore" (3),
@@ -236,7 +230,7 @@ def shelf_title(metadata: BookMetadata) -> str:
         The title up to its subtitle. The full title survives in the tags,
         which is where a reader who wants it will look.
     """
-    return _SUBTITLE.sub("", metadata.title).strip() or metadata.title
+    return strip_subtitle(metadata.title)
 
 
 def book_stem(metadata: BookMetadata) -> str:
