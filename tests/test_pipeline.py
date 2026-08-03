@@ -17,7 +17,7 @@ from audiobook_pipeline.models.book import AudioFile, BookDirectory
 from audiobook_pipeline.models.chapter import Chapter, ChapterSet
 from audiobook_pipeline.models.metadata import BookMetadata
 from audiobook_pipeline.models.stage import Stage
-from audiobook_pipeline.services import concat, convert, organize, pipeline
+from audiobook_pipeline.services import audible, concat, convert, organize, pipeline
 from audiobook_pipeline.services.pipeline import RunContext, book_hash, process_book
 from audiobook_pipeline.utils.ffmpeg import FfmpegError
 
@@ -288,3 +288,118 @@ def test_a_failed_book_can_be_retried(
     assert process_book(book, context).status == "failed"
     assert process_book(book, context).status == "completed"
     assert stubbed["place"] == 1
+
+
+# ---------------------------------------------------------------------------
+# the author the source tree already knows
+# ---------------------------------------------------------------------------
+
+
+def book_at(path: Path, *, multi: bool) -> BookDirectory:
+    """A discovered book rooted at ``path``.
+
+    ``is_multi_file_book`` is DERIVED from the file count, so the shape is set
+    by how many files the book has rather than by a flag.
+    """
+    if multi:
+        files = tuple(
+            AudioFile(path=path / f"{n:02d}.mp3", duration_ms=60_000) for n in (1, 2)
+        )
+        return BookDirectory(path=path, files=files)
+    return BookDirectory(
+        path=path.parent,
+        files=(AudioFile(path=path, duration_ms=60_000),),
+    )
+
+
+def test_the_author_comes_from_the_level_under_the_source_root() -> None:
+    """A tree filed Done/<Author>/<Book> states the author out loud."""
+    root = Path("/src/Done")
+    book = book_at(root / "Brian McClellan" / "Servant of the Crown", multi=True)
+
+    assert pipeline._author_hint(book, root) == "Brian McClellan"
+
+
+def test_a_single_file_book_takes_the_author_from_its_folder() -> None:
+    root = Path("/src/Done")
+    book = book_at(root / "Brian McClellan" / "Hrusch Avenue.mp3", multi=False)
+
+    assert pipeline._author_hint(book, root) == "Brian McClellan"
+
+
+def test_a_book_at_the_root_names_no_author() -> None:
+    """Nothing sits above it, so there is nothing to infer -- not a guess."""
+    root = Path("/src/Done")
+    book = book_at(root / "Loose Book.mp3", multi=False)
+
+    assert pipeline._author_hint(book, root) == ""
+
+
+def test_a_book_outside_the_source_root_names_no_author() -> None:
+    """The climb is bounded so an unrelated parent cannot leak in."""
+    book = book_at(Path("/elsewhere/Someone/A Book"), multi=True)
+
+    assert pipeline._author_hint(book, Path("/src/Done")) == ""
+
+
+def client_returning(payload: dict[str, object]) -> httpx.Client:
+    """A client whose every request resolves to one canned response."""
+    return httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    )
+
+
+def test_a_book_the_catalogue_cannot_find_keeps_its_authors_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Unknown Author defect, at the level that actually decides it.
+
+    Testing _author_hint alone proves nothing: the 2026-08-02 live run failed
+    because _identify DISCARDED the hint it was given, and a hint-only test
+    passes happily against that bug.
+    """
+    root = Path("/src/Done")
+    book = book_at(root / "Brian McClellan" / "Servant of the Crown", multi=True)
+    monkeypatch.setattr(audible, "search", lambda *a, **k: [])
+
+    with client_returning({}) as client:
+        metadata, _ = pipeline._identify(
+            client, book, ChapterSet(), pipeline._author_hint(book, root)
+        )
+
+    assert metadata.author == "Brian McClellan"
+
+
+def test_a_match_whose_runtime_disagrees_is_not_adopted_as_the_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrong ASIN's title and series are wrong too, not just its chapters.
+
+    The live run wrote a 19-hour "Promise of Blood" into the library as the
+    10.8-hour "Powder Mage Novella Collection #1" -- the mismatch was detected
+    and then used anyway.
+    """
+    root = Path("/src/Done")
+    book = book_at(root / "Brian McClellan" / "Promise of Blood", multi=True)
+    wrong = BookMetadata(
+        title="The Powder Mage Novella Collection #1",
+        author="Brian McClellan",
+        asin="B01LYLUQ2U",
+    )
+    monkeypatch.setattr(audible, "search", lambda *a, **k: [wrong])
+
+    # Audnexus reports a runtime nothing like the local audio.
+    with client_returning({
+        "runtimeLengthMs": 10 * 3_600_000,
+        "chapters": [],
+    }) as client:
+        metadata, _ = pipeline._identify(
+            client,
+            book,
+            ChapterSet(source="file-boundary"),
+            pipeline._author_hint(book, root),
+        )
+
+    assert metadata.title != "The Powder Mage Novella Collection #1"
+    assert metadata.asin == ""
+    assert metadata.author == "Brian McClellan"

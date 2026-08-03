@@ -22,12 +22,14 @@ Key Components:
       chapters and moving the moov atom to the front
     - audible: search the catalogue and fetch chapters, guarded by a duration
       match so a wrong hit cannot be adopted
-    - identify: pick the best catalogue match for a discovered book
+    - identify: pick the best catalogue match for a discovered book, and refuse
+      one whose runtime says it describes a different work
     - organize: build the library path -- ``Author/Series/Book N - Title/Book N
       - Title.m4b``, copied from the shape the existing library already uses --
       and place the finished file without overwriting anything
     - pipeline: the spine that runs the stages in order, skipping any the
-      database already records as done
+      database already records as done, and falling back to what the SOURCE
+      TREE knows when the catalogue cannot identify a book
 
 Pattern/Convention:
     Every stage function takes its inputs explicitly and returns a model::

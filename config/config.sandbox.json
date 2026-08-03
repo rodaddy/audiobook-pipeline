@@ -1,0 +1,11 @@
+{
+  "paths": {
+    "data_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox",
+    "work_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox/work",
+    "log_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox/logs",
+    "archive_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox/archive",
+    "lock_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox/locks",
+    "output_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox/output",
+    "library_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox/library"
+  }
+}

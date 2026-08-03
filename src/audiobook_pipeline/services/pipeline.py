@@ -82,6 +82,12 @@ class RunContext:
     conn: sqlite3.Connection
     client: httpx.Client
 
+    #: The directory this run was pointed at. Carried so a book whose catalogue
+    #: lookup fails can still be filed under the author its own source tree
+    #: names, instead of landing on the "Unknown Author" shelf. Defaults to
+    #: unset, which simply means no author can be inferred from the layout.
+    source_root: Path | None = None
+
 
 def book_hash(book: BookDirectory) -> str:
     """A stable identity for one book.
@@ -127,6 +133,38 @@ def _title_hint(book: BookDirectory) -> str:
     return book.files[0].path.stem
 
 
+def _author_hint(book: BookDirectory, source_root: Path) -> str:
+    """The author the SOURCE TREE claims, if its layout names one.
+
+    A tree filed as ``Done/Brian McClellan/Powder Mage 0.2 - Servant of the
+    Crown`` states the author out loud. The catalogue lookup can still miss --
+    Audible genuinely does not carry every novella -- and when it does, this is
+    the difference between filing the book under its author and filing it under
+    "Unknown Author". Measured on the 2026-08-02 live run: 2 of the first 6
+    books landed in Unknown Author with the right name one directory up.
+
+    Args:
+        book: The discovered book.
+        source_root: The directory the run was pointed at. Bounds the climb, so
+            a book converted straight from its own folder cannot pick up
+            whatever happens to sit above the source.
+
+    Returns:
+        The name of the directory directly under ``source_root`` on the way to
+        this book, or "" when the book sits at the root and no level names an
+        author.
+    """
+    start = book.identity_path
+    try:
+        relative = start.relative_to(source_root)
+    except ValueError:
+        return ""
+
+    # parts[0] is the level directly under the root. It is only an author when
+    # something else sits below it -- otherwise it is the book itself.
+    return relative.parts[0] if len(relative.parts) > 1 else ""
+
+
 def _record_stage(
     conn: sqlite3.Connection, hash_: str, stage: Stage, status: StageStatus
 ) -> None:
@@ -159,7 +197,10 @@ def _record_bookkeeping_stages(conn: sqlite3.Connection, hash_: str) -> None:
 
 
 def _identify(
-    client: httpx.Client, book: BookDirectory, chapters: ChapterSet
+    client: httpx.Client,
+    book: BookDirectory,
+    chapters: ChapterSet,
+    author_hint: str = "",
 ) -> tuple[BookMetadata, ChapterSet]:
     """Look the book up and improve its chapters if the catalogue knows better.
 
@@ -167,17 +208,22 @@ def _identify(
         client: Shared HTTP client.
         book: The discovered book.
         chapters: The chapters derived locally.
+        author_hint: The author the source tree names, used when the catalogue
+            cannot identify the book. Keeps a known author off the
+            "Unknown Author" shelf.
 
     Returns:
-        The metadata to write, and the chapter table to embed. Falls back to a
-        title-only model when the catalogue has nothing -- an unidentified book
-        is still worth converting, just with less written on it.
+        The metadata to write, and the chapter table to embed. Falls back to
+        what the SOURCE TREE knows when the catalogue has nothing or names a
+        different work -- an unidentified book is still worth converting, just
+        with less written on it.
     """
     hint = _title_hint(book)
+    fallback = BookMetadata(title=hint, author=author_hint)
     match = identify.best_match(audible.search(client, hint), title_hint=hint)
     if match is None:
         log.warning("no catalogue match for {!r}", hint)
-        return BookMetadata(title=hint), chapters
+        return fallback, chapters
 
     # Fetched chapters only WIN when the local table came from file boundaries.
     # Marks embedded in the source describe this exact file; the catalogue's
@@ -186,8 +232,23 @@ def _identify(
         fetched = identify.fetch_chapters(
             client, match.asin, local_ms=book.total_duration_ms
         )
+
+        # A runtime that disagrees does not merely make the CHAPTERS wrong -- it
+        # says this ASIN is a different work, so its title, series, and position
+        # are wrong too. Adopting the identity while rejecting its chapters is
+        # how a 19-hour "Promise of Blood" was written into the library as the
+        # 10.8-hour "Powder Mage Novella Collection #1" on the 2026-08-02 live
+        # run: the evidence was computed, logged, and then ignored.
+        if fetched.edition_mismatch:
+            log.warning(
+                "discarding match {!r} ({}): runtime disagrees with the audio",
+                match.title,
+                match.asin,
+            )
+            return fallback, chapters
+
         if not fetched.is_empty:
-            return match, fetched
+            return match, fetched.chapters
 
     return match, chapters
 
@@ -311,7 +372,8 @@ def _run_stages(
         source = concat.concat_files(book, work_dir / f"joined{source.suffix}")
     _record_stage(conn, hash_, Stage.CONCAT, StageStatus.COMPLETED)
 
-    metadata, chapters = _identify(client, book, chapters)
+    author_hint = _author_hint(book, context.source_root) if context.source_root else ""
+    metadata, chapters = _identify(client, book, chapters, author_hint)
     _record_stage(conn, hash_, Stage.ASIN, StageStatus.COMPLETED)
 
     identified = Identified(metadata, chapters)

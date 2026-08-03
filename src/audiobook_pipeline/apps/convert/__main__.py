@@ -114,7 +114,7 @@ def main(
         return
 
     with connect(config.paths.db_path) as conn, build_client() as client:
-        context = RunContext(config, conn, client)
+        context = RunContext(config, conn, client, source_root=source)
         results = [
             process_book(book, context, mode=PipelineMode(mode)).status
             for book in books

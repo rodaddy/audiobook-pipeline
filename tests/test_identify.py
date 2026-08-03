@@ -132,9 +132,13 @@ def test_chapters_are_accepted_when_the_duration_matches() -> None:
     with client_returning(payload) as client:
         result = fetch_chapters(client, "B000", local_ms=2 * HOUR_MS)
 
-    assert [c.title for c in result.chapters] == ["Opening Credits", "Chapter 1"]
-    assert result.chapters[1].start_ms == 600_000
-    assert result.source == "audnexus"
+    assert [c.title for c in result.chapters.chapters] == [
+        "Opening Credits",
+        "Chapter 1",
+    ]
+    assert result.chapters.chapters[1].start_ms == 600_000
+    assert result.chapters.source == "audnexus"
+    assert result.edition_verified
 
 
 def test_chapters_without_offsets_are_skipped() -> None:
@@ -150,7 +154,7 @@ def test_chapters_without_offsets_are_skipped() -> None:
     with client_returning(payload) as client:
         result = fetch_chapters(client, "B000", local_ms=2 * HOUR_MS)
 
-    assert [c.title for c in result.chapters] == ["Good"]
+    assert [c.title for c in result.chapters.chapters] == ["Good"]
 
 
 def test_failed_chapter_fetch_yields_an_empty_table() -> None:
@@ -239,3 +243,33 @@ def test_failed_search_yields_no_candidates() -> None:
     """An unidentifiable book is still convertible."""
     with client_returning({"error": "nope"}, status=404) as client:
         assert search(client, "x") == []
+
+
+def test_a_runtime_mismatch_is_reported_as_a_wrong_edition() -> None:
+    """The reason has to survive, not just the empty table.
+
+    A failed fetch and a wrong edition both yield no chapters, but only the
+    second means the MATCH is wrong. Collapsing them is what let a 19-hour
+    book be tagged as a 10.8-hour one on the 2026-08-02 live run.
+    """
+    payload = {
+        "runtimeLengthMs": 10 * HOUR_MS,
+        "chapters": [{"startOffsetMs": 0, "lengthMs": 600_000, "title": "One"}],
+    }
+
+    with client_returning(payload) as client:
+        result = fetch_chapters(client, "B000", local_ms=19 * HOUR_MS)
+
+    assert result.is_empty
+    assert result.edition_mismatch
+    assert not result.edition_verified
+
+
+def test_a_failed_fetch_is_not_an_edition_mismatch() -> None:
+    """A network failure says nothing about whether the match was right."""
+    with client_returning({"detail": "not found"}, status=404) as client:
+        result = fetch_chapters(client, "B000", local_ms=2 * HOUR_MS)
+
+    assert result.is_empty
+    assert not result.edition_mismatch
+    assert not result.edition_verified

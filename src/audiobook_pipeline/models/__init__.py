@@ -13,7 +13,9 @@ Purpose:
     it.
 
 Key Components:
-    - chapter: Chapter, ChapterSet -- the chapter table and its invariants
+    - chapter: Chapter, ChapterSet -- the chapter table and its invariants;
+      FetchedChapters, which carries WHY a catalogue table came back empty so a
+      failed fetch is not mistaken for a wrong edition
     - media: ProbeResult, AudioStream -- what ffprobe reports about a file
     - book: SourceBook, BookDirectory -- audio on disk, before identification
     - metadata: AudibleResult, BookMetadata -- what an API said about a book

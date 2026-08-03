@@ -40,7 +40,7 @@ import httpx
 from loguru import logger
 from rapidfuzz import fuzz
 
-from audiobook_pipeline.models.chapter import Chapter, ChapterSet
+from audiobook_pipeline.models.chapter import Chapter, ChapterSet, FetchedChapters
 from audiobook_pipeline.models.metadata import BookMetadata
 from audiobook_pipeline.utils.http import get_json
 
@@ -245,7 +245,7 @@ def _chapters_from_payload(payload: dict[str, Any]) -> ChapterSet:
 
 def fetch_chapters(
     client: httpx.Client, asin: str, *, local_ms: int, region: str = "us"
-) -> ChapterSet:
+) -> FetchedChapters:
     """Fetch a chapter table for an ASIN, verified against the local duration.
 
     Args:
@@ -255,9 +255,11 @@ def fetch_chapters(
         region: Audnexus region code.
 
     Returns:
-        The table, or an EMPTY table when the fetch failed or the durations
-        disagree. Empty rather than an exception: no chapters is a normal
-        outcome that the caller handles by keeping what it already had.
+        The table plus WHY it may be empty. The distinction matters: a fetch
+        that failed says nothing about the match, while a runtime that
+        disagrees says this ASIN is a different work and the caller must not
+        keep its title or series either. Collapsing both into a bare empty
+        table is what let a 19-hour book be tagged as a 10.8-hour one.
     """
     try:
         payload = get_json(
@@ -271,13 +273,13 @@ def fetch_chapters(
     # catching it here would report a broken API as a book with no chapters.
     except httpx.HTTPError as exc:
         log.warning("audnexus chapter fetch failed for {}: {}", asin, exc)
-        return ChapterSet()
+        return FetchedChapters(chapters=ChapterSet(), edition_verified=False)
 
     if not duration_matches(
         local_ms=local_ms, remote_ms=payload.get("runtimeLengthMs")
     ):
-        return ChapterSet()
+        return FetchedChapters(chapters=ChapterSet(), edition_mismatch=True)
 
     chapters = _chapters_from_payload(payload)
     log.info("fetched {} chapter(s) for {}", len(chapters.chapters), asin)
-    return chapters
+    return FetchedChapters(chapters=chapters, edition_verified=True)

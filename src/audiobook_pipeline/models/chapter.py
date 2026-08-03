@@ -143,3 +143,37 @@ class ChapterSet(BaseModel):
                 )
                 raise ValueError(msg)
         return self
+
+
+class FetchedChapters(BaseModel):
+    """A chapter table from the catalogue, plus why it might be empty.
+
+    WHY THE REASON TRAVELS WITH THE TABLE
+        An empty table has two very different causes, and the caller has to
+        tell them apart. A failed fetch says nothing about whether the match
+        was right -- keep the identity, keep the local chapters. A RUNTIME
+        MISMATCH says this ASIN describes a different work, so its title,
+        series, and position are wrong too and must not be written.
+
+        Returning a bare empty ChapterSet for both is what let a 19-hour
+        "Promise of Blood" be filed as the 10.8-hour "Powder Mage Novella
+        Collection #1" on the 2026-08-02 live run: the mismatch was detected,
+        logged, and then discarded along with the reason.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapters: ChapterSet = ChapterSet()
+
+    #: True when the catalogue's runtime agreed with the real audio. Only then
+    #: is the match confirmed to describe THIS recording.
+    edition_verified: bool = False
+
+    #: True when the runtime actively disagreed. Distinct from a merely
+    #: unverified fetch: this is positive evidence of a WRONG match.
+    edition_mismatch: bool = False
+
+    @property
+    def is_empty(self) -> bool:
+        """True when no chapters came back."""
+        return self.chapters.is_empty
