@@ -120,3 +120,23 @@ class BookDirectory(BaseModel):
     def is_multi_file_book(self) -> bool:
         """True when these files should be concatenated into ONE book."""
         return len(self.files) > 1 and not self.holds_separate_books
+
+    @property
+    def identity_path(self) -> Path:
+        """The path that identifies this book, for naming and hashing.
+
+        NOT always ``self.path``. Discovery splits a folder of separate works
+        into one ``BookDirectory`` per file, and every one of those keeps the
+        SHARED folder path -- so 19 Drizzt novels in one directory all report
+        the same ``path`` and are distinguishable only by their file.
+
+        Observed 2026-08-02 against the real source tree: exactly that shape,
+        19 books deep. A caller that reached for ``path`` to name or hash them
+        would silently collapse all 19 into one identity, and the failure would
+        surface as 18 missing books rather than as an error.
+
+        Returns:
+            The single file's path when this is one file, the directory when
+            these files concatenate into one book.
+        """
+        return self.path if self.is_multi_file_book else self.files[0].path
