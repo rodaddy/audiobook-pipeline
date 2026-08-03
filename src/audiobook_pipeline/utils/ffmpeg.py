@@ -61,6 +61,12 @@ log = logger.bind(stage="ffmpeg")
 #: stalls an overnight batch indefinitely.
 PROBE_TIMEOUT_SECONDS = 120
 
+#: Encoding a 25-hour audiobook is not a 2-minute job. Generous rather than
+#: tuned: the timeout exists to catch a WEDGED process, not to enforce a
+#: performance budget, and a limit that kills real work 90% of the way through
+#: a long book costs far more than one that waits too long for a stuck one.
+ENCODE_TIMEOUT_SECONDS = 6 * 60 * 60
+
 #: FFMETADATA1 chapter timebase. Milliseconds, matching the models, so no
 #: conversion happens at the point the file is written.
 CHAPTER_TIMEBASE = "1/1000"
@@ -253,6 +259,32 @@ def probe(path: Path, *, timeout: int = PROBE_TIMEOUT_SECONDS) -> ProbeResult:
         chapters=_parse_chapters(payload.get("chapters", [])),
         tags={str(k): str(v) for k, v in fmt.get("tags", {}).items()},
     )
+
+
+def run_ffmpeg(args: list[str], *, timeout: int = ENCODE_TIMEOUT_SECONDS) -> str:
+    """Run an ffmpeg command that writes a file rather than reporting on one.
+
+    Separate from ``probe`` because the two have nothing in common but the
+    binary: a probe is a sub-second question with a JSON answer, while an
+    encode is an hours-long job whose output is a file on disk. Sharing one
+    timeout would mean either killing encodes or waiting hours on a stuck
+    probe.
+
+    Args:
+        args: Arguments AFTER the ``ffmpeg`` binary name. ``-nostdin`` and
+            ``-y`` are prepended -- without ``-nostdin`` ffmpeg inherits the
+            terminal and a batch run stops dead on the first "overwrite? [y/N]"
+            prompt, hours in, with no indication why.
+        timeout: Seconds before the process is killed.
+
+    Returns:
+        Captured stdout, which for an encode is normally empty; ffmpeg reports
+        progress on stderr.
+
+    Raises:
+        FfmpegError: Non-zero exit, missing binary, or timeout.
+    """
+    return _run(["ffmpeg", "-nostdin", "-y", *args], timeout=timeout)
 
 
 def build_chapter_metadata(chapters: tuple[Chapter, ...]) -> str:
