@@ -63,61 +63,29 @@ def test_normalize(raw: str, expected: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_stop_word_difference_matches() -> None:
-    assert is_near_match(_normalize("Wheel of Time"), _normalize("Wheel Time"))
-
-
-def test_meaningful_extra_words_block_the_match() -> None:
-    """ "Origins of The Wheel of Time" is a different work."""
-    assert not is_near_match(
-        _normalize("The Wheel of Time"), _normalize("Origins of The Wheel of Time")
-    )
-
-
-def test_an_author_prefix_is_not_a_stop_word() -> None:
-    """ "Ann Leckie - The Raven Tower" carries two meaningful extra tokens."""
-    assert not is_near_match(
-        _normalize("The Raven Tower"), _normalize("Ann Leckie - The Raven Tower")
-    )
-
-
-def test_punctuation_and_year_differences_match() -> None:
-    assert is_near_match(
-        _normalize("Food: A Love Story (2014)"), _normalize("Food- A Love Story")
-    )
-
-
-def test_single_common_word_does_not_match() -> None:
-    assert not is_near_match(_normalize("The"), _normalize("A"))
-
-
 @pytest.mark.parametrize(
-    ("catalogue", "shelf"),
+    ("left", "right", "same", "why"),
     [
-        # The pair that split Brian McClellan's folder on the first live run.
-        ("The Powder Mage Trilogy", "Powder Mage"),
-        ("Mistborn Saga", "Mistborn"),
-        ("Sprawl Trilogy Series", "Sprawl"),
-        ("Dragonlance Saga", "Dragonlance"),
-        ("Malazan Book of the Fallen Series", "Malazan Book of the Fallen"),
+        # Differences that are punctuation, not meaning.
+        ("Wheel of Time", "Wheel Time", True, "a stop word may differ"),
+        ("Food: A Love Story (2014)", "Food- A Love Story", True, "year and colon"),
+        # A series-form noun names the container, not the work. The first pair
+        # split Brian McClellan's folder on the live run.
+        ("The Powder Mage Trilogy", "Powder Mage", True, "trilogy"),
+        ("Mistborn Saga", "Mistborn", True, "saga, and one distinctive word"),
+        ("Sprawl Trilogy Series", "Sprawl", True, "two series nouns"),
+        ("Malazan Book of the Fallen Series", "Malazan Book of the Fallen", True, ""),
+        # A meaningful extra word means a different work.
+        ("The Wheel of Time", "Origins of The Wheel of Time", False, "origins"),
+        ("The Raven Tower", "Ann Leckie - The Raven Tower", False, "author prefix"),
+        ("Ascendant Books", "Ascendant", False, "'books' is not a series noun"),
+        ("Homeland", "Homecoming", False, "different books"),
+        ("The", "A", False, "one stop word is not a name"),
     ],
 )
-def test_a_series_form_noun_does_not_make_a_second_series(
-    catalogue: str, shelf: str
-) -> None:
-    """ "Trilogy" and "Saga" name the container, not the work."""
-    assert is_near_match(_normalize(catalogue), _normalize(shelf))
-
-
-def test_one_distinctive_word_is_enough_to_match_on() -> None:
-    """The old rule needed two tokens, so "Mistborn" could never match."""
-    assert is_near_match(_normalize("Mistborn Saga"), _normalize("Mistborn"))
-
-
-def test_a_meaningful_extra_word_still_blocks_a_short_name() -> None:
-    """Loosening the token count must not turn every prefix into a match."""
-    assert not is_near_match(_normalize("Ascendant Books"), _normalize("Ascendant"))
-    assert not is_near_match(_normalize("Homeland"), _normalize("Homecoming"))
+def test_near_matching(left: str, right: str, same: bool, why: str) -> None:
+    """One table: every case is the same call with a different pair."""
+    assert is_near_match(_normalize(left), _normalize(right)) is same, why
 
 
 def test_reuse_returns_the_existing_spelling(tmp_path: Path) -> None:

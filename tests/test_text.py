@@ -84,18 +84,13 @@ def test_strip_brackets(raw: str, expected: str) -> None:
     assert strip_brackets(raw) == expected
 
 
-def test_strip_punctuation_is_for_comparison_only() -> None:
+def test_the_comparison_helpers_normalise_away_what_should_not_differ() -> None:
+    """None of these name a file -- they only make two names comparable."""
     assert strip_punctuation("R.A. Salvatore!") == "RA Salvatore"
-
-
-def test_strip_html_unescapes_entities_too() -> None:
     assert (
         strip_html("<p>Tom &amp; Jerry go <b>home</b>.</p>") == "Tom & Jerry go home."
     )
-
-
-def test_fold_accents_makes_one_book_compare_equal_to_itself() -> None:
-    """macOS stores decomposed, so the same title can differ from itself."""
+    # macOS stores decomposed, so the same title can differ from itself.
     assert fold_accents("Húrin") == fold_accents("Húrin") == "Hurin"
 
 

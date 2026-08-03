@@ -1,14 +1,13 @@
 """Tests for reading a source path into metadata.
 
-Every path here is a real one from the source tree, and several are the exact
-books that were misfiled on the 2026-08-02 live run.
+One test per behaviour, asserting every case it covers. Every path here is a
+real one from the source tree, and several are the exact books that were
+misfiled on the 2026-08-02 live run.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 
 from audiobook_pipeline.models.parsed import ParsedPath
 from audiobook_pipeline.services.parse import _book_name, parse_path
@@ -16,139 +15,63 @@ from audiobook_pipeline.services.parse import _book_name, parse_path
 ROOT = Path("/src/Done")
 
 
-def parse(relative: str) -> ParsedPath:
+def parse(relative: str, root: Path = ROOT) -> ParsedPath:
     """Parse a path expressed relative to the run root."""
-    return parse_path(ROOT / relative, ROOT)
+    return parse_path(ROOT / relative, root)
 
 
-# ---------------------------------------------------------------------------
-# the author the catalogue could not supply
-# ---------------------------------------------------------------------------
+def test_the_author_is_read_from_whatever_level_holds_it() -> None:
+    """No fixed depth works: across 35 real books the author sits at several.
 
-
-@pytest.mark.parametrize(
-    "relative",
-    [
-        "Brian McClellan/Powder Mage 0.2 - Servant of the Crown",
-        "Brian McClellan/Powder Mage 0.5 - Hrusch Avenue/Hrusch Avenue.mp3",
-        "Brian McClellan/Powder Mage 01 - Promise of Blood",
-    ],
-)
-def test_the_author_is_found_at_whatever_depth_it_sits(relative: str) -> None:
-    """These two landed under "Unknown Author" on the live run."""
-    assert parse(relative).author == "Brian McClellan"
-
-
-def test_the_author_is_found_above_a_series_folder() -> None:
-    """Author/Series/Book -- two levels up, which a fixed depth misses."""
-    result = parse("C S Friedman/The Coldfire Trilogy/01 - Black Sun Rising")
-
-    assert result.author == "C S Friedman"
-    assert result.series == "The Coldfire Trilogy"
-
-
-def test_an_author_and_series_in_one_folder_are_split() -> None:
-    result = parse("R.A. Salvatore - The Legend of Drizzt/Book 01 - Homeland.m4b")
-
-    assert result.author == "R.A. Salvatore"
-
-
-def test_a_book_at_the_root_names_no_author() -> None:
-    """Nothing sits above it, so there is nothing to read -- not a guess."""
-    assert parse("$100M Offers.mp3").author == ""
-
-
-def test_a_franchise_folder_is_not_adopted_as_an_author() -> None:
-    """ "Noobtown Books 1-7" groups books; it is not a person."""
-    assert parse("Noobtown Books 1-7/Book 3 Castle of the Noobs.m4b").author == ""
-
-
-def test_the_root_itself_can_name_the_author() -> None:
-    """Converting one author is ordinary: `audiobook-convert .../Brian McClellan`.
-
-    Stopping below the root filed all three of that author's books under
-    "Unknown Author" in the sandbox on 2026-08-02.
+    The first two are the books that landed under "Unknown Author" on the live
+    run, with the right name sitting one and two directories above them.
     """
-    author_root = ROOT / "Brian McClellan"
-    book = author_root / "Powder Mage 0.2 - Servant of the Crown"
-
-    assert parse_path(book, author_root).author == "Brian McClellan"
-
-
-def test_a_root_that_is_not_a_person_supplies_no_author() -> None:
-    """The bound is looks_like_author, not the depth."""
-    book = ROOT / "Some Book"
-    assert parse_path(book, ROOT).author == ""
-
-
-def test_nothing_above_the_root_is_ever_considered() -> None:
-    """A run pointed at one book must not adopt its Downloads folder."""
-    book = ROOT / "Brian McClellan" / "Some Book"
-    assert parse_path(book, book).author == ""
+    assert parse("Brian McClellan/Powder Mage 0.2 - Servant").author == (
+        "Brian McClellan"
+    )
+    assert parse("Brian McClellan/Powder Mage 0.5 - Girl/Girl.mp3").author == (
+        "Brian McClellan"
+    )
+    assert parse("C S Friedman/The Coldfire Trilogy/01 - Black Sun").author == (
+        "C S Friedman"
+    )
+    assert parse("R.A. Salvatore - The Legend of Drizzt/01 - Homeland.m4b").author == (
+        "R.A. Salvatore"
+    )
 
 
-def test_a_path_outside_the_root_yields_no_author() -> None:
+def test_a_path_that_names_no_person_yields_no_author() -> None:
+    """Refusing beats guessing: a wrong author folder cannot be swept later."""
+    assert parse("$100M Offers.mp3").author == ""
+    assert parse("Noobtown Books 1-7/Book 3 Castle.m4b").author == ""
+    assert parse("Dragonlance/Dragonlance/Some Book.m4b").author == ""
     assert parse_path(Path("/elsewhere/Someone/A Book"), ROOT).author == ""
 
 
-# ---------------------------------------------------------------------------
-# positions, and the decimal that kept getting truncated
-# ---------------------------------------------------------------------------
+def test_the_root_bounds_the_walk() -> None:
+    """The root itself may name the author, and nothing above it ever does.
 
+    Converting one author is ordinary -- `audiobook-convert .../Brian
+    McClellan` -- and stopping BELOW the root filed all three of that author's
+    books under "Unknown Author" in the sandbox.
+    """
+    author_root = ROOT / "Brian McClellan"
 
-@pytest.mark.parametrize(
-    ("relative", "position", "title"),
-    [
-        ("A Author/Powder Mage 0.1 - Forsworn", "0.1", "Forsworn"),
-        (
-            "A Author/Powder Mage 0.2 - Servant of the Crown",
-            "0.2",
-            "Servant of the Crown",
-        ),
-        ("A Author/Powder Mage 01 - Promise of Blood", "01", "Promise of Blood"),
-    ],
-)
-def test_a_decimal_position_survives(relative: str, position: str, title: str) -> None:
-    """Path.stem read ".2" as a file extension, collapsing three novellas."""
-    result = parse(relative)
-
-    assert result.position == position
-    assert result.title == title
-
-
-# ---------------------------------------------------------------------------
-# naming the book
-# ---------------------------------------------------------------------------
-
-
-def test_a_directory_keeps_its_whole_name() -> None:
-    assert _book_name(Path("/src/Powder Mage 0.2 - Servant")) == (
-        "Powder Mage 0.2 - Servant"
+    assert parse("Brian McClellan/Powder Mage 0.2", author_root).author == (
+        "Brian McClellan"
     )
+    # A root that is not a person supplies nothing, and neither does the
+    # parent of a run pointed straight at one book.
+    assert parse("Some Book").author == ""
+    assert parse_path(author_root / "Some Book", author_root / "Some Book").author == ""
 
 
-def test_an_audio_file_loses_only_its_extension() -> None:
-    assert _book_name(Path("/src/The Girl of Hrusch Avenue.mp3")) == (
-        "The Girl of Hrusch Avenue"
-    )
-
-
-def test_a_generic_filename_defers_to_its_folder() -> None:
-    """ "file.m4b" says nothing; the folder that holds it does."""
-    assert _book_name(Path("/src/The Martian/file.m4b")) == "The Martian"
-
-
-def test_a_year_and_subtitle_are_dropped_from_a_fallback_title() -> None:
-    result = parse("An Author/Food A Love Story (2014).m4b")
-
-    assert result.title == "Food A Love Story"
-
-
-def test_an_author_that_merely_repeats_the_series_is_dropped() -> None:
-    """ "Dragonlance/Dragonlance" files a franchise as a person otherwise."""
-    result = parse("Dragonlance/Dragonlance/Some Book.m4b")
-
-    assert result.author == ""
+def test_a_decimal_position_survives() -> None:
+    """Path.stem read ".2" as an extension, collapsing three novellas."""
+    assert parse("A Author/Powder Mage 0.1 - Forsworn").position == "0.1"
+    assert parse("A Author/Powder Mage 0.2 - Servant").position == "0.2"
+    assert parse("A Author/Powder Mage 01 - Promise of Blood").position == "01"
+    assert parse("A Author/Powder Mage 0.2 - Servant").title == "Servant"
 
 
 def test_a_numbered_middle_folder_yields_the_series_not_its_whole_name() -> None:
@@ -157,3 +80,19 @@ def test_a_numbered_middle_folder_yields_the_series_not_its_whole_name() -> None
     book = author_root / "Powder Mage 0.5 - The Girl of Hrusch Avenue" / "book.mp3"
 
     assert parse_path(book, author_root).series == "Powder Mage"
+
+
+def test_book_name() -> None:
+    """A suffix is dropped only when it is a known AUDIO extension."""
+    assert _book_name(Path("/src/Powder Mage 0.2 - Servant")) == (
+        "Powder Mage 0.2 - Servant"
+    )
+    assert _book_name(Path("/src/The Girl of Hrusch Avenue.mp3")) == (
+        "The Girl of Hrusch Avenue"
+    )
+    # "file.m4b" says nothing; the folder holding it does.
+    assert _book_name(Path("/src/The Martian/file.m4b")) == "The Martian"
+
+
+def test_a_year_and_subtitle_are_dropped_from_a_fallback_title() -> None:
+    assert parse("An Author/Food A Love Story (2014).m4b").title == "Food A Love Story"

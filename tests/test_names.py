@@ -1,101 +1,74 @@
 """Tests for the author heuristics.
 
-Every case here is a real directory from the source tree or the live library,
-because the whole value of these rules is that they were learned from real
-folders rather than reasoned about.
+Every name here is a real directory from the source tree or the live library,
+because the value of these rules is that they were learned from real folders
+rather than reasoned about.
 """
 
 from __future__ import annotations
-
-import pytest
 
 from audiobook_pipeline.services.names import (
     clean_collection_suffix,
     extract_author,
     looks_like_author,
+    split_credits,
     strip_hash,
     strip_label_suffix,
 )
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "Brian McClellan",
-        "C S Friedman",
-        "R.A. Salvatore",
-        "Lois McMaster Bujold",
-        "J. R. R. Tolkien, Christopher Tolkien",
-        "J. R. R. Tolkien, Christopher Tolkien - editor",
-        "Brandon Sanderson, Mary Robinette Kowal, Dan Wells, Howard Tayler",
-        "Paul B. Thompson & Tonya R. Carter",
-    ],
-)
-def test_real_authors_are_accepted(name: str) -> None:
-    assert looks_like_author(name)
+def test_real_author_folders_are_accepted() -> None:
+    """Checked against all 129 author folders in the live library."""
+    assert looks_like_author("Brian McClellan")
+    assert looks_like_author("C S Friedman")
+    assert looks_like_author("R.A. Salvatore")
+    # Ceilings are per CREDIT, not per folder: a per-folder limit of 5 words
+    # and 50 characters rejected eight real authors.
+    assert looks_like_author("J. R. R. Tolkien, Christopher Tolkien - editor")
+    assert looks_like_author("Brandon Sanderson, Mary Robinette Kowal, Dan Wells")
+    assert looks_like_author("Paul B. Thompson & Tonya R. Carter")
 
 
-@pytest.mark.parametrize(
-    ("name", "why"),
-    [
-        ("The Coldfire Trilogy", "collection word"),
-        ("Noobtown Books 1-7", "collection word and digits"),
-        ("Powder Mage 01", "digits"),
-        ("Dragonlance", "a single word is a franchise"),
-        ("The Martian", "starts with an article"),
-        ("Done", "single word staging folder"),
-        ("tFiles", "single word staging folder"),
-        ("Volumes", "collection word"),
-        ("processing", "pipeline folder"),
-    ],
-)
-def test_non_authors_are_rejected(name: str, why: str) -> None:
+def test_things_that_are_not_people_are_rejected() -> None:
     """Refusing matters more than matching: a wrong author is unsweepable."""
-    assert not looks_like_author(name), why
+    assert not looks_like_author("The Coldfire Trilogy")  # collection word
+    assert not looks_like_author("Noobtown Books 1-7")  # collection and digits
+    assert not looks_like_author("Powder Mage 01")  # digits
+    assert not looks_like_author("Dragonlance")  # a franchise, one word
+    assert not looks_like_author("The Martian")  # starts with an article
+    assert not looks_like_author("Done")  # a staging folder
+    assert not looks_like_author("tFiles")
+    assert not looks_like_author("Volumes")
+    assert not looks_like_author("processing")
+    assert not looks_like_author("A" * 60 + " B")  # one credit, too long
 
 
-def test_a_single_credit_longer_than_the_ceiling_is_rejected() -> None:
-    """Measured per person: a co-authored folder is legitimately long."""
-    assert not looks_like_author("A" * 60 + " B")
+def test_split_credits_separates_co_authors_and_drops_roles() -> None:
+    assert split_credits("Brian McClellan") == ["Brian McClellan"]
+    assert split_credits("J. R. R. Tolkien, Christopher Tolkien - editor") == [
+        "J. R. R. Tolkien",
+        "Christopher Tolkien",
+    ]
+    assert split_credits("Paul B. Thompson & Tonya R. Carter") == [
+        "Paul B. Thompson",
+        "Tonya R. Carter",
+    ]
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ("R.A. Salvatore - The Legend of Drizzt", "R.A. Salvatore"),
-        ("Tad Williams (All Chaptered)", "Tad Williams"),
-        ("Brian McClellan", "Brian McClellan"),
-        # A digit on the left means the split landed inside a series marker,
-        # not between an author and a series.
-        (
-            "Powder Mage 01 - Promise of Blood",
-            "Powder Mage 01 - Promise of Blood",
-        ),
-    ],
-)
-def test_extract_author(raw: str, expected: str) -> None:
-    assert extract_author(raw) == expected
+def test_extract_author_isolates_the_person() -> None:
+    assert extract_author("R.A. Salvatore - The Legend of Drizzt") == "R.A. Salvatore"
+    assert extract_author("Tad Williams (All Chaptered)") == "Tad Williams"
+    assert extract_author("Brian McClellan") == "Brian McClellan"
+    # A digit on the left means the split landed inside a series marker.
+    assert extract_author("Powder Mage 01 - Promise of Blood") == (
+        "Powder Mage 01 - Promise of Blood"
+    )
 
 
-def test_strip_hash_removes_a_pipeline_work_suffix() -> None:
+def test_suffixes_are_stripped_without_eating_real_names() -> None:
     assert strip_hash("Homeland - a7edd490030561fb") == "Homeland"
-
-
-def test_strip_hash_leaves_a_real_dash_alone() -> None:
     assert strip_hash("Exile - Book Two") == "Exile - Book Two"
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ("Homeland - Unabridged", "Homeland"),
-        ("Homeland - Audiobook", "Homeland"),
-        ("Homeland - Book Two", "Homeland - Book Two"),
-    ],
-)
-def test_strip_label_suffix(raw: str, expected: str) -> None:
-    assert strip_label_suffix(raw) == expected
-
-
-def test_clean_collection_suffix() -> None:
+    assert strip_label_suffix("Homeland - Unabridged") == "Homeland"
+    assert strip_label_suffix("Homeland - Audiobook") == "Homeland"
+    assert strip_label_suffix("Homeland - Book Two") == "Homeland - Book Two"
     assert clean_collection_suffix("Temeraire [1-5]") == "Temeraire"

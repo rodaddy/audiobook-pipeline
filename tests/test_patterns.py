@@ -1,8 +1,8 @@
 """Tests for the individual path patterns.
 
-Each pattern is tested ALONE. That is the point of them being separate
-functions: a failing layout is reproduced with one string, not by building a
-directory tree and running a parser over it.
+One test per pattern, with a table of cases. Each pattern is exercised ALONE,
+which is the point of them being separate functions: a failing layout is
+reproduced with one string rather than by building a directory tree.
 """
 
 from __future__ import annotations
@@ -19,97 +19,120 @@ from audiobook_pipeline.services.patterns import (
     numbered_dash,
 )
 
+NOTHING: dict[str, str] = {}
+
 
 def found(result: ParsedPath) -> dict[str, str]:
     """Only the fields a pattern actually filled."""
     return {key: value for key, value in result.model_dump().items() if value}
 
 
-# ---------------------------------------------------------------------------
-# hash-marked, the most explicit layout
-# ---------------------------------------------------------------------------
-
-
-def test_hash_marker_yields_every_field() -> None:
-    assert found(hash_marked("Salvatore-Legend of Drizzt-#3-Sojourn")) == {
-        "author": "Salvatore",
-        "series": "Legend of Drizzt",
-        "position": "3",
-        "title": "Sojourn",
-    }
-
-
-def test_the_last_hash_marker_wins() -> None:
-    """A nested subseries resolves to the innermost position."""
-    assert hash_marked("A-Outer-#1-Inner-#2-Title").position == "2"
-
-
-def test_a_name_without_a_marker_is_not_this_pattern() -> None:
-    assert hash_marked("Homeland").is_empty
-
-
-# ---------------------------------------------------------------------------
-# numbered layouts
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "Salvatore-Legend of Drizzt-#3-Sojourn",
+            {
+                "author": "Salvatore",
+                "series": "Legend of Drizzt",
+                "position": "3",
+                "title": "Sojourn",
+            },
+        ),
+        # The LAST marker wins, so a nested subseries gives the inner position.
+        (
+            "A-Outer-#1-Inner-#2-Title",
+            {"author": "A", "series": "Outer", "position": "2", "title": "Title"},
+        ),
+        ("Homeland", NOTHING),
+    ],
+)
+def test_hash_marked(name: str, expected: dict[str, str]) -> None:
+    assert found(hash_marked(name)) == expected
 
 
 @pytest.mark.parametrize(
-    ("name", "position", "title"),
+    ("name", "expected"),
     [
-        ("Deathgate Cycle 1 - Dragon Wing", "1", "Dragon Wing"),
-        # A decimal position must survive: "0.2" is a real novella number and
-        # truncating it to "0" collapses several books onto one name.
-        ("Powder Mage 0.2 - Servant of the Crown", "0.2", "Servant of the Crown"),
+        (
+            "Deathgate Cycle 1 - Dragon Wing",
+            {"series": "Deathgate Cycle", "position": "1", "title": "Dragon Wing"},
+        ),
+        # A decimal position must survive: "0.2" is a real novella number, and
+        # truncating it collapses several books onto one name.
+        (
+            "Powder Mage 0.2 - Servant of the Crown",
+            {
+                "series": "Powder Mage",
+                "position": "0.2",
+                "title": "Servant of the Crown",
+            },
+        ),
+        ("Homeland", NOTHING),
     ],
 )
-def test_numbered_dash(name: str, position: str, title: str) -> None:
-    result = numbered_dash(name)
-    assert result.position == position
-    assert result.title == title
+def test_numbered_dash(name: str, expected: dict[str, str]) -> None:
+    assert found(numbered_dash(name)) == expected
 
 
-def test_numbered_bare_splits_on_the_number() -> None:
-    assert found(numbered_bare("The First Law 04 Best Served Cold")) == {
-        "series": "The First Law",
-        "position": "04",
-        "title": "Best Served Cold",
-    }
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "The First Law 04 Best Served Cold",
+            {
+                "series": "The First Law",
+                "position": "04",
+                "title": "Best Served Cold",
+            },
+        ),
+        # Without this guard "Book 3" parses as a series called "Book".
+        ("Book 3", NOTHING),
+    ],
+)
+def test_numbered_bare(name: str, expected: dict[str, str]) -> None:
+    assert found(numbered_bare(name)) == expected
 
 
-def test_a_trailing_number_is_not_a_title() -> None:
-    """Otherwise "Book 3" parses as a series called "Book"."""
-    assert numbered_bare("Book 3").is_empty
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "Mistborn [01] The Final Empire",
+            {"series": "Mistborn", "position": "01", "title": "The Final Empire"},
+        ),
+        ("Mistborn The Final Empire", NOTHING),
+    ],
+)
+def test_bracket_position(name: str, expected: dict[str, str]) -> None:
+    assert found(bracket_position(name)) == expected
 
 
-def test_bracket_position() -> None:
-    assert found(bracket_position("Mistborn [01] The Final Empire")) == {
-        "series": "Mistborn",
-        "position": "01",
-        "title": "The Final Empire",
-    }
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "R.A. Salvatore - The Legend of Drizzt",
+            {"author": "R.A. Salvatore", "series": "The Legend of Drizzt"},
+        ),
+        # A digit on the left means the dash is a series marker, not a boundary.
+        ("Powder Mage 01 - Promise of Blood", NOTHING),
+        ("Brian McClellan", NOTHING),
+    ],
+)
+def test_author_dash_series(name: str, expected: dict[str, str]) -> None:
+    assert found(author_dash_series(name)) == expected
 
 
-# ---------------------------------------------------------------------------
-# author layouts
-# ---------------------------------------------------------------------------
-
-
-def test_author_dash_series_splits_a_combined_folder() -> None:
-    assert found(author_dash_series("R.A. Salvatore - The Legend of Drizzt")) == {
-        "author": "R.A. Salvatore",
-        "series": "The Legend of Drizzt",
-    }
-
-
-def test_author_dash_series_refuses_a_series_marker() -> None:
-    """The left side has a digit, so the dash is not an author boundary."""
-    assert author_dash_series("Powder Mage 01 - Promise of Blood").is_empty
-
-
-def test_author_only_accepts_a_plain_name() -> None:
-    assert author_only("Brian McClellan").author == "Brian McClellan"
-
-
-@pytest.mark.parametrize("name", ["The Coldfire Trilogy", "Done", "Dragonlance"])
-def test_author_only_refuses_anything_that_is_not_a_person(name: str) -> None:
-    assert author_only(name).is_empty
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Brian McClellan", {"author": "Brian McClellan"}),
+        ("Tad Williams (All Chaptered)", {"author": "Tad Williams"}),
+        ("The Coldfire Trilogy", NOTHING),
+        ("Done", NOTHING),
+        ("Dragonlance", NOTHING),
+    ],
+)
+def test_author_only(name: str, expected: dict[str, str]) -> None:
+    assert found(author_only(name)) == expected
