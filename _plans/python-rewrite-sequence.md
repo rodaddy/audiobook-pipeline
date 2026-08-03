@@ -476,12 +476,40 @@ the new API; the old two target `PipelineDB`, a class that no longer exists. The
 stay in the re-entry checklist as *removed by supersession*, not as a suite
 nobody ran.
 
-### Step 6 — THE SPINE. End-to-end before hardening.
+### Step 6 — THE SPINE — PASSES (`705450f`)
 Minimum path for ONE real book: discover → concat → convert → identify → tag →
 organize. Stub anything not on that path.
-**Proves:** one real book from `tFiles/Done/` converts to a chaptered, tagged
-M4B in the library — chapters intact, ASIN present via `mp4info`.
-**This step outranks every polish task. Nothing after it starts until it passes.**
+
+**Proved 2026-08-02.** `Powder Mage 0.1 - Forsworn`, 8 MP3s, 2.13h →
+`library/Brian McClellan/The Powder Mage Trilogy/Book 0.1 - Forsworn_ A Powder
+Mage Novella.m4b`. ASIN `B00K23Y51K`, 8 audnexus chapters, `moov` at byte 32
+(faststart real), 2.135h out against 2.13h in.
+
+**THIS STEP EARNED ITS PLACE IN THE PLAN.** Rule 5 says end-to-end before
+hardening, and the live run found four defects that unit tests could not,
+because each component was individually correct:
+
+1. **Resumability was completely broken.** `upsert_book` used
+   `INSERT OR REPLACE`, which is DELETE-then-INSERT, and `stages` cascades off
+   `books` — so the pipeline erased its own progress record on the way in,
+   every run. An already-converted book redid all eight stages and wrote a
+   SECOND copy. Over 700 books that duplicates the library. Both halves were
+   right on their own; together they cancelled out.
+2. **Chapter titles were useless on every real multi-file book** — the part
+   marker is a SUFFIX and only prefixes were stripped, so 19 files produced 19
+   chapters named after the book.
+3. **`BookDirectory.path` is not an identity.** Discovery splits a shared
+   folder into one entry per file and they all keep the folder path; 19 Drizzt
+   novels reported the same one.
+4. **`get_json` takes an injected client** and the `except TypeError` written
+   around it reported a wrong-signature bug as "search failed, 0 candidates".
+
+Numbers 1 and 2 would have shipped. Neither is visible from a fixture.
+
+### Step 6b — the remaining stages
+`validate`, `archive`, and `cleanup` are RECORDED but do no work yet. They are
+recorded so `todo` can empty and the resume path is reachable; the work itself
+lands in step 7.
 
 ### Step 7 — remaining services
 Fill in the stubs: `diff.py`, audit checks, archive, cleanup.
