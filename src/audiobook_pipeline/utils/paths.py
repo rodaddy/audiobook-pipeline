@@ -41,6 +41,24 @@ import unicodedata
 #: Characters no filesystem in the chain accepts, mapped to underscore. The
 #: control-character range is included because a stray newline in a scraped
 #: title produces a filename that breaks every shell tool downstream.
+#: Extensions this pipeline treats as audio. Shared so "is this an audio
+#: file" is one answer everywhere -- a path parser that disagrees with the
+#: discoverer produces books the pipeline finds but cannot name.
+#:
+#: ``.m4b`` is here because a source can already BE an m4b; it does not mean
+#: the file is finished, which is discovery's job to decide.
+AUDIO_SUFFIXES = frozenset({
+    ".mp3",
+    ".m4a",
+    ".m4b",
+    ".flac",
+    ".ogg",
+    ".opus",
+    ".wav",
+    ".aac",
+    ".wma",
+})
+
 _ILLEGAL_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 #: Runs of underscores collapse. Three illegal characters in a row should not
