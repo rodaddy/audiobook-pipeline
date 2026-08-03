@@ -90,12 +90,23 @@ def _all(cursor: sqlite3.Cursor, model: type[ModelT]) -> list[ModelT]:
 
 
 def upsert_book(conn: sqlite3.Connection, book: BookRow) -> None:
-    """Insert a book, or replace the record if its hash is already known.
+    """Insert a book, or update the record if its hash is already known.
 
-    REPLACE rather than IGNORE: re-running against the same source should pick
-    up a corrected parse, and INSERT OR IGNORE would silently keep the old one.
-    The hash is content-derived, so "already known" means the same audio, not
-    merely the same path.
+    ON CONFLICT DO UPDATE, **never** INSERT OR REPLACE.
+
+    REPLACE is implemented as DELETE-then-INSERT, and ``stages`` references
+    ``books`` with ON DELETE CASCADE -- so re-upserting a known book silently
+    destroys every stage row recorded against it. Both halves are individually
+    correct (a reset should take its stages with it; a re-run should pick up a
+    corrected parse) and together they erase the pipeline's own progress
+    record.
+
+    Measured 2026-08-02 on the live end-to-end re-run: an already-completed
+    book re-ran all eight stages and wrote a SECOND copy into the library,
+    because ``process_book`` upserts the row before reading which stages are
+    done. Over a 700-book library that duplicates the whole thing. Only the
+    real re-run surfaced it -- every stage was individually correct, and the
+    stage rows were present right up until the next upsert.
 
     Args:
         conn: Open connection.
@@ -104,8 +115,12 @@ def upsert_book(conn: sqlite3.Connection, book: BookRow) -> None:
     columns = model_columns(BookRow)
     placeholders = ", ".join("?" for _ in columns)
     values = tuple(getattr(book, name) for name in columns)
+    updates = ", ".join(
+        f"{name} = excluded.{name}" for name in columns if name != "book_hash"
+    )
     conn.execute(
-        f"INSERT OR REPLACE INTO books ({', '.join(columns)}) VALUES ({placeholders})",
+        f"INSERT INTO books ({', '.join(columns)}) VALUES ({placeholders}) "
+        f"ON CONFLICT(book_hash) DO UPDATE SET {updates}",
         values,
     )
     conn.commit()

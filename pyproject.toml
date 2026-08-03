@@ -195,6 +195,7 @@ files = [
     "tests/test_convert.py",
     "tests/test_identify.py",
     "tests/test_organize_service.py",
+    "tests/test_pipeline.py",
 ]
 strict = true
 
@@ -262,6 +263,7 @@ testpaths = [
     "tests/test_convert.py",
     "tests/test_identify.py",
     "tests/test_organize_service.py",
+    "tests/test_pipeline.py",
 ]
 # Fail on an unregistered mark rather than silently skipping the test it was
 # meant to select -- a typo'd `@pytest.mark.slwo` otherwise runs nothing and

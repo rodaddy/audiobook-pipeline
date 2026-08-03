@@ -345,3 +345,28 @@ def test_release_frees_the_lock(db: sqlite3.Connection) -> None:
 
     assert get_lock(db) is None
     assert acquire_lock(db) is True
+
+
+def test_upsert_does_not_destroy_stage_rows(db: sqlite3.Connection) -> None:
+    """INSERT OR REPLACE is DELETE+INSERT, and stages cascade off books.
+
+    Measured 2026-08-02 on the live re-run: this erased the pipeline's own
+    progress record, so an already-converted book re-ran every stage and wrote
+    a second copy into the library.
+    """
+    upsert_book(db, make_book())
+    set_stage(db, StageRow(book_hash="hash1", stage="convert", status="completed"))
+
+    upsert_book(db, make_book(status="running"))
+
+    assert completed_stages(db, "hash1") == {"convert"}
+
+
+def test_upsert_still_updates_a_known_book(db: sqlite3.Connection) -> None:
+    """The fix must not turn the upsert into an INSERT OR IGNORE."""
+    upsert_book(db, make_book(parsed_title="Wrong"))
+    upsert_book(db, make_book(parsed_title="Right"))
+
+    book = get_book(db, "hash1")
+    assert book is not None
+    assert book.parsed_title == "Right"
