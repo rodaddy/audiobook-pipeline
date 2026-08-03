@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import unicodedata
 from pathlib import Path
 
 from loguru import logger
@@ -99,7 +100,15 @@ def _normalize(name: str) -> str:
         that also turns "James" into "Jame", which is harmless because BOTH
         sides get the same treatment.
     """
-    text = _YEAR.sub("", name.lower())
+    # Strip accents before comparing. "The Children of Hurin" and "The Children
+    # of Húrin" are one book filed twice, and both spellings are in the real
+    # library. NFD splits a letter from its accent so the combining marks can be
+    # dropped; this ALSO settles macOS's decomposed storage, where the same
+    # title compares unequal to itself depending on where it was typed.
+    text = unicodedata.normalize("NFD", name.lower())
+    text = "".join(c for c in text if not unicodedata.combining(c))
+
+    text = _YEAR.sub("", text)
     text = _EDITION_NOTE.sub("", text)
     text = _PUNCTUATION.sub("", text)
     text = _WHITESPACE.sub(" ", text).strip()

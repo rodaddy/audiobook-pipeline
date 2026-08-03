@@ -291,3 +291,27 @@ def test_edition_notes_are_still_stripped() -> None:
         _normalize("The Autumn Republic (Unabridged)"),
         _normalize("The Autumn Republic"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Cases measured against the live 130-author library, 2026-08-02. Every one is
+# a REAL duplicate the library was already carrying -- there were no false
+# positives across 130 authors and 271 series folders.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("J. R. R. Tolkien", "J.R.R. Tolkien"),
+        (
+            "Christopher Tolkien, J. R. R. Tolkien",
+            "J.R.R. Tolkien, Christopher Tolkien",
+        ),
+        ("The Children of Hurin", "The Children of Húrin"),
+        ("Kingkiller Chronicles", "The Kingkiller Chronicle"),
+        ("Sage of Shadowdale", "The Sage of Shadowdale"),
+    ],
+)
+def test_real_library_duplicates_are_matched(left: str, right: str) -> None:
+    assert is_near_match(_normalize(left), _normalize(right))
