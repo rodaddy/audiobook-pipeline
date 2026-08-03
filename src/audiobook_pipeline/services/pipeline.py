@@ -41,6 +41,7 @@ from audiobook_pipeline.db.rows import BookRow, StageRow
 from audiobook_pipeline.models.book import BookDirectory
 from audiobook_pipeline.models.chapter import ChapterSet
 from audiobook_pipeline.models.metadata import BookMetadata
+from audiobook_pipeline.models.parsed import ParsedPath
 from audiobook_pipeline.models.stage import (
     PRE_COMPLETED_STAGES,
     STAGE_ORDER,
@@ -48,7 +49,14 @@ from audiobook_pipeline.models.stage import (
     Stage,
     StageStatus,
 )
-from audiobook_pipeline.services import audible, concat, convert, identify, organize
+from audiobook_pipeline.services import (
+    audible,
+    concat,
+    convert,
+    identify,
+    organize,
+    parse,
+)
 from audiobook_pipeline.utils.ffmpeg import FfmpegError
 from audiobook_pipeline.utils.tagging import write_tags
 
@@ -133,38 +141,6 @@ def _title_hint(book: BookDirectory) -> str:
     return book.files[0].path.stem
 
 
-def _author_hint(book: BookDirectory, source_root: Path) -> str:
-    """The author the SOURCE TREE claims, if its layout names one.
-
-    A tree filed as ``Done/Brian McClellan/Powder Mage 0.2 - Servant of the
-    Crown`` states the author out loud. The catalogue lookup can still miss --
-    Audible genuinely does not carry every novella -- and when it does, this is
-    the difference between filing the book under its author and filing it under
-    "Unknown Author". Measured on the 2026-08-02 live run: 2 of the first 6
-    books landed in Unknown Author with the right name one directory up.
-
-    Args:
-        book: The discovered book.
-        source_root: The directory the run was pointed at. Bounds the climb, so
-            a book converted straight from its own folder cannot pick up
-            whatever happens to sit above the source.
-
-    Returns:
-        The name of the directory directly under ``source_root`` on the way to
-        this book, or "" when the book sits at the root and no level names an
-        author.
-    """
-    start = book.identity_path
-    try:
-        relative = start.relative_to(source_root)
-    except ValueError:
-        return ""
-
-    # parts[0] is the level directly under the root. It is only an author when
-    # something else sits below it -- otherwise it is the book itself.
-    return relative.parts[0] if len(relative.parts) > 1 else ""
-
-
 def _record_stage(
     conn: sqlite3.Connection, hash_: str, stage: Stage, status: StageStatus
 ) -> None:
@@ -196,11 +172,31 @@ def _record_bookkeeping_stages(conn: sqlite3.Connection, hash_: str) -> None:
         _record_stage(conn, hash_, stage, StageStatus.COMPLETED)
 
 
+def _fallback_metadata(claim: ParsedPath, hint: str) -> BookMetadata:
+    """What to write when the catalogue cannot identify a book.
+
+    Args:
+        claim: What the source path says.
+        hint: The title to use when the path named none.
+
+    Returns:
+        Metadata carrying everything the PATH knew. Audible genuinely does not
+        list every novella, and a book it cannot name is still worth filing
+        under its author rather than on the "Unknown Author" shelf.
+    """
+    return BookMetadata(
+        title=claim.title or hint,
+        author=claim.author,
+        series=claim.series,
+        series_position=claim.position,
+    )
+
+
 def _identify(
     client: httpx.Client,
     book: BookDirectory,
     chapters: ChapterSet,
-    author_hint: str = "",
+    parsed: ParsedPath | None = None,
 ) -> tuple[BookMetadata, ChapterSet]:
     """Look the book up and improve its chapters if the catalogue knows better.
 
@@ -208,9 +204,9 @@ def _identify(
         client: Shared HTTP client.
         book: The discovered book.
         chapters: The chapters derived locally.
-        author_hint: The author the source tree names, used when the catalogue
-            cannot identify the book. Keeps a known author off the
-            "Unknown Author" shelf.
+        parsed: What the source path claims. Used to SEARCH -- a clean title
+            and an author find the right book where a raw folder name does
+            not -- and as the fallback when the catalogue cannot answer.
 
     Returns:
         The metadata to write, and the chapter table to embed. Falls back to
@@ -218,11 +214,16 @@ def _identify(
         different work -- an unidentified book is still worth converting, just
         with less written on it.
     """
-    hint = _title_hint(book)
-    fallback = BookMetadata(title=hint, author=author_hint)
-    match = identify.best_match(audible.search(client, hint), title_hint=hint)
+    claim = parsed or ParsedPath()
+    hint = claim.title or _title_hint(book)
+    fallback = _fallback_metadata(claim, hint)
+
+    query = f"{hint} {claim.author}".strip()
+    match = identify.best_match(
+        audible.search(client, query), title_hint=hint, author_hint=claim.author
+    )
     if match is None:
-        log.warning("no catalogue match for {!r}", hint)
+        log.warning("no catalogue match for {!r}", query)
         return fallback, chapters
 
     # Fetched chapters only WIN when the local table came from file boundaries.
@@ -372,8 +373,12 @@ def _run_stages(
         source = concat.concat_files(book, work_dir / f"joined{source.suffix}")
     _record_stage(conn, hash_, Stage.CONCAT, StageStatus.COMPLETED)
 
-    author_hint = _author_hint(book, context.source_root) if context.source_root else ""
-    metadata, chapters = _identify(client, book, chapters, author_hint)
+    parsed = (
+        parse.parse_path(book.identity_path, context.source_root)
+        if context.source_root
+        else None
+    )
+    metadata, chapters = _identify(client, book, chapters, parsed)
     _record_stage(conn, hash_, Stage.ASIN, StageStatus.COMPLETED)
 
     identified = Identified(metadata, chapters)

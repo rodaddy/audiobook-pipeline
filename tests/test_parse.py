@@ -63,8 +63,26 @@ def test_a_franchise_folder_is_not_adopted_as_an_author() -> None:
     assert parse("Noobtown Books 1-7/Book 3 Castle of the Noobs.m4b").author == ""
 
 
-def test_the_walk_stops_at_the_run_root() -> None:
-    """Otherwise a run pointed at one book adopts its Downloads folder."""
+def test_the_root_itself_can_name_the_author() -> None:
+    """Converting one author is ordinary: `audiobook-convert .../Brian McClellan`.
+
+    Stopping below the root filed all three of that author's books under
+    "Unknown Author" in the sandbox on 2026-08-02.
+    """
+    author_root = ROOT / "Brian McClellan"
+    book = author_root / "Powder Mage 0.2 - Servant of the Crown"
+
+    assert parse_path(book, author_root).author == "Brian McClellan"
+
+
+def test_a_root_that_is_not_a_person_supplies_no_author() -> None:
+    """The bound is looks_like_author, not the depth."""
+    book = ROOT / "Some Book"
+    assert parse_path(book, ROOT).author == ""
+
+
+def test_nothing_above_the_root_is_ever_considered() -> None:
+    """A run pointed at one book must not adopt its Downloads folder."""
     book = ROOT / "Brian McClellan" / "Some Book"
     assert parse_path(book, book).author == ""
 
@@ -131,3 +149,11 @@ def test_an_author_that_merely_repeats_the_series_is_dropped() -> None:
     result = parse("Dragonlance/Dragonlance/Some Book.m4b")
 
     assert result.author == ""
+
+
+def test_a_numbered_middle_folder_yields_the_series_not_its_whole_name() -> None:
+    """It wrote the entire folder name into the library as a series."""
+    author_root = ROOT / "Brian McClellan"
+    book = author_root / "Powder Mage 0.5 - The Girl of Hrusch Avenue" / "book.mp3"
+
+    assert parse_path(book, author_root).series == "Powder Mage"

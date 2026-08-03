@@ -39,7 +39,11 @@ from loguru import logger
 
 from audiobook_pipeline.models.parsed import ParsedPath
 from audiobook_pipeline.services import patterns
-from audiobook_pipeline.services.names import strip_hash, strip_label_suffix
+from audiobook_pipeline.services.names import (
+    clean_collection_suffix,
+    strip_hash,
+    strip_label_suffix,
+)
 from audiobook_pipeline.utils.paths import AUDIO_SUFFIXES
 from audiobook_pipeline.utils.text import strip_subtitle, strip_year
 
@@ -150,11 +154,17 @@ def _walk_for_author(source: Path, root: Path) -> ParsedPath:
     ``Author/Book``, two above in ``Author/Series/Book``. Measured across 35
     source books, no fixed depth was right for more than half of them.
 
+    THE ROOT ITSELF IS A CANDIDATE. Pointing a run at
+    ``tFiles/Done/Brian McClellan`` is an ordinary thing to do -- convert one
+    author -- and stopping BELOW the root filed all three of that author's
+    books under "Unknown Author" in the sandbox on 2026-08-02. Including it is
+    safe because ``looks_like_author`` still has to accept the name, and it
+    rejects "Done", "tFiles", and "Volumes" while accepting "Brian McClellan".
+
     Args:
         source: The book.
-        root: The bound. The walk stops here, so a run pointed straight at a
-            book folder finds no author rather than adopting a Downloads
-            directory.
+        root: The bound. Nothing ABOVE it is ever considered, so a run pointed
+            at one book cannot adopt somebody's Downloads folder.
 
     Returns:
         The author, and the series when one sits between author and book.
@@ -164,24 +174,42 @@ def _walk_for_author(source: Path, root: Path) -> ParsedPath:
 
     ancestors = list(source.parents)[:_MAX_CLIMB]
     for depth, ancestor in enumerate(ancestors):
-        if ancestor == root or not ancestor.is_relative_to(root):
+        if not ancestor.is_relative_to(root):
             break
 
         found = _first_match(strip_hash(ancestor.name), _AUTHOR_PATTERNS)
         if found.is_empty:
             continue
 
-        # Anything BETWEEN the author and the book names the series.
+        # Anything BETWEEN the author and the book names the series -- but READ
+        # it rather than taking it whole. "Powder Mage 0.5 - The Girl of Hrusch
+        # Avenue" is a numbered book folder, and using it verbatim wrote that
+        # entire string into the library as a series name.
         if not found.series and depth > 0:
-            found = found.merge(
-                ParsedPath(series=strip_hash(ancestors[depth - 1].name))
-            )
+            found = found.merge(ParsedPath(series=_series_from(ancestors[depth - 1])))
 
         log.debug("author {!r} found at {!r}", found.author, ancestor.name)
         return found
 
     log.debug("no ancestor of {!r} names an author", source.name)
     return ParsedPath()
+
+
+def _series_from(directory: Path) -> str:
+    """The series a middle directory names.
+
+    Args:
+        directory: A directory between the author and the book.
+
+    Returns:
+        The series it names. A folder like "Powder Mage 0.5 - The Girl of
+        Hrusch Avenue" is a numbered BOOK, so the series is the part before
+        the number; a plain folder like "The Coldfire Trilogy" is the series
+        already.
+    """
+    name = strip_hash(directory.name)
+    numbered = _first_match(name, _BOOK_PATTERNS)
+    return numbered.series or clean_collection_suffix(name)
 
 
 def _clean_title(name: str) -> str:
