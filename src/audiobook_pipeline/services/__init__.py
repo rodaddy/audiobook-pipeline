@@ -14,12 +14,26 @@ WHY THE STAGES DO NOT KNOW ABOUT EACH OTHER
     stage is the signal that something belongs in one of those instead.
 
 Key Components:
-    - discovery: turn a directory tree into BookDirectory candidates
+    - discovery: turn a directory tree into BookDirectory candidates, deciding
+      per folder whether its files are one book or several
+    - concat: join a multi-file book into one stream, carrying real chapter
+      marks across from the source where they exist
+    - convert: encode to M4B at a bitrate CEILINGed by the source, writing
+      chapters and moving the moov atom to the front
+    - audible: search the catalogue and fetch chapters, guarded by a duration
+      match so a wrong hit cannot be adopted
+    - identify: pick the best catalogue match for a discovered book
+    - organize: build the library path -- ``Author/Series/Book N - Title/Book N
+      - Title.m4b``, copied from the shape the existing library already uses --
+      and place the finished file without overwriting anything
+    - pipeline: the spine that runs the stages in order, skipping any the
+      database already records as done
 
 Pattern/Convention:
     Every stage function takes its inputs explicitly and returns a model::
 
         books = discover_books(source_dir)
+        destination = build_library_path(library_root, metadata)
 
 See Also:
     - audiobook_pipeline.models.stage: the stage vocabulary and STAGE_ORDER

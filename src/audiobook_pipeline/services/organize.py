@@ -2,8 +2,14 @@
 
 Purpose:
     The last stage. Turns identified metadata into the library layout Plex
-    reads -- ``Author/Series/Book N - Title.m4b`` -- and moves the file into
-    place without stranding it or overwriting anything.
+    reads -- ``Author/Series/Book N - Title/Book N - Title.m4b`` -- and moves
+    the file into place without stranding it or overwriting anything.
+
+WHY THE LAYOUT IS COPIED FROM THE LIBRARY, NOT CHOSEN
+    712 M4Bs are already filed under /Volumes/media_files/AudioBooks in exactly
+    that shape, per-book folder and all. Anything this writes has to look like
+    they do, or Plex shows the new arrivals as a second, differently-shaped
+    library beside the real one.
 
 WHY AN EXISTING NEAR-DUPLICATE FOLDER IS REUSED
     The same author arrives spelled a dozen ways: "Ann Leckie" and
@@ -47,6 +53,14 @@ AUTHOR_OVERRIDE_MARKER = ".author-override"
 
 #: Words that can differ between two names for the same thing. Any OTHER extra
 #: word means a different work -- "origins" is not punctuation.
+#:
+#: The second group is series-form nouns. They name the CONTAINER, not the work,
+#: so a catalogue calling something "The Powder Mage Trilogy" and a shelf calling
+#: it "Powder Mage" mean one series -- and treating them as two is what split
+#: that author's folder on the first live run. Measured across the real library
+#: (2026-08-02): dropping these merges 5 folder pairs, and all 5 are genuine
+#: duplicates -- Dragonlance/Dragonlance Saga, Mistborn/Mistborn Saga,
+#: Sprawl/Sprawl Trilogy Series. Zero false merges.
 _STOP_WORDS = frozenset({
     "the",
     "a",
@@ -60,6 +74,19 @@ _STOP_WORDS = frozenset({
     "for",
     "on",
     "with",
+    "trilogy",
+    "saga",
+    "cycle",
+    "series",
+    "sequence",
+    "duology",
+    "quartet",
+    "collection",
+    # _normalize strips one trailing "s", so a name ending in a series noun
+    # arrives here already singularised: "series" -> "serie", "saga" is
+    # untouched but "sagas" -> "saga". Both spellings have to be listed or the
+    # match depends on where in the name the word happened to fall.
+    "serie",
 })
 
 #: Jaccard threshold for reordered or partially-matching names. 0.85, not 0.8:
@@ -86,6 +113,12 @@ _EDITION_NOTE = re.compile(
 )
 _PUNCTUATION = re.compile(r"[^\w\s]")
 _WHITESPACE = re.compile(r"\s+")
+
+#: An edition subtitle, which Audible appends after a colon and the shelf does
+#: not carry: "Forsworn: A Powder Mage Novella", "The Name of the Wind:
+#: Kingkiller Chronicle Day One". Requires text on BOTH sides of the colon, so
+#: a title that merely opens with one keeps its head.
+_SUBTITLE = re.compile(r"(?<=\S)\s*:\s*\S.*$")
 
 
 def _normalize(name: str) -> str:
@@ -139,12 +172,19 @@ def is_near_match(desired: str, existing: str) -> bool:
     desired_tokens = set(desired.split())
     existing_tokens = set(existing.split())
 
-    # A single common word ("the") is not enough to match on.
-    if len(desired_tokens) < 2 and len(existing_tokens) < 2:
-        return False
-
     smaller, larger = sorted([desired_tokens, existing_tokens], key=len)
-    if len(smaller) >= 2 and smaller <= larger and (larger - smaller) <= _STOP_WORDS:
+
+    # The shared core has to carry MEANING. Counting tokens instead was the
+    # earlier rule, and it required two of them -- which let "Mistborn Saga"
+    # and "Mistborn" sit in the library as separate series, because the
+    # smaller name is one word long and could never qualify. A single
+    # distinctive word is a perfectly good name; a single STOP word is not,
+    # which is what stops "The" matching "A".
+    if (
+        smaller <= larger
+        and (smaller - _STOP_WORDS)
+        and (larger - smaller) <= _STOP_WORDS
+    ):
         return True
 
     union = desired_tokens | existing_tokens
@@ -176,31 +216,56 @@ def reuse_existing_folder(parent: Path, desired: str) -> str:
     return desired
 
 
-def book_filename(metadata: BookMetadata) -> str:
-    """The filename for a finished book.
+def shelf_title(metadata: BookMetadata) -> str:
+    """The book's title as the library spells it, without the subtitle.
+
+    Audible's title carries an edition subtitle after a colon -- "Forsworn: A
+    Powder Mage Novella". The existing library does not: measured against
+    /Volumes/media_files/AudioBooks, the shelf says "Book 1 - The Name of the
+    Wind", never "The Name of the Wind: Kingkiller Chronicle Day One".
+
+    Keeping the subtitle also drags a colon into the filename, which
+    ``sanitize_filename`` has to turn into an underscore -- so the first live
+    run produced "Book 0.1 - Forsworn_ A Powder Mage Novella.m4b" against 712
+    existing files that contain no such thing.
 
     Args:
         metadata: The identified book.
 
     Returns:
-        ``Book N - Title.m4b`` for a series entry, ``Title.m4b`` otherwise.
-        The YEAR is deliberately absent: it lives in the tags, and putting it
-        in the name means the same book under two names when an edition
-        changes.
+        The title up to its subtitle. The full title survives in the tags,
+        which is where a reader who wants it will look.
     """
+    return _SUBTITLE.sub("", metadata.title).strip() or metadata.title
+
+
+def book_stem(metadata: BookMetadata) -> str:
+    """The name shared by a book's folder and its file.
+
+    Args:
+        metadata: The identified book.
+
+    Returns:
+        ``Book N - Title`` for a series entry, ``Title`` otherwise. The YEAR is
+        deliberately absent: it lives in the tags, and putting it in the name
+        means the same book under two names when an edition changes.
+    """
+    title = shelf_title(metadata)
     if metadata.has_series and metadata.series_position:
-        stem = f"Book {metadata.series_position} - {metadata.title}"
-    else:
-        stem = metadata.title
-    return sanitize_filename(f"{stem}.m4b")
+        return sanitize_filename(f"Book {metadata.series_position} - {title}")
+    return sanitize_filename(title)
 
 
 def build_library_path(library_root: Path, metadata: BookMetadata) -> Path:
     """Work out where a book belongs in the library.
 
-    Layout is ``Author/Series/Book N - Title.m4b``, with the series level
-    omitted for a standalone. Each directory level reuses an existing
-    near-duplicate rather than creating a second spelling of it.
+    Layout is ``Author/Series/Book N - Title/Book N - Title.m4b``. The book gets
+    its OWN FOLDER, matching the 712 files already in the library -- Plex reads
+    per-book folders for cover art and companion files, and a book written
+    loose into the series folder is the odd one out.
+
+    The series level is omitted for a standalone. Each directory level reuses an
+    existing near-duplicate rather than creating a second spelling of it.
 
     Args:
         library_root: The library's root directory.
@@ -210,15 +275,15 @@ def build_library_path(library_root: Path, metadata: BookMetadata) -> Path:
         The full destination path, including filename.
     """
     author = sanitize_filename(metadata.author or "Unknown Author")
-    author = reuse_existing_folder(library_root, author)
-    destination = library_root / author
+    destination = library_root / reuse_existing_folder(library_root, author)
 
     if metadata.has_series:
         series = sanitize_filename(metadata.series)
-        series = reuse_existing_folder(destination, series)
-        destination = destination / series
+        destination = destination / reuse_existing_folder(destination, series)
 
-    return destination / book_filename(metadata)
+    stem = book_stem(metadata)
+    destination = destination / reuse_existing_folder(destination, stem)
+    return destination / f"{stem}.m4b"
 
 
 def find_author_override(start: Path, stop_at: Path) -> Path | None:
