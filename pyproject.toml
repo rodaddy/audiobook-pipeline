@@ -188,6 +188,7 @@ files = [
     "tests/test_config.py",
     "tests/test_logging.py",
     "tests/test_models.py",
+    "tests/test_utils.py",
 ]
 strict = true
 
@@ -207,6 +208,24 @@ exclude = ["_DOCS/legacy-source/"]
 # Named, so the gap is documented rather than global.
 module = ["openai.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# mutagen ships no type information (no py.typed, no stubs on typeshed). Under
+# strict mode every call into it is a `no-untyped-call` error, and its MP4 tag
+# dict is genuinely dynamic -- atom keys are four-character codes, not
+# attributes. Scoped to the ONE module that touches it, so the untyped surface
+# is one file rather than the whole package: utils/tagging.py validates what it
+# writes through BookMetadata before it reaches mutagen at all.
+module = ["audiobook_pipeline.utils.tagging"]
+disallow_untyped_calls = false
+warn_unreachable = false
+
+[[tool.mypy.overrides]]
+# tenacity's @retry is untyped, so mypy calls anything it decorates untyped.
+# Scoped to the one module with a decorated function; the function's own
+# signature is still checked, and its callers still see the real types.
+module = ["audiobook_pipeline.utils.http"]
+disallow_untyped_decorators = false
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +249,7 @@ testpaths = [
     "tests/test_config.py",
     "tests/test_logging.py",
     "tests/test_models.py",
+    "tests/test_utils.py",
 ]
 # Fail on an unregistered mark rather than silently skipping the test it was
 # meant to select -- a typo'd `@pytest.mark.slwo` otherwise runs nothing and
