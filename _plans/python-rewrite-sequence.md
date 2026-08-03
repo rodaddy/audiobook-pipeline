@@ -427,12 +427,54 @@ construction naming the field, instead of `KeyError` three frames later.
 **Proves:** `test_ffprobe.py` + `test_sanitize.py` green; zero hand-rolled retry
 loops (`rg 'for attempt' src/` → no matches).
 
-### Step 5 — `db/`
+### Step 5 — `db/` — DONE (`90846e4`)
 stdlib `sqlite3` + Pydantic row factory (see `## Why no ORM`). Read what the
 existing version handling actually does BEFORE writing the schema path — that
 is the one genuinely open question here.
-**Proves:** `test_pipeline_db.py` + `test_db_migration.py` green against an
-existing `pipeline.db`; zero `dict[str, Any]` crossing the db boundary.
+
+**Open question 1 is ANSWERED.** The legacy version handling
+(`_DOCS/legacy-source/pipeline_db.py:213`) is an additive-column migration: read
+the live columns with `PRAGMA table_info(books)`, compare against the expected
+set, `ALTER TABLE ADD COLUMN` anything missing. No version number, no migration
+graph, nothing ever dropped. That is carried forward — with the expected set now
+DERIVED FROM THE MODELS rather than parsed back out of a schema string, so there
+is one declaration instead of two that can disagree.
+
+**The migration test found a real defect while being written, which is the whole
+argument for the rewrite.** `ALTER TABLE ADD COLUMN` fills existing rows with
+NULL. For a field the model declares `int` rather than `int | None` — e.g.
+`retry_count` — that NULL fails validation on the next read, so adding the
+column to a database holding 700 books would have made every one of them
+unreadable. `_sql_default` renders the model's static default into the DEFAULT
+clause so SQLite backfills; `default_factory` fields (the timestamps) are
+excluded, because freezing one migration's clock into the schema would stamp
+every future insert with the moment the column was added. Guard-tested:
+disabling `_sql_default` fails `test_missing_column_is_added_and_rows_survive`
+with `retry_count: Input should be a valid integer [input_value=None]`.
+
+**Two decisions worth keeping:**
+- `books.cover_art` (BLOB) is deliberately NOT a model field. A field would
+  load a multi-megabyte image on every read, so a 700-book status listing would
+  pull the whole library's cover art to display none of it. It lives in
+  `connection.EXTRA_COLUMNS` and is reached only through `store_cover`/
+  `get_cover`. This is why no `SELECT *` is allowed inside the package: under
+  `extra="forbid"` a star-select hands `model_validate` a key it refuses.
+- `acquire_lock` STEALS from a dead holder (`os.kill(pid, 0)`), carried forward
+  from the legacy layer. Without it a pipeline killed mid-reorganise blocks
+  every future run forever and the fix is manual SQL against a database the user
+  should never open. `ProcessLookupError` and `PermissionError` are
+  distinguished rather than folded into `except OSError` — a lock held by
+  another user's live process exists and must NOT be stolen.
+
+**Proved:** 26 db tests + 159 total green; mypy `--strict` clean across 23
+files; ruff clean on the db layer; code size clean; config compliance clean over
+26 tracked files. Zero `dict[str, Any]` crossing the db boundary.
+
+Note the original proof line named `test_pipeline_db.py` + `test_db_migration.py`
+— the pre-rewrite suites. Both are superseded by `tests/test_db.py`, which tests
+the new API; the old two target `PipelineDB`, a class that no longer exists. They
+stay in the re-entry checklist as *removed by supersession*, not as a suite
+nobody ran.
 
 ### Step 6 — THE SPINE. End-to-end before hardening.
 Minimum path for ONE real book: discover → concat → convert → identify → tag →
