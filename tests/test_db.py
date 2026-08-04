@@ -125,11 +125,13 @@ def test_missing_column_is_added_and_rows_survive(tmp_path: Path) -> None:
         live = {row[1] for row in conn.execute("PRAGMA table_info(books)")}
         assert "chapter_source" in live
         assert "cover_art" in live
+        assert "level" in live
 
         survivor = get_book(conn, "old1")
         assert survivor is not None
         assert survivor.status == "completed"
         assert survivor.chapter_source is None
+        assert survivor.level == "normal"
 
 
 def test_migration_does_not_drop_unknown_columns(tmp_path: Path) -> None:
@@ -169,11 +171,14 @@ def test_fresh_database_needs_no_migration(tmp_path: Path) -> None:
 
 
 def test_book_round_trips_as_a_model(db: sqlite3.Connection) -> None:
-    upsert_book(db, make_book(chapter_source="audnexus", chapter_count=12))
+    upsert_book(
+        db, make_book(level="full", chapter_source="audnexus", chapter_count=12)
+    )
     book = get_book(db, "hash1")
     assert isinstance(book, BookRow)
     assert book.chapter_source == "audnexus"
     assert book.chapter_count == 12
+    assert book.level == "full"
 
 
 def test_get_book_returns_none_for_unknown_hash(db: sqlite3.Connection) -> None:

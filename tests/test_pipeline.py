@@ -23,7 +23,7 @@ from audiobook_pipeline.models.lifecycle import (
     CleanupResult,
     ValidatedBook,
 )
-from audiobook_pipeline.models.metadata import BookMetadata
+from audiobook_pipeline.models.metadata import BookMetadata, CoverArt
 from audiobook_pipeline.models.stage import (
     PipelineLevel,
     PipelineMode,
@@ -120,7 +120,9 @@ class StageFakes:
         output.write_bytes(b"converted")
         return output
 
-    def write_tags(self, _: Path, __: BookMetadata) -> None:
+    def write_tags(
+        self, _: Path, __: BookMetadata, *, cover: CoverArt | None = None
+    ) -> None:
         self.calls["tag"] += 1
 
     def place_book(self, source: Path, destination: Path, **_: object) -> Path:
@@ -466,7 +468,7 @@ def test_a_tagging_mutagen_error_is_a_recorded_book_failure(
     monkeypatch.setattr(
         pipeline,
         "write_tags",
-        lambda *_args: (_ for _ in ()).throw(MutagenError("bad tag")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(MutagenError("bad tag")),
     )
 
     row = process_book(make_book(tmp_path, "solo.mp3"), context)

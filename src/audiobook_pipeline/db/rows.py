@@ -56,6 +56,7 @@ class BookRow(BaseModel):
     book_hash: str = Field(min_length=1)
     source_path: str = Field(min_length=1)
     mode: str = Field(min_length=1)
+    level: str = "normal"
 
     status: str = "pending"
     retry_count: int = Field(default=0, ge=0)

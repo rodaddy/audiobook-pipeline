@@ -13,8 +13,10 @@ from loguru import logger
 from mutagen.mp4 import MP4Cover, MP4FreeForm
 from pydantic import ValidationError
 
+from audiobook_pipeline.db.rows import BookRow
+from audiobook_pipeline.models.chapter import ChapterSet
 from audiobook_pipeline.models.metadata import BookMetadata, CoverArt
-from audiobook_pipeline.services import audible, cover
+from audiobook_pipeline.services import audible, cover, metadata_stage
 from audiobook_pipeline.utils import tagging
 
 JPEG = b"\xff\xd8\xffcover"
@@ -215,6 +217,27 @@ def test_audible_maps_preferred_cover_and_expanded_metadata() -> None:
     assert metadata.summary == "Summary"
     assert metadata.copyright == "Copyright"
     assert audible._cover_url({"500": "https://small"}) == "https://small"
+
+
+def test_metadata_row_round_trip_preserves_every_tag_field() -> None:
+    """A retry reconstructs the exact metadata that the tag stage received."""
+    metadata = BookMetadata(
+        title="Title",
+        author="Author",
+        narrator="Narrator",
+        asin="ASIN",
+        series="Series",
+        series_position="2",
+        release_year=2024,
+        publisher="Publisher",
+        summary="Summary",
+        copyright="Copyright",
+        genres=("Science Fiction", "Space Opera"),
+        cover_url="https://covers.example/art",
+    )
+    row = BookRow(book_hash="hash", source_path="/source", mode="convert")
+    persisted = metadata_stage.completed_row(row, metadata, ChapterSet())
+    assert metadata_stage.metadata_from_row(persisted) == metadata
 
 
 class _FakeMP4:

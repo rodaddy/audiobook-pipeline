@@ -46,6 +46,7 @@ from audiobook_pipeline.models.metadata import BookMetadata
 from audiobook_pipeline.models.parsed import ParsedPath
 from audiobook_pipeline.models.stage import (
     PRE_COMPLETED_STAGES,
+    PipelineLevel,
     PipelineMode,
     Stage,
     StageStatus,
@@ -59,23 +60,17 @@ from audiobook_pipeline.services import (
     concat,
     convert,
     identify,
+    metadata_stage,
     organize,
     parse,
     validate,
 )
 from audiobook_pipeline.services.ai import AiResolver
+from audiobook_pipeline.services.metadata_stage import ResumeError
 from audiobook_pipeline.utils.ffmpeg import FfmpegError
 from audiobook_pipeline.utils.tagging import write_tags
 
 log = logger.bind(stage="pipeline")
-
-
-class ResumeError(ValueError):
-    """A database row says a stage completed but its durable handoff is absent."""
-
-    def __init__(self, stage: Stage) -> None:
-        """Build an error that identifies the completed stage that cannot resume."""
-        super().__init__(f"completed {stage.value} stage lacks its durable handoff")
 
 
 class Identified(BaseModel):
@@ -163,14 +158,11 @@ def _done_stages(conn: sqlite3.Connection, hash_: str) -> set[Stage]:
     }
 
 
-def _reset_stage_plan(conn: sqlite3.Connection, hash_: str) -> None:
-    """Discard prior-mode stage receipts before applying a new requested mode."""
-    for stage in Stage:
-        _record_stage(conn, hash_, stage, StageStatus.PENDING)
-
-
 def _requested_row(
-    book: BookDirectory, conn: sqlite3.Connection, mode: PipelineMode
+    book: BookDirectory,
+    conn: sqlite3.Connection,
+    mode: PipelineMode,
+    level: PipelineLevel,
 ) -> BookRow:
     """Create or reconcile the durable row with the caller's requested mode."""
     hash_ = book_hash(book)
@@ -180,14 +172,27 @@ def _requested_row(
             book_hash=hash_,
             source_path=str(book.identity_path),
             mode=mode.value,
+            level=level.value,
             file_count=len(book.files),
             total_duration=book.total_duration_ms / 1000,
         )
-    if existing.mode == mode.value:
+    if existing.mode == mode.value and existing.level == level.value:
         return existing
-    _reset_stage_plan(conn, hash_)
+    if existing.mode != mode.value:
+        metadata_stage.reset_stage_plan(conn, hash_)
+        return existing.model_copy(
+            update={
+                "mode": mode.value,
+                "level": level.value,
+                "status": "pending",
+                "error_message": None,
+            }
+        )
+    if not metadata_stage.should_reset_for_level(conn, existing):
+        return existing
+    metadata_stage.reset_identity_receipts(conn, hash_)
     return existing.model_copy(
-        update={"mode": mode.value, "status": "pending", "error_message": None}
+        update={"level": level.value, "status": "pending", "error_message": None}
     )
 
 
@@ -363,7 +368,11 @@ def process_book(
         The book's record, with status ``completed`` or ``failed``.
     """
     conn = context.conn
-    row = _requested_row(book, conn, mode)
+    if context.config.dry_run:
+        return metadata_stage.skipped_row(
+            book, mode, context.config.level, book_hash(book)
+        )
+    row = _requested_row(book, conn, mode, context.config.level)
     hash_ = row.book_hash
     queries.upsert_book(conn, row)
 
@@ -448,20 +457,6 @@ def _concat_source(book: BookDirectory, context: RunContext, plan: StagePlan) ->
     return _stored_output(context.conn, plan.book_hash, Stage.CONCAT)
 
 
-def _metadata_from_row(row: BookRow) -> BookMetadata:
-    """Reconstruct a completed ASIN stage's durable metadata for a retry."""
-    if row.parsed_title is None:
-        raise ResumeError(Stage.ASIN)
-    return BookMetadata(
-        title=row.parsed_title,
-        author=row.parsed_author or "",
-        series=row.parsed_series or "",
-        series_position=row.parsed_position or "",
-        asin=row.parsed_asin or "",
-        narrator=row.parsed_narrator or "",
-    )
-
-
 def _identified(
     book: BookDirectory,
     context: RunContext,
@@ -471,14 +466,16 @@ def _identified(
     """Resolve metadata once, persisting it before later stages can fail."""
     chapters = concat.build_chapters(book)
     if Stage.ASIN not in todo:
-        return row, Identified(metadata=_metadata_from_row(row), chapters=chapters)
+        return row, Identified(
+            metadata=metadata_stage.metadata_from_row(row), chapters=chapters
+        )
     parsed = (
         parse.parse_path(book.identity_path, context.source_root)
         if context.source_root
         else None
     )
     metadata, chapters = _identify(context, book, chapters, parsed)
-    updated = _completed_row(row, metadata, chapters).model_copy(
+    updated = metadata_stage.completed_row(row, metadata, chapters).model_copy(
         update={"status": "pending"}
     )
     queries.update_book(context.conn, updated)
@@ -529,7 +526,10 @@ def _encode_and_tag(
         converted = source
 
     if Stage.METADATA in plan.todo:
-        write_tags(converted, identified.metadata)
+        cover = metadata_stage.cover_for_metadata(
+            conn, context.client, plan.book_hash, identified.metadata
+        )
+        write_tags(converted, identified.metadata, cover=cover)
         _record_stage(
             conn,
             plan.book_hash,
@@ -653,35 +653,9 @@ def _run_stages(
     final = _organize_output(validated, converted, identified, context, plan)
     _archive_and_cleanup(validated, final, context, plan)
 
-    completed = _completed_row(row, identified.metadata, identified.chapters)
+    completed = metadata_stage.completed_row(
+        row, identified.metadata, identified.chapters
+    )
     queries.update_book(context.conn, completed)
     log.success("{} -> {}", book.identity_path.name, final)
     return completed
-
-
-def _completed_row(
-    row: BookRow, metadata: BookMetadata, chapters: ChapterSet
-) -> BookRow:
-    """Fold what the run learned back into the book's record.
-
-    Args:
-        row: The record as it stood before the run.
-        metadata: What the catalogue said this book is.
-        chapters: The table actually written into the file.
-
-    Returns:
-        The updated record.
-    """
-    return row.model_copy(
-        update={
-            "status": "completed",
-            "parsed_title": metadata.title,
-            "parsed_author": metadata.author,
-            "parsed_series": metadata.series,
-            "parsed_position": metadata.series_position,
-            "parsed_asin": metadata.asin,
-            "parsed_narrator": metadata.narrator,
-            "chapter_count": len(chapters.chapters),
-            "chapter_source": chapters.source,
-        }
-    )
