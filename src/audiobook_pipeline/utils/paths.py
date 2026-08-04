@@ -81,6 +81,22 @@ _WHITESPACE_RUN = re.compile(r"\s+")
 #: and truncating by character count overshoots on any non-ASCII title.
 MAX_COMPONENT_BYTES = 255
 
+#: Names Windows reserves for character devices. They cannot be used as a
+#: filename there NO MATTER THE EXTENSION -- "CON.m4b" fails exactly as "CON"
+#: does -- and the resulting OSError names neither the book nor the reason.
+#:
+#: The reservation applies to the stem alone, so "Contact.m4b" and "COM10.m4b"
+#: are ordinary names and must be left alone. Compared casefolded because the
+#: reservation is case-insensitive.
+_WINDOWS_RESERVED = frozenset({
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    *(f"com{digit}" for digit in range(1, 10)),
+    *(f"lpt{digit}" for digit in range(1, 10)),
+})
+
 
 def _truncate_to_bytes(value: str, limit: int) -> str:
     """Trim a string so its UTF-8 encoding fits within ``limit`` bytes.
@@ -141,9 +157,23 @@ def sanitize_filename(filename: str, *, max_bytes: int = MAX_COMPONENT_BYTES) ->
     stem, dot, suffix = cleaned.rpartition(".")
     if dot and suffix and len(suffix) <= 5 and stem:
         room = max_bytes - len(f".{suffix}".encode())
-        return f"{_truncate_to_bytes(stem, max(room, 1))}.{suffix}"
+        return f"{_escape_reserved(_truncate_to_bytes(stem, max(room, 1)))}.{suffix}"
 
-    return _truncate_to_bytes(cleaned, max_bytes)
+    return _escape_reserved(_truncate_to_bytes(cleaned, max_bytes))
+
+
+def _escape_reserved(stem: str) -> str:
+    """Prefix a Windows device name so it can be used as a filename.
+
+    Args:
+        stem: A filename component with its extension already removed.
+
+    Returns:
+        The stem, prefixed with an underscore when Windows reserves it. The
+        prefix is chosen over dropping or renaming because it keeps the title
+        readable and reversible: a book called "Con" stays recognisable.
+    """
+    return f"_{stem}" if stem.casefold() in _WINDOWS_RESERVED else stem
 
 
 def sanitize_chapter_title(title: str) -> str:

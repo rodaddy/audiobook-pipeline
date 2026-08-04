@@ -97,6 +97,21 @@ def test_reuse_returns_the_existing_spelling(tmp_path: Path) -> None:
     )
 
 
+def test_reuse_matches_an_existing_folder_ignoring_case(tmp_path: Path) -> None:
+    """The library is filed by people, and people are inconsistent about case.
+
+    On a case-insensitive volume -- macOS by default, Windows always -- the
+    early ``(parent / desired).exists()`` probe answers True for a folder
+    spelled differently, so the desired name was returned unchanged and the
+    file landed in a folder whose name did not match what was recorded. On
+    Linux the same input creates a SECOND author folder and splits one
+    author's books across both.
+    """
+    (tmp_path / "brian mcclellan").mkdir()
+
+    assert reuse_existing_folder(tmp_path, "Brian McClellan") == "brian mcclellan"
+
+
 def test_reuse_prefers_an_exact_match(tmp_path: Path) -> None:
     (tmp_path / "Homeland").mkdir()
     (tmp_path / "Homelands").mkdir()

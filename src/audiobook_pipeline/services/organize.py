@@ -202,12 +202,27 @@ def reuse_existing_folder(parent: Path, desired: str) -> str:
     """
     if not parent.is_dir():
         return desired
-    if (parent / desired).exists():
+
+    children = sorted(
+        (path for path in parent.iterdir() if path.is_dir()), key=lambda p: p.name
+    )
+    # An EXACT spelling already on disk wins outright. Compared against the
+    # listed names rather than with `(parent / desired).exists()`, which
+    # cannot answer this question on a case-insensitive volume -- macOS by
+    # default, Windows always. There, the probe returns True for an existing
+    # "brian mcclellan" when asked about "Brian McClellan", so the caller was
+    # handed a spelling that does not exist on disk and the file landed in a
+    # folder named differently from the record. On Linux the same input
+    # created a SECOND author folder, splitting one author across both.
+    #
+    # Falling through to the comparison below instead settles every case:
+    # `_normalize` lowercases, so a case difference is already a match there.
+    if any(child.name == desired for child in children):
         return desired
 
     desired_norm = _normalize(desired)
-    for existing in sorted(parent.iterdir(), key=lambda p: p.name):
-        if existing.is_dir() and is_near_match(desired_norm, _normalize(existing.name)):
+    for existing in children:
+        if is_near_match(desired_norm, _normalize(existing.name)):
             log.debug("reusing {!r} for {!r}", existing.name, desired)
             return existing.name
     return desired

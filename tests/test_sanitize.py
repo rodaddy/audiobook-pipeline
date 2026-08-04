@@ -67,3 +67,30 @@ def test_book_hash_changes_with_identity_or_duration(tmp_path: Path) -> None:
     moved = _book(tmp_path / "other", (60_000, 60_000))
     reripped = _book(tmp_path / "book", (60_000, 61_000))
     assert len({book_hash(original), book_hash(moved), book_hash(reripped)}) == 3
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("CON.m4b", "_CON.m4b"),
+        ("con.m4b", "_con.m4b"),
+        ("PRN.m4b", "_PRN.m4b"),
+        ("AUX.m4b", "_AUX.m4b"),
+        ("NUL.m4b", "_NUL.m4b"),
+        ("COM1.m4b", "_COM1.m4b"),
+        ("LPT9.m4b", "_LPT9.m4b"),
+        # The reservation is on the STEM, so an extension does not excuse it,
+        # and a name that merely starts with one is fine.
+        ("CON", "_CON"),
+        ("Contact.m4b", "Contact.m4b"),
+        ("CONAN.m4b", "CONAN.m4b"),
+        ("COM10.m4b", "COM10.m4b"),
+    ],
+)
+def test_windows_reserved_device_names_are_escaped(raw: str, expected: str) -> None:
+    """These cannot exist as filenames on Windows, whatever the extension.
+
+    A book legitimately titled "Con" is rare but real, and the write fails
+    with an OS error that names neither the book nor the reason.
+    """
+    assert sanitize_filename(raw) == expected
