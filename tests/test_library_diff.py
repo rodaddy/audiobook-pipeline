@@ -4,16 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from audiobook_pipeline.ops.library_diff import (
-    BookEntry,
-    LibraryDiff,
-    _collapse_multipart,
-    _extract_books,
-    compare_libraries,
-)
-
+from audiobook_pipeline.services.library import compare_libraries, scan_library
+from audiobook_pipeline.services.matching import normalize_title
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -39,7 +31,7 @@ def _make_library(tmp_path: Path, name: str, structure: dict[str, bytes]) -> Pat
 
 
 class TestMultipartCollapse:
-    def test_three_parts_collapse_to_one(self, tmp_path):
+    def test_three_parts_collapse_to_one(self, tmp_path: Path) -> None:
         lib = _make_library(
             tmp_path,
             "source",
@@ -49,13 +41,11 @@ class TestMultipartCollapse:
                 "Anne Rice/Vampire Chronicles/Vampire Chronicles, Part 3.m4b": b"\x00",
             },
         )
-        entries = _extract_books(lib)
-        assert len(entries) == 3
-        collapsed = _collapse_multipart(entries)
+        collapsed = scan_library(lib, extensions=frozenset({".m4b"}))
         assert len(collapsed) == 1
-        assert collapsed[0].is_multipart is True
+        assert collapsed[0].multipart is True
 
-    def test_non_part_files_unchanged(self, tmp_path):
+    def test_non_part_files_unchanged(self, tmp_path: Path) -> None:
         lib = _make_library(
             tmp_path,
             "source",
@@ -64,12 +54,11 @@ class TestMultipartCollapse:
                 "Author/Book Two/Book Two.m4b": b"\x00",
             },
         )
-        entries = _extract_books(lib)
-        collapsed = _collapse_multipart(entries)
+        collapsed = scan_library(lib, extensions=frozenset({".m4b"}))
         assert len(collapsed) == 2
-        assert all(not e.is_multipart for e in collapsed)
+        assert all(not e.multipart for e in collapsed)
 
-    def test_mixed_parts_and_standalone(self, tmp_path):
+    def test_mixed_parts_and_standalone(self, tmp_path: Path) -> None:
         lib = _make_library(
             tmp_path,
             "source",
@@ -79,9 +68,25 @@ class TestMultipartCollapse:
                 "Author/Standalone/Standalone.m4b": b"\x00",
             },
         )
-        entries = _extract_books(lib)
-        collapsed = _collapse_multipart(entries)
+        collapsed = scan_library(lib, extensions=frozenset({".m4b"}))
         assert len(collapsed) == 2  # 1 group + 1 standalone
+
+    def test_hp_and_numbered_chapter_files_collapse_to_one_book(
+        self, tmp_path: Path
+    ) -> None:
+        library = _make_library(
+            tmp_path,
+            "source",
+            {
+                "Author/Book/HP. 1 - Chapter.mp3": b"x",
+                "Author/Book/HP. 2 - Chapter.mp3": b"x",
+                "Author/Other/1-01 Chapter.mp3": b"x",
+                "Author/Other/1-02 Chapter.mp3": b"x",
+            },
+        )
+        books = scan_library(library, extensions=frozenset({".mp3"}))
+        assert len(books) == 2
+        assert all(book.multipart for book in books)
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +95,7 @@ class TestMultipartCollapse:
 
 
 class TestAuthorMatching:
-    def test_initials_match(self, tmp_path):
+    def test_initials_match(self, tmp_path: Path) -> None:
         """R.A. Salvatore in source should match R. A. Salvatore in target."""
         source = _make_library(
             tmp_path,
@@ -106,7 +111,22 @@ class TestAuthorMatching:
         assert len(diff.missing) == 0
         assert len(diff.matched) == 1
 
-    def test_ampersand_and_match(self, tmp_path):
+    def test_author_prefix_is_removed_before_title_matching(
+        self, tmp_path: Path
+    ) -> None:
+        source = _make_library(
+            tmp_path,
+            "source",
+            {"B. T. Narro/Book/B. T. Narro - Rhythm of Rivalry.mp3": b"x"},
+        )
+        target = _make_library(
+            tmp_path,
+            "target",
+            {"B. T. Narro/Book/Rhythm of Rivalry.m4b": b"x"},
+        )
+        assert len(compare_libraries(source, target).missing) == 0
+
+    def test_ampersand_and_match(self, tmp_path: Path) -> None:
         """Weis & Hickman should match Weis and Hickman."""
         source = _make_library(
             tmp_path,
@@ -126,13 +146,18 @@ class TestAuthorMatching:
         assert len(diff.missing) == 0
 
 
+def test_distinct_dash_titles_do_not_share_a_normalized_key() -> None:
+    assert normalize_title("A-B") != normalize_title("A-C")
+    assert normalize_title("A - B") != normalize_title("A - C")
+
+
 # ---------------------------------------------------------------------------
 # Franchise folder matching
 # ---------------------------------------------------------------------------
 
 
 class TestFranchiseMatching:
-    def test_source_author_target_franchise(self, tmp_path):
+    def test_source_author_target_franchise(self, tmp_path: Path) -> None:
         """Source under 'Margaret Weis' should match target under 'Dragonlance'."""
         source = _make_library(
             tmp_path,
@@ -159,7 +184,7 @@ class TestFranchiseMatching:
 
 
 class TestFuzzyMatching:
-    def test_slight_title_variation(self, tmp_path):
+    def test_slight_title_variation(self, tmp_path: Path) -> None:
         """'The Way of Kings' should fuzzy-match 'Way of Kings'."""
         source = _make_library(
             tmp_path,
@@ -174,7 +199,7 @@ class TestFuzzyMatching:
         diff = compare_libraries(source, target)
         assert len(diff.missing) == 0
 
-    def test_asin_in_source_stripped(self, tmp_path):
+    def test_asin_in_source_stripped(self, tmp_path: Path) -> None:
         """Source with ASIN code should still match clean target."""
         source = _make_library(
             tmp_path,
@@ -189,7 +214,7 @@ class TestFuzzyMatching:
         diff = compare_libraries(source, target)
         assert len(diff.missing) == 0
 
-    def test_unabridged_stripped(self, tmp_path):
+    def test_unabridged_stripped(self, tmp_path: Path) -> None:
         """Source with (Unabridged) should match clean target."""
         source = _make_library(
             tmp_path,
@@ -211,7 +236,7 @@ class TestFuzzyMatching:
 
 
 class TestFullCoverage:
-    def test_fully_covered_library_returns_zero_missing(self, tmp_path):
+    def test_fully_covered_library_returns_zero_missing(self, tmp_path: Path) -> None:
         """When every source book exists in target, missing should be empty."""
         books = {
             "Author A/Book One/Book One.m4b": b"\x00",
@@ -224,7 +249,7 @@ class TestFullCoverage:
         assert len(diff.missing) == 0
         assert len(diff.matched) == 3
 
-    def test_genuinely_missing_book(self, tmp_path):
+    def test_genuinely_missing_book(self, tmp_path: Path) -> None:
         """A book only in source should appear in missing."""
         source = _make_library(
             tmp_path,
@@ -241,10 +266,10 @@ class TestFullCoverage:
         )
         diff = compare_libraries(source, target)
         assert len(diff.missing) == 1
-        assert diff.missing[0].norm_title == "missing book"
+        assert diff.missing[0].title_key == "missing book"
         assert len(diff.matched) == 1
 
-    def test_multipart_source_matches_single_target(self, tmp_path):
+    def test_multipart_source_matches_single_target(self, tmp_path: Path) -> None:
         """Source with Part 1-3 should match single consolidated target."""
         source = _make_library(
             tmp_path,
@@ -264,7 +289,7 @@ class TestFullCoverage:
         assert len(diff.missing) == 0
         assert len(diff.matched) == 1
 
-    def test_empty_source(self, tmp_path):
+    def test_empty_source(self, tmp_path: Path) -> None:
         source = _make_library(tmp_path, "source", {})
         target = _make_library(
             tmp_path,
@@ -299,7 +324,7 @@ class TestFullCoverage:
 class TestUnconvertedSourceFormats:
     """Source books that are still mp3/m4a/flac must be seen by the diff."""
 
-    def test_mp3_source_book_is_reported_missing(self, tmp_path):
+    def test_mp3_source_book_is_reported_missing(self, tmp_path: Path) -> None:
         """An mp3-only book absent from the target is MISSING, not invisible."""
         source = _make_library(
             tmp_path,
@@ -316,7 +341,7 @@ class TestUnconvertedSourceFormats:
         assert len(diff.missing) == 1
         assert diff.missing[0].author == "Brian McClellan"
 
-    def test_m4a_source_book_is_reported_missing(self, tmp_path):
+    def test_m4a_source_book_is_reported_missing(self, tmp_path: Path) -> None:
         """.m4a is neither m4b nor in SOURCE_EXTENSIONS -- it was missed twice."""
         source = _make_library(
             tmp_path,
@@ -332,7 +357,7 @@ class TestUnconvertedSourceFormats:
         assert diff.source_count == 1
         assert len(diff.missing) == 1
 
-    def test_mp3_source_matches_converted_m4b_target(self, tmp_path):
+    def test_mp3_source_matches_converted_m4b_target(self, tmp_path: Path) -> None:
         """The converted copy in the target counts as a match across formats.
 
         This is the other half: having made mp3 visible, an mp3 whose m4b
@@ -352,7 +377,7 @@ class TestUnconvertedSourceFormats:
         assert len(diff.missing) == 0
         assert len(diff.matched) == 1
 
-    def test_chapter_per_file_mp3_collapses_to_one_book(self, tmp_path):
+    def test_chapter_per_file_mp3_collapses_to_one_book(self, tmp_path: Path) -> None:
         """71 loose mp3 chapters are one book, not 71 missing books."""
         source = _make_library(
             tmp_path,
@@ -371,7 +396,7 @@ class TestUnconvertedSourceFormats:
         assert diff.source_count == 1
         assert len(diff.missing) == 1
 
-    def test_target_scan_still_counts_only_m4b(self, tmp_path):
+    def test_target_scan_still_counts_only_m4b(self, tmp_path: Path) -> None:
         """A stray mp3 in the TARGET is not a converted book.
 
         The target library is the ground truth of what the pipeline has already
@@ -406,7 +431,7 @@ class TestUnconvertedSourceFormats:
 class TestRealWorldPartNaming:
     """Part-marker spellings that must collapse to one book."""
 
-    def test_part_n_of_m_collapses(self, tmp_path):
+    def test_part_n_of_m_collapses(self, tmp_path: Path) -> None:
         """'Part 1 of 3' -- the dominant spelling, previously unmatched."""
         source = _make_library(
             tmp_path,
@@ -423,7 +448,7 @@ class TestRealWorldPartNaming:
         assert diff.source_count == 1
         assert diff.missing[0].title == "Servant of the Crown"
 
-    def test_glued_numeric_part_suffix_collapses(self, tmp_path):
+    def test_glued_numeric_part_suffix_collapses(self, tmp_path: Path) -> None:
         """'Promise of Blood01-19' -- part marker with no separator."""
         source = _make_library(
             tmp_path,
@@ -441,7 +466,7 @@ class TestRealWorldPartNaming:
         assert diff.source_count == 1
         assert diff.missing[0].title == "Promise of Blood"
 
-    def test_glued_suffix_book_matches_target(self, tmp_path):
+    def test_glued_suffix_book_matches_target(self, tmp_path: Path) -> None:
         """The collapsed title must match the converted book in the target.
 
         Collapsing to the wrong title is as bad as not collapsing: the group
@@ -467,7 +492,7 @@ class TestRealWorldPartNaming:
         assert len(diff.missing) == 0
         assert len(diff.matched) == 1
 
-    def test_parenthetical_before_part_marker_collapses(self, tmp_path):
+    def test_parenthetical_before_part_marker_collapses(self, tmp_path: Path) -> None:
         """'The Autumn Republic (Unabridged) Part 01 of 19'."""
         source = _make_library(
             tmp_path,
@@ -483,7 +508,7 @@ class TestRealWorldPartNaming:
         diff = compare_libraries(source, target)
         assert diff.source_count == 1
 
-    def test_hyphenated_title_is_not_a_part_marker(self, tmp_path):
+    def test_hyphenated_title_is_not_a_part_marker(self, tmp_path: Path) -> None:
         """A real hyphenated title must NOT be eaten as a part suffix.
 
         The glued-suffix pattern is deliberately anchored to digits-hyphen-
@@ -505,7 +530,9 @@ class TestRealWorldPartNaming:
         assert diff.source_count == 2
         assert {b.title for b in diff.missing} == {"Catch-22", "Something Happened"}
 
-    def test_distinct_books_in_series_folder_stay_distinct(self, tmp_path):
+    def test_distinct_books_in_series_folder_stay_distinct(
+        self, tmp_path: Path
+    ) -> None:
         """Coldfire: 4 one-file books under one series dir are 4 books.
 
         The chapter pattern groups by DIRECTORY, so a book-per-subdirectory
@@ -530,7 +557,7 @@ class TestRealWorldPartNaming:
         diff = compare_libraries(source, target)
         assert diff.source_count == 4
 
-    def test_two_level_numbering_collapses_to_one_book(self, tmp_path):
+    def test_two_level_numbering_collapses_to_one_book(self, tmp_path: Path) -> None:
         """'The Crimson Campaign 01 Part 3 of 7' -- disc AND part number.
 
         21 files, one book. Stripping only the 'Part N of 7' half left three
@@ -552,7 +579,7 @@ class TestRealWorldPartNaming:
         assert diff.source_count == 1
         assert diff.missing[0].title == "The Crimson Campaign"
 
-    def test_title_ending_in_a_year_keeps_its_number(self, tmp_path):
+    def test_title_ending_in_a_year_keeps_its_number(self, tmp_path: Path) -> None:
         """The disc-number strip must not eat a number that is the title.
 
         Bounded to 1-2 digits for exactly this reason: '1984' and

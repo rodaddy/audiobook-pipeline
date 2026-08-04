@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+from io import StringIO
 from pathlib import Path
 
+import pytest
 from loguru import logger
 
 from audiobook_pipeline.config import LoggingSettings
-from audiobook_pipeline.utils.logging_config import setup
+from audiobook_pipeline.utils.logging_config import (
+    ProcessStderrUnavailableError,
+    setup,
+)
 
 
 class TestSinks:
@@ -115,3 +120,27 @@ class TestIdempotence:
 
         content = (tmp_path / "pipeline.log").read_text(encoding="utf-8")
         assert content.count("once") == 1
+
+
+def test_console_sink_uses_process_stderr_not_a_replaceable_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Loguru must not retain or follow a stream owned by a test or Click."""
+    stable_stderr = StringIO()
+    transient_capture = StringIO()
+    monkeypatch.setattr("sys.__stderr__", stable_stderr)
+    monkeypatch.setattr("sys.stderr", transient_capture)
+    setup(LoggingSettings(file_sink=False, json_sink=False), log_dir=tmp_path)
+    logger.bind(stage="audit").info("after capture rotation")
+    logger.remove()
+    assert "after capture rotation" in stable_stderr.getvalue()
+    assert transient_capture.getvalue() == ""
+
+
+def test_setup_fails_before_replacing_sinks_without_process_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing stable console stream is configuration failure, not a Loguru error."""
+    monkeypatch.setattr("sys.__stderr__", None)
+    with pytest.raises(ProcessStderrUnavailableError, match="cannot configure"):
+        setup(LoggingSettings(file_sink=False, json_sink=False), log_dir=tmp_path)

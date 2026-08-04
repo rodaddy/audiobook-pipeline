@@ -51,7 +51,6 @@ from audiobook_pipeline.utils.text import (
     strip_numbered_prefix,
     strip_part_suffix,
     strip_punctuation,
-    strip_subtitle_or_dash,
 )
 
 log = logger.bind(stage="matching")
@@ -78,7 +77,6 @@ _TITLE_RULES: tuple[Callable[[str], str], ...] = (
     strip_brackets,
     strip_part_suffix,
     strip_numbered_prefix,
-    strip_subtitle_or_dash,
     fold_accents,
     strip_punctuation,
 )

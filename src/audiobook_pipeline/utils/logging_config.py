@@ -65,6 +65,16 @@ LOG_FORMAT = (
 )
 
 
+class ProcessStderrUnavailableError(RuntimeError):
+    """Raised when the interpreter has no process stderr for console logging."""
+
+    def __init__(self) -> None:
+        """Describe the missing console sink and the required remediation."""
+        super().__init__(
+            "process stderr is unavailable; cannot configure console logging"
+        )
+
+
 def _default_stage(record: Record) -> bool:
     """Give every record a ``stage`` so the format string cannot fail.
 
@@ -97,10 +107,13 @@ def setup(settings: LoggingSettings, *, log_dir: Path) -> None:
             when a file sink is actually enabled -- a console-only run should
             not leave an empty directory behind.
     """
-    logger.remove()
+    process_stderr = sys.__stderr__
+    if process_stderr is None:
+        raise ProcessStderrUnavailableError
 
+    logger.remove()
     logger.add(
-        sys.stderr,
+        process_stderr,
         format=LOG_FORMAT,
         level=settings.level,
         filter=_default_stage,
