@@ -54,6 +54,11 @@ from audiobook_pipeline.utils.text import (
 
 log = logger.bind(stage="organize")
 
+#: Where a book goes when nothing identified its author. Named rather than
+#: written inline because the audit, the AI resolver, and the tests all have
+#: to agree on the exact string to recognise these later.
+UNKNOWN_AUTHOR = "Unknown Author"
+
 #: A marker file forcing this directory to be treated as the author folder.
 #: Exists for multi-author franchises (Dragonlance, Warhammer) where the
 #: catalogue's "author" changes per book but the shelf should not.
@@ -289,7 +294,20 @@ def build_library_path(
     Returns:
         The full destination path, including filename.
     """
-    author = sanitize_filename(metadata.author or "Unknown Author")
+    if not metadata.author:
+        # Filing under a placeholder is the right last resort -- refusing to
+        # place the book would strand a finished M4B in the work directory --
+        # but doing it SILENTLY is not. The shelf is where these go to be
+        # forgotten, and the two usual causes both have a fix the reader can
+        # apply, so name them here rather than in a doc they have not opened.
+        log.warning(
+            "no author for {!r}; filing under {!r}. Point the run at the "
+            "author folder rather than the book folder, or add a "
+            "'.author-override' marker, then re-run with --mode organize.",
+            metadata.title,
+            UNKNOWN_AUTHOR,
+        )
+    author = sanitize_filename(metadata.author or UNKNOWN_AUTHOR)
     if index is not None:
         author = index.match_author(author)
     destination = library_root / _reused_folder(library_root, author, index)

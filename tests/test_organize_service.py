@@ -11,10 +11,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from audiobook_pipeline.models.metadata import BookMetadata
 from audiobook_pipeline.services.organize import (
     AUTHOR_OVERRIDE_MARKER,
+    UNKNOWN_AUTHOR,
     _normalize,
     apply_author_override,
     book_stem,
@@ -407,3 +409,27 @@ def test_edition_notes_are_still_stripped() -> None:
 )
 def test_real_library_duplicates_are_matched(left: str, right: str) -> None:
     assert is_near_match(_normalize(left), _normalize(right))
+
+
+def test_a_book_with_no_author_is_filed_but_says_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The placeholder shelf is correct; going there quietly is not.
+
+    Refusing to place the book would strand a finished M4B in the work
+    directory, so the fallback stays. But "Unknown Author" is where books go
+    to be forgotten, and both usual causes -- pointing the run at the book
+    folder instead of the author folder, and a franchise needing a marker --
+    have a fix the reader can apply if anything tells them to.
+    """
+    handler_id = logger.add(caplog.handler, level="WARNING", format="{message}")
+    try:
+        destination = build_library_path(
+            tmp_path, BookMetadata(title="The Girl of Hrusch Avenue", author="")
+        )
+    finally:
+        logger.remove(handler_id)
+
+    assert UNKNOWN_AUTHOR in destination.parts
+    assert "no author" in caplog.text
+    assert ".author-override" in caplog.text

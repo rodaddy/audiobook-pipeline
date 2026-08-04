@@ -21,6 +21,7 @@ See Also:
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from pathlib import Path
 from typing import cast
@@ -31,6 +32,7 @@ from audiobook_pipeline.config import load_settings
 from audiobook_pipeline.db import queries
 from audiobook_pipeline.db.connection import connect
 from audiobook_pipeline.db.rows import BookRow
+from audiobook_pipeline.models.library import AuditFinding, AuditReport, LibraryDiff
 from audiobook_pipeline.services.audit import ALL_CHECKS, run_audit
 from audiobook_pipeline.services.library import compare_libraries
 
@@ -164,7 +166,6 @@ def _run_library_surface(
     """
     if target is not None:
         diff = compare_libraries(source, target)
-        failed = bool(diff.missing)
         payload = {
             "source_count": diff.source_count,
             "target_count": diff.target_count,
@@ -172,23 +173,93 @@ def _run_library_surface(
             "missing": len(diff.missing),
             "missing_books": [book.model_dump(mode="json") for book in diff.missing],
         }
-    else:
-        report = run_audit(source, checks=checks or ALL_CHECKS)
-        failed = report.count("critical") > 0
-        payload = report.model_dump(mode="json") | {
-            "summary": {
-                "total_issues": len(report.findings),
-                "critical": report.count("critical"),
-                "warning": report.count("warning"),
-                "info": report.count("info"),
-                "fixable": 0,
-            }
+        if json_out:
+            click.echo(json.dumps(payload, indent=2, default=str))
+        else:
+            _echo_diff(diff)
+        return int(bool(diff.missing))
+
+    report = run_audit(source, checks=checks or ALL_CHECKS)
+    payload = report.model_dump(mode="json") | {
+        "summary": {
+            "total_issues": len(report.findings),
+            "critical": report.count("critical"),
+            "warning": report.count("warning"),
+            "info": report.count("info"),
+            "fixable": 0,
         }
+    }
     if json_out:
-        click.echo(__import__("json").dumps(payload, indent=2, default=str))
+        click.echo(json.dumps(payload, indent=2, default=str))
     else:
-        click.echo(payload)
-    return int(failed)
+        _echo_audit(report)
+    return int(report.count("critical") > 0)
+
+
+def _echo_diff(diff: LibraryDiff) -> None:
+    """Print a source-to-target comparison for a person to read.
+
+    Args:
+        diff: The comparison to render.
+    """
+    click.echo(
+        f"{diff.source_count} book(s) in source, "
+        f"{diff.target_count} in target, {len(diff.missing)} missing."
+    )
+    if not diff.missing:
+        click.echo("Every source book is present in the target library.")
+        return
+    click.echo("\nMissing from the target library:")
+    for book in sorted(diff.missing, key=lambda item: (item.author, item.title)):
+        click.echo(f"  {book.title}")
+        # The "author" is whichever source folder held the book, which is only
+        # a person's name when the source is organised that way. Saying "under"
+        # rather than "by" keeps that honest -- the path is the useful fact.
+        click.echo(f"    under {book.path}")
+    click.echo(
+        "\nConvert them with:\n"
+        "  uv run audiobook-convert <source>\n"
+        "Run with --json-output to get this as JSON."
+    )
+
+
+def _echo_audit(report: AuditReport) -> None:
+    """Print a library audit for a person to read.
+
+    Findings are grouped by FILE rather than listed flat: a single untagged
+    book otherwise produces six lines that read as six problems.
+
+    Args:
+        report: The audit to render.
+    """
+    click.echo(f"Audited {report.total_files} file(s) in {report.library_root}.")
+    if not report.findings:
+        click.echo("No problems found.")
+        return
+
+    by_path: dict[str, list[AuditFinding]] = {}
+    for finding in report.findings:
+        by_path.setdefault(str(finding.path or "(library)"), []).append(finding)
+
+    for path, findings in sorted(by_path.items()):
+        click.echo(f"\n{path}")
+        for finding in findings:
+            click.echo(f"  {finding.severity:8} {finding.message}")
+
+    critical = report.count("critical")
+    click.echo(
+        f"\n{len(report.findings)} finding(s): "
+        f"{critical} critical, {report.count('warning')} warning, "
+        f"{report.count('info')} info."
+    )
+    if critical:
+        # Critical means Plex or Audiobookshelf will mis-shelve the book, so
+        # say what to do rather than leaving the reader to infer it.
+        click.echo(
+            "\nCritical findings are usually a book the catalogue could not "
+            "identify.\nRe-run those books with --mode metadata to retry "
+            "identity and tagging\nwithout re-encoding the audio."
+        )
 
 
 if __name__ == "__main__":
