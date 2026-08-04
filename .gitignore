@@ -23,6 +23,8 @@ manifests/
 
 # Python
 python/.venv/
+/.venv/
+/.venv-*/
 __pycache__/
 *.pyc
 

@@ -35,6 +35,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   updates, and unsafe quarantine path moves.
 - Corrected author parsing for `Author/Series/Book` trees and made critical
   audit findings and missing-library diffs return a nonzero status.
+- Excluded local uv environments from source distributions so package builds
+  cannot capture machine-specific Python symlinks.
 
 [Unreleased]: https://github.com/rodaddy/audiobook-pipeline/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/rodaddy/audiobook-pipeline/compare/v0.5.0...v1.0.0
