@@ -102,9 +102,9 @@ select = [
     "DTZ",    # flake8-datetimez -- naive datetimes
     "T10",    # flake8-debugger -- a committed set_trace() hangs CI on stdin
     "T20",    # flake8-print -- library code logs; scripts are exempt below
-    "S105",   # hardcoded-password-string
-    "S106",   # hardcoded-password-func-arg
-    "S107",   # hardcoded-password-default
+    "hardcoded-password-string",   # hardcoded-password-string
+    "hardcoded-password-func-arg",   # hardcoded-password-func-arg
+    "hardcoded-password-default",   # hardcoded-password-default
     "SIM",    # flake8-simplify
     "PTH",    # flake8-use-pathlib
     "RUF",    # ruff's own rules

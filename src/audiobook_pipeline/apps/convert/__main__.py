@@ -27,12 +27,18 @@ from pathlib import Path
 import click
 from loguru import logger
 
-from audiobook_pipeline.config import Settings, load_settings
+from audiobook_pipeline.config import PathSettings, Settings, load_settings
 from audiobook_pipeline.db import queries
 from audiobook_pipeline.db.connection import connect
 from audiobook_pipeline.models.book import BookDirectory
 from audiobook_pipeline.models.stage import PipelineMode, Stage, StageStatus
-from audiobook_pipeline.services.admission import BatchAdmission
+from audiobook_pipeline.services.admission import (
+    AdmissionError,
+    BatchAdmission,
+    InsufficientDiskSpaceError,
+    PipelineLeaseError,
+    SourceUnavailableError,
+)
 from audiobook_pipeline.services.batch import run_batch, statuses
 from audiobook_pipeline.services.discovery import discover_books
 from audiobook_pipeline.services.pipeline import (
@@ -171,17 +177,110 @@ def main(
             click.echo(_describe(book))
         return
 
-    with BatchAdmission(config.paths).admit(source):
-        with connect(config.paths.db_path) as conn:
-            books = discover_books(source, excluded=_simple_outputs(conn, source))
-            books.extend(_recovery_books(conn, books, PipelineMode(mode)))
-            books = _unique_books(books)
-            if limit is not None:
-                click.echo(f"Limiting to {limit} of {len(books)} book(s).")
-                books = books[:limit]
-        results = statuses(run_batch(books, config, source, PipelineMode(mode)))
+    # Before anything writes. Admission checks free space against work_dir,
+    # so a work_dir that does not exist yet -- the state of every first run
+    # against a fresh configuration -- failed there as an unhandled OSError
+    # and reached the user as a traceback.
+    _prepare_directories(config.paths)
+
+    try:
+        with BatchAdmission(config.paths).admit(source):
+            results = _run_admitted(source, config, mode=mode, limit=limit)
+    except AdmissionError as exc:
+        # A traceback is the wrong answer to a condition the user can fix.
+        # Every one of these has a known cause and a next step; the class
+        # name alone told them neither.
+        raise click.ClickException(_admission_advice(exc, config.paths)) from exc
 
     sys.exit(_report(results))
+
+
+def _prepare_directories(paths: PathSettings) -> None:
+    """Create the pipeline's own directories, or explain why it could not.
+
+    Args:
+        paths: The configured paths.
+
+    Raises:
+        click.ClickException: The directories could not be created, carrying
+            the reason and what to check.
+    """
+    try:
+        paths.ensure_dirs()
+    except OSError as exc:
+        # exc.filename names the directory that actually failed, which is not
+        # necessarily data_dir -- each path is configurable separately, and
+        # naming the wrong one sends the reader to the wrong setting.
+        culprit = exc.filename or paths.data_dir
+        message = (
+            f"Could not create the pipeline directory {culprit}.\n"
+            f"{exc.strerror or exc}\n"
+            "That path is usually unwritable because a network share is "
+            "disconnected, the volume is read-only, or the configured path is "
+            "wrong. Check it in the profile or AUDIOBOOK_PATHS__ variables."
+        )
+        raise click.ClickException(message) from exc
+
+
+def _run_admitted(
+    source: Path, config: Settings, *, mode: str, limit: int | None
+) -> list[str]:
+    """Discover and convert, inside an already-granted admission lease.
+
+    Args:
+        source: Directory to convert.
+        config: Resolved settings.
+        mode: Which stage sequence to run.
+        limit: Process at most this many books, or None for all.
+
+    Returns:
+        The per-book statuses of the batch.
+    """
+    with connect(config.paths.db_path) as conn:
+        books = discover_books(source, excluded=_simple_outputs(conn, source))
+        books.extend(_recovery_books(conn, books, PipelineMode(mode)))
+        books = _unique_books(books)
+        if limit is not None:
+            click.echo(f"Limiting to {limit} of {len(books)} book(s).")
+            books = books[:limit]
+    return statuses(run_batch(books, config, source, PipelineMode(mode)))
+
+
+def _admission_advice(error: AdmissionError, paths: PathSettings) -> str:
+    """Turn a refused admission into something the reader can act on.
+
+    Args:
+        error: The refusal raised by ``BatchAdmission``.
+        paths: The configured paths, so the message can name the one at fault.
+
+    Returns:
+        A message stating what happened and what to do about it.
+    """
+    if isinstance(error, PipelineLeaseError):
+        return (
+            "Another conversion is already running, so this one stopped rather "
+            f"than compete for the same files.\nIf nothing else is running, a "
+            f"previous run was killed and left its lease behind: remove the "
+            f"lock file under {paths.lock_dir} and try again."
+        )
+    if isinstance(error, InsufficientDiskSpaceError):
+        return (
+            f"Not enough free space on the volume holding {paths.work_dir}.\n"
+            "Conversion needs room for the source plus the encoded output. "
+            "Free some space, or point paths.work_dir at a larger volume."
+        )
+    if isinstance(error, SourceUnavailableError):
+        return (
+            "The source path could not be read as a file or a directory.\n"
+            "Check the path is spelled correctly and, if it is on a network "
+            "share, that the share is still mounted."
+        )
+    return (
+        f"Could not check free space against {paths.work_dir} before starting.\n"
+        "That directory is usually unreadable because a network share is "
+        "disconnected or the configured path does not exist. Confirm it is "
+        "reachable, then try again."
+    )
 
 
 if __name__ == "__main__":

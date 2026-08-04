@@ -190,3 +190,50 @@ def test_real_run_bounds_merged_work_and_parses_mode(
     assert probe.submitted == list(expected_visible)
     assert probe.mode is PipelineMode.METADATA
     assert "Limiting to 2 of 3 book(s)." in result.output
+
+
+def test_a_first_run_creates_its_own_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing exists yet on a first run, and that is not an error.
+
+    Admission checks free space against work_dir. When work_dir did not exist
+    the check raised an unhandled OSError that reached the user as a Python
+    traceback -- the state of every first run against a fresh configuration.
+    """
+    source = tmp_path / "source"
+    source.mkdir()
+    settings = configured_settings(tmp_path / "fresh")
+    monkeypatch.setattr(convert_app, "load_settings", lambda **_: settings)
+    monkeypatch.setattr(convert_app, "discover_books", lambda *_a, **_k: [])
+    monkeypatch.setattr(convert_app, "run_batch", lambda *_a, **_k: None)
+    monkeypatch.setattr(convert_app, "statuses", lambda _: ())
+
+    result = CliRunner().invoke(convert_app.main, [str(source)])
+
+    assert "Traceback" not in result.output
+    assert settings.paths.work_dir.is_dir()
+
+
+def test_an_unwritable_directory_is_reported_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path the user can fix must not arrive as a traceback.
+
+    The message names the directory that actually failed rather than
+    data_dir, because each path is configured separately and naming the
+    wrong one sends the reader to the wrong setting.
+    """
+    source = tmp_path / "source"
+    source.mkdir()
+    blocked = tmp_path / "blocked"
+    blocked.mkdir(mode=0o500)
+    settings = configured_settings(blocked / "denied")
+    monkeypatch.setattr(convert_app, "load_settings", lambda **_: settings)
+
+    result = CliRunner().invoke(convert_app.main, [str(source)])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "Could not create the pipeline directory" in result.output
+    assert str(blocked / "denied") in result.output
