@@ -598,3 +598,58 @@ class TestRealWorldPartNaming:
         diff = compare_libraries(source, target)
         assert diff.source_count == 1
         assert diff.missing[0].title == "Fahrenheit 451"
+
+
+# ---------------------------------------------------------------------------
+# Author identity: a title alone does not identify a book
+# ---------------------------------------------------------------------------
+
+
+class TestSameTitleDifferentAuthor:
+    """Two authors really do publish books under one title.
+
+    Both failures below report an unconverted book as already converted,
+    which is the one direction this tool must never fail in: a book in
+    ``missing`` gets converted, a book wrongly in ``matched`` is never
+    looked at again.
+    """
+
+    def test_two_authors_sharing_a_title_are_two_books(self, tmp_path: Path) -> None:
+        """Deduplicating on title alone erased one of them entirely."""
+        source = _make_library(
+            tmp_path,
+            "source",
+            {
+                "R.A. Salvatore/Homeland/Homeland.mp3": b"\x00",
+                "Barbara Hambly/Homeland/Homeland.mp3": b"\x00",
+            },
+        )
+        target = _make_library(
+            tmp_path,
+            "target",
+            {"R.A. Salvatore/Homeland/Homeland.m4b": b"\x00"},
+        )
+        diff = compare_libraries(source, target)
+
+        assert diff.source_count == 2
+        assert [book.author for book in diff.missing] == ["Barbara Hambly"]
+        assert [book.author for book in diff.matched] == ["R.A. Salvatore"]
+
+    def test_a_title_match_under_another_author_is_not_a_match(
+        self, tmp_path: Path
+    ) -> None:
+        """Scoping by author must actually constrain the comparison."""
+        source = _make_library(
+            tmp_path,
+            "source",
+            {"Barbara Hambly/Homeland/Homeland.mp3": b"\x00"},
+        )
+        target = _make_library(
+            tmp_path,
+            "target",
+            {"R.A. Salvatore/Homeland/Homeland.m4b": b"\x00"},
+        )
+        diff = compare_libraries(source, target)
+
+        assert [book.author for book in diff.missing] == ["Barbara Hambly"]
+        assert diff.matched == ()

@@ -11,7 +11,7 @@ from loguru import logger
 from audiobook_pipeline.models.book import SOURCE_EXTENSIONS
 from audiobook_pipeline.models.library import LibraryBook, LibraryDiff
 from audiobook_pipeline.services.matching import normalize_title, titles_match
-from audiobook_pipeline.services.names import normalize_author
+from audiobook_pipeline.services.names import looks_like_author, normalize_author
 
 log = logger.bind(stage="library")
 
@@ -61,8 +61,7 @@ def compare_libraries(source: Path, target: Path) -> LibraryDiff:
     target_by_author: dict[str, set[str]] = defaultdict(set)
     for book in target_books:
         target_by_author[book.author_key].add(book.title_key)
-    all_titles = set().union(*target_by_author.values()) if target_by_author else set()
-    matched, missing = _partition(source_books, target_by_author, all_titles)
+    matched, missing = _partition(source_books, target_by_author)
     log.info(
         "library diff source={} target={} missing={}",
         len(source_books),
@@ -135,29 +134,84 @@ def _collapse(entries: list[tuple[LibraryBook, str]]) -> tuple[LibraryBook, ...]
 
 
 def _deduplicate(books: tuple[LibraryBook, ...]) -> tuple[LibraryBook, ...]:
-    """Keep the first source occurrence of a non-empty normalized title."""
-    seen: set[str] = set()
+    """Keep the first source occurrence of one author's non-empty title.
+
+    Keyed on AUTHOR AND TITLE. A title alone does not identify a book: two
+    authors really do publish under one name, and keying on the title alone
+    dropped every book after the first that shared it. Measured with
+    Salvatore's and Hambly's "Homeland" -- the diff reported one source book
+    where there were two, and the survivor was then matched against the other
+    author's file.
+
+    The purpose of this pass is the same book reached by two paths (a copy in
+    ``NewBooks/`` and in ``Original/``), which shares an author as well as a
+    title.
+    """
+    seen: set[tuple[str, str]] = set()
     result: list[LibraryBook] = []
     for book in books:
-        if book.title_key and book.title_key in seen:
+        key = (book.author_key, book.title_key)
+        if book.title_key and key in seen:
+            log.debug("duplicate source book {} -- {}", book.author, book.title)
             continue
         if book.title_key:
-            seen.add(book.title_key)
+            seen.add(key)
         result.append(book)
     return tuple(result)
 
 
 def _partition(
-    books: tuple[LibraryBook, ...], by_author: dict[str, set[str]], all_titles: set[str]
+    books: tuple[LibraryBook, ...], by_author: dict[str, set[str]]
 ) -> tuple[list[LibraryBook], list[LibraryBook]]:
-    """Split source books according to exact or fuzzy title presence."""
+    """Split source books according to exact or fuzzy title presence.
+
+    The author scopes the comparison. Unioning the author's titles with every
+    title in the library -- which is what this did -- means the author key
+    constrains nothing, and a book is declared converted because a DIFFERENT
+    author published something with the same name. Measured with Hambly's
+    "Homeland" against Salvatore's: reported as already converted, so it would
+    never have been converted.
+
+    Cross-author matching is still needed for the franchise case, where the
+    source files a book under "Dragonlance" and the finished library files it
+    under the person who wrote it. That is a FALLBACK, tried only when the
+    author-scoped comparison finds nothing, and only when the source folder is
+    not a person's name -- a real author's book missing from its own author is
+    missing, whatever else shares its title.
+    """
     matched: list[LibraryBook] = []
     missing: list[LibraryBook] = []
     for book in books:
-        candidates = by_author.get(book.author_key, set()) | all_titles
-        (
-            matched
-            if any(titles_match(book.title_key, title) for title in candidates)
-            else missing
-        ).append(book)
+        (matched if _is_present(book, by_author) else missing).append(book)
     return matched, missing
+
+
+def _is_present(book: LibraryBook, by_author: dict[str, set[str]]) -> bool:
+    """Whether one source book already exists in the finished target."""
+    own_titles = by_author.get(book.author_key, set())
+    # Exact first: the common case is a set lookup, not a fuzzy sweep over
+    # every title in the library.
+    if book.title_key in own_titles:
+        return True
+    if any(titles_match(book.title_key, title) for title in own_titles):
+        log.debug("{} -- {}: fuzzy match under its own author", book.author, book.title)
+        return True
+    # Cross-author fallback, for the franchise case: one side files the book
+    # under an umbrella ("Dragonlance") and the other under the person who
+    # wrote it. Legitimate when EITHER side names no person -- the source
+    # folder here, or the target folder holding the matching title.
+    #
+    # It is NOT legitimate between two real authors. That is the union bug:
+    # Hambly's "Homeland" declared converted because Salvatore published one.
+    for holder, titles in by_author.items():
+        if holder == book.author_key:
+            continue
+        if looks_like_author(book.author) and looks_like_author(holder):
+            continue
+        if book.title_key in titles or any(
+            titles_match(book.title_key, title) for title in titles
+        ):
+            log.debug("{} -- {}: matched under {!r}", book.author, book.title, holder)
+            return True
+    log.debug("{} -- {}: absent from its own author", book.author, book.title)
+    return False
