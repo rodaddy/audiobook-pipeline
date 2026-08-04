@@ -1,6 +1,7 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
+# dependencies = ["loguru>=0.7"]
 # ///
 """Find m4b files in the audiobook library with missing artist tags.
 
@@ -9,8 +10,9 @@ for an artist tag. Files with empty/missing artist are written to the
 report file for batch re-tagging.
 
 Usage:
-    uv run scripts/find_untagged.py [--library PATH] [--output PATH]
+    uv run scripts/ops/find_untagged.py [--library PATH] [--output PATH]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,8 +21,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from loguru import logger
+
 DEFAULT_LIBRARY = Path("/Volumes/media_files/AudioBooks")
-DEFAULT_OUTPUT = Path(".reports/untagged-m4b-files.txt")
+DEFAULT_OUTPUT = Path("_reports/untagged-m4b-files.txt")
 
 
 def get_artist_tag(filepath: Path) -> str:
@@ -43,9 +47,19 @@ def get_artist_tag(filepath: Path) -> str:
         )
         if result.returncode != 0:
             return ""
-        data = json.loads(result.stdout)
-        return data.get("format", {}).get("tags", {}).get("artist", "")
-    except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError):
+        data: object = json.loads(result.stdout)
+        if not isinstance(data, dict):
+            return ""
+        format_data: object = data.get("format")
+        if not isinstance(format_data, dict):
+            return ""
+        tags: object = format_data.get("tags")
+        if not isinstance(tags, dict):
+            return ""
+        artist: object = tags.get("artist")
+        return artist if isinstance(artist, str) else ""
+    except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("could not read artist tag from {}: {}", filepath, exc)
         return ""
 
 
@@ -69,6 +83,7 @@ def scan_library(library: Path) -> list[Path]:
 
 
 def main() -> None:
+    """Write a report of library books whose artist tag is empty."""
     parser = argparse.ArgumentParser(description="Find untagged m4b files")
     parser.add_argument(
         "--library",
@@ -92,7 +107,7 @@ def main() -> None:
 
     # Write report
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with open(args.output, "w") as f:
+    with args.output.open("w") as f:
         for filepath in untagged:
             f.write(f"{filepath}\n")
 

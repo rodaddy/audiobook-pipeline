@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -81,12 +80,11 @@ def context(db: sqlite3.Connection, settings: Settings) -> RunContext:
     return RunContext(config=settings, conn=db, client=client)
 
 
-@dataclass
 class StageFakes:
     """Lightweight stand-ins that expose the pipeline's stage calls."""
 
-    calls: dict[str, int] = field(
-        default_factory=lambda: {
+    def __init__(self) -> None:
+        self.calls: dict[str, int] = {
             "validate": 0,
             "concat": 0,
             "convert": 0,
@@ -95,7 +93,6 @@ class StageFakes:
             "archive": 0,
             "cleanup": 0,
         }
-    )
 
     def validate_book(
         self, book: BookDirectory, _: object, __: object, book_hash: str

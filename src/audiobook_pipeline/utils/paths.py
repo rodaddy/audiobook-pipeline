@@ -100,15 +100,7 @@ def _truncate_to_bytes(value: str, limit: int) -> str:
     if len(encoded) <= limit:
         return value
 
-    trimmed = encoded[:limit]
-    # Walk back to a valid boundary. At most 3 bytes of a 4-byte codepoint can
-    # be left dangling, so this loop runs at most three times.
-    while trimmed:
-        try:
-            return trimmed.decode("utf-8")
-        except UnicodeDecodeError:
-            trimmed = trimmed[:-1]
-    return ""
+    return encoded[:limit].decode("utf-8", errors="ignore")
 
 
 def sanitize_filename(filename: str, *, max_bytes: int = MAX_COMPONENT_BYTES) -> str:

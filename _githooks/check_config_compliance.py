@@ -50,6 +50,8 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
+from loguru import logger
+
 #: Modules allowed to read the environment. ``config.py`` is the keystone; the
 #: settings module in a src-layout package may also legitimately be named for
 #: its package. Nothing else, ever.
@@ -192,7 +194,8 @@ def _check_file(path: Path) -> list[Violation]:
     """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except (SyntaxError, UnicodeDecodeError):
+    except (SyntaxError, UnicodeDecodeError) as exc:
+        logger.warning("could not parse {} for config compliance: {}", path, exc)
         return []
 
     violations: list[Violation] = []
