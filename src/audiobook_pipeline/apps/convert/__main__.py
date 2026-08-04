@@ -27,19 +27,17 @@ from pathlib import Path
 import click
 from loguru import logger
 
-from audiobook_pipeline.config import load_settings
+from audiobook_pipeline.config import Settings, load_settings
 from audiobook_pipeline.db import queries
 from audiobook_pipeline.db.connection import connect
 from audiobook_pipeline.models.book import BookDirectory
 from audiobook_pipeline.models.stage import PipelineMode, Stage, StageStatus
+from audiobook_pipeline.services.admission import BatchAdmission
+from audiobook_pipeline.services.batch import run_batch, statuses
 from audiobook_pipeline.services.discovery import discover_books
 from audiobook_pipeline.services.pipeline import (
-    RunContext,
     book_from_row,
-    book_hash,
-    process_book,
 )
-from audiobook_pipeline.utils.http import build_client
 
 log = logger.bind(stage="convert-cli")
 
@@ -78,13 +76,28 @@ def _recovery_books(
     conn: sqlite3.Connection, books: list[BookDirectory], mode: PipelineMode
 ) -> list[BookDirectory]:
     """Return failed database rows no longer visible to filesystem discovery."""
-    known = {book_hash(book) for book in books}
-    rows = queries.list_books(conn, mode=mode.value)
-    return [
-        book_from_row(row)
-        for row in rows
-        if row.status != "completed" and row.book_hash not in known
-    ]
+    visible = {book.identity_path.resolve() for book in books}
+    recovered: list[BookDirectory] = []
+    for row in queries.list_books(conn, mode=mode.value):
+        source = Path(row.source_path).resolve()
+        if row.status == "completed" or source in visible:
+            continue
+        visible.add(source)
+        recovered.append(book_from_row(row))
+    return recovered
+
+
+def _unique_books(books: list[BookDirectory]) -> list[BookDirectory]:
+    """Keep the first deterministic book for every normalized source identity."""
+    unique: list[BookDirectory] = []
+    seen: set[Path] = set()
+    for book in books:
+        identity = book.identity_path.resolve()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique.append(book)
+    return unique
 
 
 def _simple_outputs(conn: sqlite3.Connection, source: Path) -> frozenset[Path]:
@@ -100,6 +113,19 @@ def _simple_outputs(conn: sqlite3.Connection, source: Path) -> frozenset[Path]:
         and Path(stage.output_file).resolve().is_relative_to(source.resolve())
     }
     return frozenset(outputs)
+
+
+def _dry_run_books(source: Path, config: Settings) -> list[BookDirectory]:
+    """Discover without creating a pipeline database or taking the batch lease."""
+    db_path = config.paths.db_path
+    if not db_path.is_file():
+        return discover_books(source)
+    connection = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        return discover_books(source, excluded=_simple_outputs(connection, source))
+    finally:
+        connection.close()
 
 
 @click.command()
@@ -135,27 +161,25 @@ def main(
     """Convert the audiobooks under SOURCE into the configured library."""
     config = load_settings(profile=profile)
 
-    with connect(config.paths.db_path) as conn:
-        books = discover_books(source, excluded=_simple_outputs(conn, source))
+    if dry_run:
+        books = _dry_run_books(source, config)
         if limit is not None:
             click.echo(f"Limiting to {limit} of {len(books)} discovered book(s).")
             books = books[:limit]
+        click.echo(f"{len(books)} book(s) under {source}:")
+        for book in books:
+            click.echo(_describe(book))
+        return
 
-        if dry_run:
-            click.echo(f"{len(books)} book(s) under {source}:")
-            for book in books:
-                click.echo(_describe(book))
-            return
-
-        with build_client() as client:
-            context = RunContext(
-                config=config, conn=conn, client=client, source_root=source
-            )
+    with BatchAdmission(config.paths).admit(source):
+        with connect(config.paths.db_path) as conn:
+            books = discover_books(source, excluded=_simple_outputs(conn, source))
             books.extend(_recovery_books(conn, books, PipelineMode(mode)))
-            results = [
-                process_book(book, context, mode=PipelineMode(mode)).status
-                for book in books
-            ]
+            books = _unique_books(books)
+            if limit is not None:
+                click.echo(f"Limiting to {limit} of {len(books)} book(s).")
+                books = books[:limit]
+        results = statuses(run_batch(books, config, source, PipelineMode(mode)))
 
     sys.exit(_report(results))
 

@@ -137,11 +137,12 @@ def test_aac_source_is_copied_not_re_encoded(
         tmp_path / "in.m4b",
         tmp_path / "out.m4b",
         chapters_of(2),
-        EncodingSettings(max_bitrate=128),
+        EncodingSettings(max_bitrate=128, threads=3),
     )
 
     assert flag(captured[0], "-c:a") == "copy"
     assert "-b:a" not in captured[0]
+    assert "-threads" not in captured[0]
 
 
 def test_high_bitrate_aac_is_re_encoded(
@@ -157,6 +158,22 @@ def test_high_bitrate_aac_is_re_encoded(
     )
 
     assert flag(captured[0], "-b:a") == "128k"
+
+
+def test_reencode_receives_a_positive_scheduler_thread_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured: list[list[str]]
+) -> None:
+    """A worker budget reaches FFmpeg only when this invocation re-encodes."""
+    set_source(monkeypatch, codec="mp3", bit_rate=128_000)
+
+    convert_to_m4b(
+        tmp_path / "in.mp3",
+        tmp_path / "out.m4b",
+        chapters_of(1),
+        EncodingSettings(threads=3),
+    )
+
+    assert flag(captured[0], "-threads") == "3"
 
 
 # ---------------------------------------------------------------------------

@@ -214,6 +214,9 @@ class EncodingSettings(BaseModel):
     max_parallel_converts: int = Field(default=0, ge=0, le=64)
     cpu_ceiling: float = Field(default=80.0, gt=0, le=100)
 
+    #: Per-worker FFmpeg threads. Zero preserves FFmpeg's automatic choice.
+    threads: int = Field(default=0, ge=0, le=256)
+
 
 class PermissionSettings(BaseModel):
     """POSIX ownership and mode applied to output files.

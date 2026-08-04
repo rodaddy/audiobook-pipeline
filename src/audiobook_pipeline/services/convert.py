@@ -135,7 +135,7 @@ def _encode_args(*, bitrate_kbps: int, settings: EncodingSettings) -> list[str]:
         f"{bitrate_kbps}k",
         "-ac",
         str(settings.channels),
-    ]
+    ] + (["-threads", str(settings.threads)] if settings.threads > 0 else [])
 
 
 def convert_to_m4b(

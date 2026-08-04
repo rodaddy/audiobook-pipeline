@@ -219,6 +219,7 @@ files = [
     "tests/test_pipeline_ai.py",
     "tests/test_metadata.py",
     "tests/test_watch.py",
+    "tests/test_batch.py",
     "tests/test_watch_recovery.py",
 ]
 strict = true
@@ -305,6 +306,7 @@ testpaths = [
     "tests/test_pipeline_ai.py",
     "tests/test_metadata.py",
     "tests/test_watch.py",
+    "tests/test_batch.py",
     "tests/test_watch_recovery.py",
 ]
 # Fail on an unregistered mark rather than silently skipping the test it was
