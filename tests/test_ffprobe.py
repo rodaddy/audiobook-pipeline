@@ -1,141 +1,100 @@
-"""Tests for ffprobe subprocess wrappers."""
+"""Regression tests for the typed ffprobe boundary."""
 
+from __future__ import annotations
+
+import json
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
 
-from audiobook_pipeline.ffprobe import (
-    count_chapters,
-    duration_to_timestamp,
-    get_bitrate,
-    get_channels,
-    get_codec,
-    get_duration,
-    get_sample_rate,
-    validate_audio_file,
-)
+import pytest
+
+from audiobook_pipeline.utils.ffmpeg import FfmpegError, probe
 
 
-def _mock_result(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
+def _completed(
+    payload: object, returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
-        args=[], returncode=returncode, stdout=stdout, stderr="",
+        args=["ffprobe"],
+        returncode=returncode,
+        stdout=json.dumps(payload),
+        stderr="bad",
     )
 
 
-class TestGetDuration:
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_parses_float(self, mock_run):
-        mock_run.return_value = _mock_result("123.456\n")
-        assert get_duration(Path("test.mp3")) == 123.456
-
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_empty_output_raises(self, mock_run):
-        import pytest
-        mock_run.return_value = _mock_result("")
-        with pytest.raises(ValueError, match="empty duration"):
-            get_duration(Path("test.mp3"))
-
-
-class TestGetBitrate:
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_parses_int(self, mock_run):
-        mock_run.return_value = _mock_result("128000\n")
-        assert get_bitrate(Path("test.mp3")) == 128000
-
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_empty_output_raises(self, mock_run):
-        import pytest
-        mock_run.return_value = _mock_result("")
-        with pytest.raises(ValueError, match="empty bitrate"):
-            get_bitrate(Path("test.mp3"))
+def _payload() -> dict[str, object]:
+    return {
+        "format": {"duration": "123.456", "format_name": "mp3"},
+        "streams": [
+            {
+                "codec_name": "aac",
+                "sample_rate": "44100",
+                "channels": 2,
+                "bit_rate": "128000",
+            }
+        ],
+        "chapters": [
+            {"start_time": "0", "end_time": "60", "tags": {"title": "One"}},
+            {"start_time": "60", "end_time": "123.456", "tags": {}},
+        ],
+    }
 
 
-class TestGetCodec:
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_parses_string(self, mock_run):
-        mock_run.return_value = _mock_result("aac\n")
-        assert get_codec(Path("test.mp3")) == "aac"
+def test_probe_returns_typed_media_and_chapters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        subprocess, "run", lambda *args, **kwargs: _completed(_payload())
+    )
+
+    result = probe(tmp_path / "book.mp3")
+
+    assert result.duration_ms == 123_456
+    assert result.stream.codec == "aac"
+    assert result.stream.bit_rate == 128_000
+    assert result.stream.channels == 2
+    assert result.stream.sample_rate == 44_100
+    assert [chapter.title for chapter in result.chapters.chapters] == [
+        "One",
+        "Chapter 2",
+    ]
 
 
-class TestGetChannels:
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_parses_int(self, mock_run):
-        mock_run.return_value = _mock_result("2\n")
-        assert get_channels(Path("test.mp3")) == 2
-
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_empty_output_raises(self, mock_run):
-        import pytest
-        mock_run.return_value = _mock_result("")
-        with pytest.raises(ValueError, match="empty channel count"):
-            get_channels(Path("test.mp3"))
-
-
-class TestGetSampleRate:
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_parses_int(self, mock_run):
-        mock_run.return_value = _mock_result("44100\n")
-        assert get_sample_rate(Path("test.mp3")) == 44100
-
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_empty_output_raises(self, mock_run):
-        import pytest
-        mock_run.return_value = _mock_result("")
-        with pytest.raises(ValueError, match="empty sample rate"):
-            get_sample_rate(Path("test.mp3"))
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"format": {}, "streams": [{}]}, "no readable duration"),
+        ({"format": {"duration": "0"}, "streams": [{}]}, "duration of zero"),
+        ({"format": {"duration": "1"}, "streams": []}, "no audio stream"),
+    ],
+)
+def test_probe_rejects_incomplete_audio(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    payload: object,
+    message: str,
+) -> None:
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(payload))
+    with pytest.raises(FfmpegError, match=message):
+        probe(tmp_path / "bad.mp3")
 
 
-class TestValidateAudioFile:
-    def test_missing_file(self, tmp_path):
-        assert validate_audio_file(tmp_path / "nonexistent.mp3") is False
-
-    @patch("audiobook_pipeline.ffprobe.get_codec")
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_valid_file(self, mock_run, mock_codec, tmp_path):
-        f = tmp_path / "test.mp3"
-        f.write_bytes(b"fake")
-        mock_run.return_value = _mock_result()
-        mock_codec.return_value = "mp3"
-        assert validate_audio_file(f) is True
-
-    @patch("audiobook_pipeline.ffprobe._run_ffprobe")
-    def test_ffprobe_fails(self, mock_run, tmp_path):
-        f = tmp_path / "test.mp3"
-        f.write_bytes(b"fake")
-        mock_run.return_value = _mock_result(returncode=1)
-        assert validate_audio_file(f) is False
+def test_probe_rejects_invalid_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    completed = subprocess.CompletedProcess(
+        args=["ffprobe"], returncode=0, stdout="not json", stderr=""
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: completed)
+    with pytest.raises(FfmpegError, match="unparseable JSON"):
+        probe(tmp_path / "bad.mp3")
 
 
-class TestDurationToTimestamp:
-    def test_zero(self):
-        assert duration_to_timestamp(0) == "00:00:00"
-
-    def test_hours(self):
-        assert duration_to_timestamp(3661) == "01:01:01"
-
-    def test_fractional(self):
-        assert duration_to_timestamp(90.7) == "00:01:30"
-
-
-class TestCountChapters:
-    @patch("subprocess.run")
-    def test_with_chapters(self, mock_run):
-        mock_run.return_value = _mock_result(
-            '{"chapters": [{"id": 0}, {"id": 1}, {"id": 2}]}'
-        )
-        assert count_chapters(Path("test.m4b")) == 3
-
-    @patch("subprocess.run")
-    def test_no_chapters(self, mock_run):
-        mock_run.return_value = _mock_result('{"chapters": []}')
-        assert count_chapters(Path("test.mp3")) == 0
-
-    @patch("subprocess.run")
-    def test_ffprobe_error(self, mock_run):
-        mock_run.return_value = _mock_result(returncode=1)
-        assert count_chapters(Path("test.mp3")) == 0
-
-    @patch("subprocess.run")
-    def test_invalid_json(self, mock_run):
-        mock_run.return_value = _mock_result("not json")
-        assert count_chapters(Path("test.mp3")) == 0
+def test_probe_surfaces_process_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        subprocess, "run", lambda *args, **kwargs: _completed({}, returncode=1)
+    )
+    with pytest.raises(FfmpegError, match="bad"):
+        probe(tmp_path / "bad.mp3")

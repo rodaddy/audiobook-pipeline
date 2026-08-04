@@ -26,17 +26,15 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from typing import TypeVar
 
 from loguru import logger
 from pydantic import BaseModel
 
 from audiobook_pipeline.db.connection import model_columns
 from audiobook_pipeline.db.rows import BookRow, LockRow, StageRow, utc_now
+from audiobook_pipeline.errors import ManifestError
 
 log = logger.bind(stage="db")
-
-ModelT = TypeVar("ModelT", bound=BaseModel)
 
 #: The one lock the pipeline takes. Named rather than parameterised because
 #: there is exactly one section that must not run twice -- reorganising the
@@ -57,7 +55,9 @@ def _select_list(model: type[BaseModel]) -> str:
     return ", ".join(model_columns(model))
 
 
-def _one(cursor: sqlite3.Cursor, model: type[ModelT]) -> ModelT | None:
+def _one[ModelT: BaseModel](
+    cursor: sqlite3.Cursor, model: type[ModelT]
+) -> ModelT | None:
     """Validate at most one row into a model.
 
     Args:
@@ -71,7 +71,9 @@ def _one(cursor: sqlite3.Cursor, model: type[ModelT]) -> ModelT | None:
     return model.model_validate(dict(row)) if row is not None else None
 
 
-def _all(cursor: sqlite3.Cursor, model: type[ModelT]) -> list[ModelT]:
+def _all[ModelT: BaseModel](
+    cursor: sqlite3.Cursor, model: type[ModelT]
+) -> list[ModelT]:
     """Validate every row into models.
 
     Args:
@@ -82,6 +84,24 @@ def _all(cursor: sqlite3.Cursor, model: type[ModelT]) -> list[ModelT]:
         One model per row, in query order.
     """
     return [model.model_validate(dict(row)) for row in cursor.fetchall()]
+
+
+def _require_book_mutation(
+    conn: sqlite3.Connection,
+    cursor: sqlite3.Cursor,
+    book_hash: str,
+    operation: str,
+) -> None:
+    """Reject a mutation that matched no persisted book."""
+    if cursor.rowcount == 1:
+        return
+    conn.rollback()
+    raise _missing_book(operation, book_hash)
+
+
+def _missing_book(operation: str, book_hash: str) -> ManifestError:
+    """Build an operator-safe missing-book failure."""
+    return ManifestError(f"Cannot {operation}: book {book_hash!a} was not found")
 
 
 # ---------------------------------------------------------------------------
@@ -159,10 +179,11 @@ def update_book(conn: sqlite3.Connection, book: BookRow) -> None:
     columns = [name for name in model_columns(BookRow) if name != "book_hash"]
     assignments = ", ".join(f"{name} = ?" for name in columns)
     values = tuple(getattr(stamped, name) for name in columns)
-    conn.execute(
+    cursor = conn.execute(
         f"UPDATE books SET {assignments} WHERE book_hash = ?",
         (*values, stamped.book_hash),
     )
+    _require_book_mutation(conn, cursor, stamped.book_hash, "update book")
     conn.commit()
 
 
@@ -222,11 +243,12 @@ def increment_retry(conn: sqlite3.Connection, book_hash: str) -> int:
         The new retry count. Returned rather than written and forgotten,
         because the caller's next decision is whether it has hit max_retries.
     """
-    conn.execute(
+    cursor = conn.execute(
         "UPDATE books SET retry_count = retry_count + 1, updated_at = ? "
         "WHERE book_hash = ?",
         (utc_now(), book_hash),
     )
+    _require_book_mutation(conn, cursor, book_hash, "increment retry count")
     conn.commit()
     row = conn.execute(
         "SELECT retry_count FROM books WHERE book_hash = ?", (book_hash,)
@@ -247,11 +269,12 @@ def store_cover(conn: sqlite3.Connection, book_hash: str, image: bytes) -> None:
         book_hash: The book the art belongs to.
         image: Encoded image bytes.
     """
-    conn.execute(
+    cursor = conn.execute(
         "UPDATE books SET cover_art = ?, cover_art_size = ?, updated_at = ? "
         "WHERE book_hash = ?",
         (image, len(image), utc_now(), book_hash),
     )
+    _require_book_mutation(conn, cursor, book_hash, "store cover art")
     conn.commit()
     log.debug("stored {} bytes of cover art for {}", len(image), book_hash)
 
@@ -409,11 +432,13 @@ def _holder_is_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
+        log.warning("lock holder pid {} no longer exists", pid)
         return False
     except PermissionError:
         # Exists, owned by someone else. Alive as far as this matters -- and
         # NOT stealable, which is why this is distinguished from not-found
         # rather than folded into a bare `except OSError`.
+        log.warning("lock holder pid {} exists but is owned by another user", pid)
         return True
     return True
 
@@ -439,6 +464,7 @@ def acquire_lock(conn: sqlite3.Connection, name: str = REORGANIZE_LOCK) -> bool:
         )
         conn.commit()
     except sqlite3.IntegrityError:
+        log.warning("lock {!r} already exists; checking its holder", name)
         return _steal_if_dead(conn, name)
     else:
         return True
