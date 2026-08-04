@@ -1,43 +1,76 @@
-"""Author canonicalization: same person merges, different people do not.
+"""Legacy canonical-author guards on the durable index API."""
 
-A shared surname is not identity. The sole-surname-match fallback used to
-accept any single candidate, which filed Michael Williams's book under Tad
-Williams -- one author's work landing on another author's shelf, which in Plex
-and Prologue is indistinguishable from losing it.
-"""
+from __future__ import annotations
 
-from audiobook_pipeline.library_index import _given_names_compatible
+from pathlib import Path
+
+import pytest
+
+from audiobook_pipeline.models.index import FolderIdentity, IndexOptions
+from audiobook_pipeline.services.index import (
+    LibraryIndex,
+    SQLiteIndexStore,
+    sqlite_connection_factory,
+)
 
 
-class TestGivenNamesCompatible:
-    def test_initials_spacing_variants_are_same_person(self):
-        assert _given_names_compatible("J.R.R. Tolkien", "J. R. R. Tolkien")
-        assert _given_names_compatible("R.A. Salvatore", "R. A. Salvatore")
-        assert _given_names_compatible("George R. R. Martin", "George R.R. Martin")
-        assert _given_names_compatible("J. K. Rowling", "J.K. Rowling")
-        assert _given_names_compatible("James S.A. Corey", "James S. A. Corey")
+def index(tmp_path: Path) -> LibraryIndex:
+    """Build one isolated durable index."""
+    root = tmp_path / "library"
+    options = IndexOptions()
+    store = SQLiteIndexStore(
+        sqlite_connection_factory(tmp_path / "index.db", options), options
+    )
+    return LibraryIndex(root, store)
 
-    def test_extra_middle_name_is_same_person(self):
-        assert _given_names_compatible("Richard Morgan", "Richard K. Morgan")
-        assert _given_names_compatible("Paul Thompson", "Paul B. Thompson")
 
-    def test_different_given_names_are_different_people(self):
-        assert not _given_names_compatible("Michael Williams", "Tad Williams")
-        assert not _given_names_compatible("Glen Cook", "Tonya C. Cook")
-        assert not _given_names_compatible("Cixin Liu", "Ken Liu")
-        assert not _given_names_compatible("Brandon Sanderson", "Robert Sanderson")
+@pytest.mark.parametrize(
+    ("existing", "requested"),
+    [
+        ("J.R.R. Tolkien", "J. R. R. Tolkien"),
+        ("R.A. Salvatore", "R. A. Salvatore"),
+        ("George R. R. Martin", "George R.R. Martin"),
+        ("J.K. Rowling", "J. K. Rowling"),
+        ("James S.A. Corey", "James S. A. Corey"),
+        ("Richard K. Morgan", "Richard Morgan"),
+        ("Paul B. Thompson", "Paul Thompson"),
+    ],
+)
+def test_canonical_author_spellings_reuse_one_folder(
+    tmp_path: Path, existing: str, requested: str
+) -> None:
+    """Initial spacing and optional middle names must not split an author shelf."""
+    library = index(tmp_path)
+    library.register_folder(FolderIdentity(parent=tmp_path / "library", name=existing))
+    assert library.match_author(requested) == existing
 
-    def test_initial_matching_first_letter_but_spelled_out_differs(self):
-        """'Michael' and 'Mark' share an initial and are still not the same."""
-        assert not _given_names_compatible("Michael Williams", "Mark Williams")
 
-    def test_bare_surname_cannot_be_matched(self):
-        """With no given name there is nothing to disambiguate on."""
-        assert not _given_names_compatible("Tolkien", "J. R. R. Tolkien")
-        assert not _given_names_compatible("Williams", "Tad Williams")
+@pytest.mark.parametrize(
+    ("existing", "requested"),
+    [
+        ("Tad Williams", "Michael Williams"),
+        ("Tonya C. Cook", "Glen Cook"),
+        ("Ken Liu", "Cixin Liu"),
+        ("Robert Sanderson", "Brandon Sanderson"),
+        ("Mark Williams", "Michael Williams"),
+    ],
+)
+def test_shared_surname_or_initial_never_canonicalizes(
+    tmp_path: Path, existing: str, requested: str
+) -> None:
+    """A surname alone is not identity; avoid filing one author under another."""
+    library = index(tmp_path)
+    library.register_folder(FolderIdentity(parent=tmp_path / "library", name=existing))
+    assert library.match_author(requested) == requested
 
-    def test_identical_names(self):
-        assert _given_names_compatible("Brandon Sanderson", "Brandon Sanderson")
 
-    def test_surname_first_form(self):
-        assert _given_names_compatible("Salvatore, R. A.", "R. A. Salvatore")
+@pytest.mark.parametrize("requested", ["Tolkien", "Williams"])
+def test_bare_surname_does_not_match_a_full_author_name(
+    tmp_path: Path, requested: str
+) -> None:
+    """The public canonicalizer requires compatible given names."""
+    library = index(tmp_path)
+    library.register_folder(
+        FolderIdentity(parent=tmp_path / "library", name="J. R. R. Tolkien")
+    )
+    assert library.match_author(requested) == requested

@@ -96,3 +96,15 @@ def test_book_name() -> None:
 
 def test_a_year_and_subtitle_are_dropped_from_a_fallback_title() -> None:
     assert parse("An Author/Food A Love Story (2014).m4b").title == "Food A Love Story"
+
+
+def test_trailing_part_marker_is_removed_before_book_pattern_matching() -> None:
+    claim = parse("An Author/Servant of the Crown Part 1 of 3.mp3")
+
+    assert claim.title == "Servant of the Crown"
+
+
+def test_bare_part_suffix_remains_part_of_the_book_title() -> None:
+    claim = parse("Some Author/Kill Bill Part 2/Kill Bill Part 2.m4b")
+
+    assert claim.title == "Kill Bill Part 2"

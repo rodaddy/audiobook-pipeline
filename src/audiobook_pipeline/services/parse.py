@@ -32,6 +32,7 @@ See Also:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -39,13 +40,14 @@ from loguru import logger
 
 from audiobook_pipeline.models.parsed import ParsedPath
 from audiobook_pipeline.services import patterns
+from audiobook_pipeline.services.matching import normalize_title
 from audiobook_pipeline.services.names import (
     clean_collection_suffix,
     strip_hash,
     strip_label_suffix,
 )
 from audiobook_pipeline.utils.paths import AUDIO_SUFFIXES
-from audiobook_pipeline.utils.text import strip_subtitle, strip_year
+from audiobook_pipeline.utils.text import strip_part_suffix, strip_subtitle, strip_year
 
 log = logger.bind(stage="parse")
 
@@ -70,6 +72,9 @@ _MAX_CLIMB = 3
 #: Names that mean "this folder is a filename, not a title".
 _GENERIC = frozenset({"file", "audio", "audiobook", "mp3", "m4b", "track", "untitled"})
 
+#: A transport counter, unlike a bare "Part 2" that may be a real title.
+_PART_OF_TOTAL = re.compile(r"(?:,\s*|\s+)part\s+\d+\s+of\s+\d+\s*$", re.IGNORECASE)
+
 
 def parse_path(source: Path, root: Path) -> ParsedPath:
     """Read everything a source path is willing to say about a book.
@@ -88,10 +93,11 @@ def parse_path(source: Path, root: Path) -> ParsedPath:
     result = _first_match(book, _BOOK_PATTERNS)
     log.debug("book name {!r} -> {}", book, result.model_dump())
 
-    result = result.merge(_walk_for_author(source, root))
+    book_title = result.title or _clean_title(book)
+    result = result.merge(_walk_for_author(source, root, book_title=book_title))
 
     if not result.title:
-        result = result.merge(ParsedPath(title=_clean_title(book)))
+        result = result.merge(ParsedPath(title=book_title))
 
     result = _drop_author_echoing_series(result)
     log.debug("parse_path({}) -> {}", source.name, result.model_dump())
@@ -123,7 +129,7 @@ def _book_name(source: Path) -> str:
         log.debug("generic name {!r}; using parent {!r}", name, parent)
         return strip_label_suffix(parent)
 
-    return strip_label_suffix(name)
+    return _strip_part_of_total(strip_label_suffix(name))
 
 
 def _first_match(
@@ -146,7 +152,12 @@ def _first_match(
     return ParsedPath()
 
 
-def _walk_for_author(source: Path, root: Path) -> ParsedPath:
+def _strip_part_of_total(name: str) -> str:
+    """Remove only a trailing split-file counter, never a title's bare part."""
+    return strip_part_suffix(name) if _PART_OF_TOTAL.search(name) else name
+
+
+def _walk_for_author(source: Path, root: Path, *, book_title: str) -> ParsedPath:
     """Climb from the book toward the root looking for an author.
 
     Walks rather than checking a fixed depth, because the author sits at a
@@ -165,6 +176,8 @@ def _walk_for_author(source: Path, root: Path) -> ParsedPath:
         source: The book.
         root: The bound. Nothing ABOVE it is ever considered, so a run pointed
             at one book cannot adopt somebody's Downloads folder.
+        book_title: The parsed title, used to reject a duplicate book folder
+            masquerading as an author.
 
     Returns:
         The author, and the series when one sits between author and book.
@@ -176,6 +189,10 @@ def _walk_for_author(source: Path, root: Path) -> ParsedPath:
     for depth, ancestor in enumerate(ancestors):
         if not ancestor.is_relative_to(root):
             break
+
+        if _repeats_book_title(ancestor.name, book_title):
+            log.debug("skipping {!r}: it repeats the book title", ancestor.name)
+            continue
 
         found = _first_match(strip_hash(ancestor.name), _AUTHOR_PATTERNS)
         if found.is_empty:
@@ -193,6 +210,13 @@ def _walk_for_author(source: Path, root: Path) -> ParsedPath:
 
     log.debug("no ancestor of {!r} names an author", source.name)
     return ParsedPath()
+
+
+def _repeats_book_title(candidate: str, book_title: str) -> bool:
+    """Whether an ancestor repeats the parsed title rather than naming a person."""
+    candidate_key = normalize_title(strip_hash(candidate))
+    title_key = normalize_title(book_title)
+    return bool(title_key) and candidate_key == title_key
 
 
 def _series_from(directory: Path) -> str:
