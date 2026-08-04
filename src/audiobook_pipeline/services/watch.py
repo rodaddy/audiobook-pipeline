@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
+import os
 import sqlite3
 import time
 from contextlib import closing
@@ -12,13 +12,11 @@ from pathlib import Path
 import httpx
 from loguru import logger
 
-from audiobook_pipeline.models.book import SOURCE_EXTENSIONS
 from audiobook_pipeline.models.watch import (
     ClaimedCandidate,
     ClaimStatus,
     Clock,
     FileObservation,
-    ObservationEntry,
     ProcessFactory,
     QuarantineMover,
     Sleeper,
@@ -31,6 +29,7 @@ from audiobook_pipeline.models.watch import (
     WebhookNotifier,
     WebhookPayload,
 )
+from audiobook_pipeline.services.watch_entries import candidate_entries
 from audiobook_pipeline.services.watch_recovery import (
     quarantine_recovery_state,
     safe_recovery_reservation,
@@ -287,7 +286,7 @@ class WatchRunner:
         except OSError:
             log.warning("Watch inbox scan failed: inbox_unavailable")
             return ()
-        return tuple(path for path in entries if _candidate_entries(path) is not None)
+        return tuple(path for path in entries if candidate_entries(path) is not None)
 
     def _unsupported_count(self) -> int:
         try:
@@ -296,14 +295,12 @@ class WatchRunner:
             log.warning("Watch inbox scan failed: inbox_unavailable")
             return 0
         return sum(
-            not path.is_symlink()
-            and path.is_file()
-            and _candidate_entries(path) is None
+            not path.is_symlink() and path.is_file() and candidate_entries(path) is None
             for path in entries
         )
 
     def _stable_candidate(self, source: Path) -> WatchCandidate | None:
-        entries = _candidate_entries(source)
+        entries = candidate_entries(source)
         if entries is None:
             return None
         current = FileObservation(
@@ -366,8 +363,9 @@ class WatchRunner:
             log.warning("Watch quarantine recovery rejected: unsafe_reservation")
             return
         try:
-            assert claim.quarantine_dir is not None
-            residual_dir = _reserve_quarantine_dir(claim.quarantine_dir, "residual")
+            residual_dir = _reserve_quarantine_dir(
+                self._options.quarantine_dir, f"{claim.candidate_id}-residual"
+            )
             _move_to_quarantine(claim.source, residual_dir)
         except OSError:
             log.warning("Watch quarantine recovery failed: residual_unavailable")
@@ -440,7 +438,11 @@ class WatchRunner:
             mover(transition.source, transition.quarantine_dir)
         except OSError:
             log.warning("Watch quarantine failed: move_unavailable")
-            self._release_quarantine(transition, counters)
+            self._release_quarantine(
+                transition,
+                counters,
+                release_without_cleanup=mover is _move_to_quarantine,
+            )
             return
         try:
             self._store.finish_quarantine(transition)
@@ -451,13 +453,23 @@ class WatchRunner:
         self._notify(transition, notifier)
 
     def _release_quarantine(
-        self, claim: WatchClaim, counters: WatchPollCounters
+        self,
+        claim: WatchClaim,
+        counters: WatchPollCounters,
+        release_without_cleanup: bool = False,
     ) -> None:
         try:
             assert claim.quarantine_dir is not None
-            claim.quarantine_dir.rmdir()
+            _remove_empty_quarantine_dir(
+                self._options.quarantine_dir, claim.quarantine_dir
+            )
+        except OSError:
+            log.warning("Watch quarantine rollback failed: retry_unavailable")
+            if not release_without_cleanup:
+                return
+        try:
             self._store.release_quarantine(claim)
-        except (OSError, RuntimeError):
+        except RuntimeError:
             log.warning("Watch quarantine rollback failed: retry_unavailable")
             return
         counters.retried += 1
@@ -473,7 +485,9 @@ class WatchRunner:
             return
         if quarantine_dir is not None:
             try:
-                quarantine_dir.rmdir()
+                _remove_empty_quarantine_dir(
+                    self._options.quarantine_dir, quarantine_dir
+                )
             except OSError:
                 log.warning("Watch quarantine cleanup failed: destination_unavailable")
 
@@ -496,43 +510,6 @@ class WatchRunner:
             log.warning("Watch webhook failed: delivery_rejected")
 
 
-def _candidate_entries(source: Path) -> tuple[ObservationEntry, ...] | None:
-    """Return a non-recursive signature for one discovery-compatible candidate."""
-    if source.name.startswith(".") or source.is_symlink():
-        return None
-    if source.is_file():
-        return _file_entry(source)
-    if not source.is_dir():
-        return None
-    try:
-        children = tuple(sorted(source.iterdir(), key=lambda path: path.name.lower()))
-    except OSError:
-        log.warning("Watch candidate observation failed: directory_unavailable")
-        return None
-    if any(child.is_symlink() for child in children):
-        return None
-    entries = tuple(entry for child in children for entry in (_file_entry(child) or ()))
-    return entries or None
-
-
-def _file_entry(path: Path) -> tuple[ObservationEntry, ...] | None:
-    """Build one direct source-audio signature entry without probing or recursion."""
-    if path.name.startswith(".") or path.is_symlink() or not path.is_file():
-        return None
-    if path.suffix.lower() not in SOURCE_EXTENSIONS:
-        return None
-    try:
-        stat = path.stat()
-    except OSError:
-        log.warning("Watch candidate observation failed: stat_unavailable")
-        return None
-    return (
-        ObservationEntry(
-            name=path.name, size_bytes=stat.st_size, modified_ns=stat.st_mtime_ns
-        ),
-    )
-
-
 def _post_webhook(url: str, payload: WebhookPayload, timeout: float) -> bool:
     """Send the redacted payload with a caller-configured finite timeout."""
     try:
@@ -546,21 +523,60 @@ def _post_webhook(url: str, payload: WebhookPayload, timeout: float) -> bool:
 
 
 def _move_to_quarantine(source: Path, destination: Path) -> None:
-    """Move a claimed source into its exclusively reserved directory."""
-    shutil.move(source, destination)
+    """Move only through pinned nofollow descriptors for the reserved target."""
+    parent_fd = _open_directory(destination.parent)
+    try:
+        child_fd = _open_directory(Path(destination.name), dir_fd=parent_fd)
+        try:
+            os.rename(source.absolute(), source.name, dst_dir_fd=child_fd)
+        finally:
+            os.close(child_fd)
+    finally:
+        os.close(parent_fd)
 
 
 def _reserve_quarantine_dir(quarantine_root: Path, candidate_id: str) -> Path:
-    """Create an exclusive container without overwriting a user-owned path."""
+    """Create an exclusive direct child without resolving it again by path."""
     quarantine_root.mkdir(parents=True, exist_ok=True)
-    suffix = 0
-    while True:
-        name = candidate_id if suffix == 0 else f"{candidate_id}-{suffix}"
-        destination = quarantine_root / name
-        try:
-            destination.mkdir()
-        except FileExistsError:
-            log.warning("Watch quarantine destination collision")
-            suffix += 1
-            continue
-        return destination
+    root_fd = _open_directory(quarantine_root)
+    try:
+        suffix = 0
+        while True:
+            name = candidate_id if suffix == 0 else f"{candidate_id}-{suffix}"
+            try:
+                os.mkdir(name, dir_fd=root_fd)
+            except FileExistsError:
+                log.warning("Watch quarantine destination collision")
+                suffix += 1
+                continue
+            return quarantine_root / name
+    finally:
+        os.close(root_fd)
+
+
+def _remove_empty_quarantine_dir(quarantine_root: Path, destination: Path) -> None:
+    """Remove an empty direct child only through a pinned root descriptor."""
+    root_fd = _open_directory(quarantine_root)
+    try:
+        os.rmdir(_direct_child_name(quarantine_root, destination), dir_fd=root_fd)
+    finally:
+        os.close(root_fd)
+
+
+def _open_directory(path: Path, *, dir_fd: int | None = None) -> int:
+    """Open one directory without following a replacement symlink."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    return os.open(path, flags, dir_fd=dir_fd)
+
+
+def _direct_child_name(quarantine_root: Path, destination: Path) -> str:
+    """Return a lexical direct child name or fail before descriptor cleanup."""
+    try:
+        parts = destination.absolute().relative_to(quarantine_root.absolute()).parts
+    except ValueError as error:
+        msg = "quarantine destination escapes root"
+        raise OSError(msg) from error
+    if len(parts) != 1 or parts[0] in {".", ".."}:
+        msg = "quarantine destination is not a direct child"
+        raise OSError(msg)
+    return parts[0]

@@ -287,14 +287,21 @@ def test_restart_reconciles_partial_directory_move_idempotently(tmp_path: Path) 
     restarted = _runner(options, clock, lambda _claim: lambda: False)
     recovered = restarted.poll()
     repeated = _runner(options, clock, lambda _claim: lambda: False).poll()
-    quarantine = next(options.quarantine_dir.iterdir())
+    quarantine = next(
+        path for path in options.quarantine_dir.iterdir() if (path / "01.mp3").is_file()
+    )
+    residual = next(
+        path
+        for path in options.quarantine_dir.iterdir()
+        if (path / "multipart" / "02.mp3").is_file()
+    )
 
     assert interrupted.quarantined == 0
     assert recovered.quarantined == 1
     assert repeated.quarantined == 0
     assert not source.exists()
     assert (quarantine / "01.mp3").read_bytes() == b"first"
-    assert (quarantine / "residual" / "multipart" / "02.mp3").read_bytes() == b"second"
+    assert (residual / "multipart" / "02.mp3").read_bytes() == b"second"
 
 
 def test_restart_finalizes_a_source_moved_before_its_db_mark(tmp_path: Path) -> None:
