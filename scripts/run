@@ -110,66 +110,27 @@ show_menu() {
 run_checks() {
   local fail=0
 
-  if ! uv run --no-sync ruff --version >/dev/null 2>&1; then
-    say ""
-    bad "environment not ready -- ruff is not runnable in this tree"
-    say "  This is NOT a code violation. The checks never ran."
-    say "  Fix: uv sync --extra dev"
-    return 1
-  fi
-
-  head2 "format"
-  if uv run --no-sync ruff format --check . >/dev/null 2>&1; then
-    ok "ruff format"
+  head2 "python standards"
+  if ./_githooks/pre-commit --working; then
+    ok "working-tree hook"
   else
-    bad "ruff format -- fix with: uv run ruff format ."
+    bad "working-tree hook"
     fail=1
   fi
 
-  head2 "lint"
-  if uv run --no-sync ruff check . >/dev/null 2>&1; then
-    ok "ruff check"
+  head2 "configuration"
+  if uv run --no-sync python _githooks/check_config_compliance.py --check; then
+    ok "config compliance"
   else
-    bad "ruff check -- some auto-fixable: uv run ruff check --fix ."
+    bad "config compliance"
     fail=1
-  fi
-
-  head2 "types"
-  if uv run --no-sync mypy >/dev/null 2>&1; then
-    ok "mypy"
-  else
-    bad "mypy -- run 'uv run mypy' for detail"
-    fail=1
-  fi
-
-  head2 "standard"
-  if [[ -f _githooks/check_code_size.py ]]; then
-    if uv run --no-sync python _githooks/check_code_size.py --check >/dev/null 2>&1; then
-      ok "code size (500/file, 50/function)"
-    else
-      bad "code size -- run it directly for the offending files"
-      fail=1
-    fi
-  else
-    skip "code size -- _githooks/check_code_size.py missing"
-  fi
-
-  if [[ -f _githooks/check_config_compliance.py ]]; then
-    if uv run --no-sync python _githooks/check_config_compliance.py --check >/dev/null 2>&1; then
-      ok "config compliance (keystone rules)"
-    else
-      bad "config compliance -- run it directly for the violations"
-      fail=1
-    fi
-  else
-    skip "config compliance -- checker missing"
   fi
 
   head2 "tests"
-  if uv run --no-sync pytest -q >/dev/null 2>&1; then
+  if uv run --no-sync pytest -q; then
     ok "pytest"
   else
-    bad "pytest -- run 'uv run pytest' for detail"
+    bad "pytest"
     fail=1
   fi
 

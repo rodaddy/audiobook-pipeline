@@ -1,14 +1,1 @@
-[
-  "PLR0913 tests/test_stages/test_asin.py:TestAsinStage.test_ai_disambiguation_on_low_score#1",
-  "PLR0913 tests/test_stages/test_asin.py:TestAsinStage.test_audible_match_writes_manifest#1",
-  "PLR0913 tests/test_stages/test_asin.py:TestAsinStage.test_dry_run_still_resolves#1",
-  "PLR0913 tests/test_stages/test_asin.py:TestAsinStage.test_no_audible_falls_back_to_tags#1",
-  "PLR0913 tests/test_stages/test_asin.py:TestAsinStage.test_reads_convert_output_for_tags#1",
-  "PLR0913 tests/test_stages/test_convert.py:TestConvertStage.test_successful_conversion#1",
-  "PLR0913 tests/test_stages/test_metadata.py:TestMetadataStage._create_manifest_with_asin#1",
-  "PLR0913 tests/test_stages/test_organize.py:_setup_manifest_with_metadata#1",
-  "PLR0915 tests/test_stages/test_metadata.py:TestMetadataStage.test_correct_ffmpeg_args#1",
-  "SIZE tests/test_api/test_audible.py: TestSearch.test_successful_search_returns_results()",
-  "SIZE tests/test_stages/test_metadata.py",
-  "SIZE tests/test_stages/test_metadata.py: TestMetadataStage.test_correct_ffmpeg_args()"
-]
+[]
