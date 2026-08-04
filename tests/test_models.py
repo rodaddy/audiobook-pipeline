@@ -31,10 +31,12 @@ from audiobook_pipeline.models.stage import (
     PRE_COMPLETED_STAGES,
     STAGE_ORDER,
     ErrorCategory,
+    PipelineLevel,
     PipelineMode,
     Stage,
     StageResult,
     StageStatus,
+    stages_for,
 )
 
 HOUR_MS = 3_600_000
@@ -372,12 +374,8 @@ class TestStageOrder:
         assert Stage.CONVERT not in stages
         assert Stage.ASIN in stages
 
-    def test_organize_is_the_three_filing_stages(self) -> None:
-        assert STAGE_ORDER[PipelineMode.ORGANIZE] == (
-            Stage.ASIN,
-            Stage.METADATA,
-            Stage.ORGANIZE,
-        )
+    def test_organize_only_places_an_already_tagged_book(self) -> None:
+        assert STAGE_ORDER[PipelineMode.ORGANIZE] == (Stage.ORGANIZE,)
 
     def test_stages_appear_in_canonical_order(self) -> None:
         """A mode's order must never contradict the canonical stage sequence."""
@@ -385,6 +383,18 @@ class TestStageOrder:
         for mode, stages in STAGE_ORDER.items():
             positions = [canonical.index(stage) for stage in stages]
             assert positions == sorted(positions), f"{mode} runs stages out of order"
+
+    def test_simple_only_removes_filing_and_source_archival(self) -> None:
+        stages = stages_for(PipelineMode.CONVERT, PipelineLevel.SIMPLE)
+        assert Stage.ORGANIZE not in stages
+        assert Stage.ARCHIVE not in stages
+        assert Stage.CLEANUP in stages
+
+    def test_ai_and_full_have_identical_lifecycle_stages(self) -> None:
+        for mode in PipelineMode:
+            assert stages_for(mode, PipelineLevel.AI) == stages_for(
+                mode, PipelineLevel.FULL
+            )
 
 
 class TestPreCompletedStages:
@@ -397,9 +407,13 @@ class TestPreCompletedStages:
         A resumed run has to tell "never needed to happen" apart from "has not
         happened yet" -- otherwise it re-converts a finished book.
         """
-        expected = {Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT}
-        for mode in (PipelineMode.ENRICH, PipelineMode.METADATA, PipelineMode.ORGANIZE):
-            assert set(PRE_COMPLETED_STAGES[mode]) == expected
+        early = {Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT}
+        for mode in (PipelineMode.ENRICH, PipelineMode.METADATA):
+            assert set(PRE_COMPLETED_STAGES[mode]) == early
+        assert set(PRE_COMPLETED_STAGES[PipelineMode.ORGANIZE]) == early | {
+            Stage.ASIN,
+            Stage.METADATA,
+        }
 
     def test_pre_completed_never_overlaps_the_run_order(self) -> None:
         """A stage cannot be both pre-completed and scheduled to run."""

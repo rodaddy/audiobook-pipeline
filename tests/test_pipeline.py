@@ -5,25 +5,41 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 import pytest
+from mutagen import MutagenError
 
 from audiobook_pipeline.config import EncodingSettings, Settings
 from audiobook_pipeline.db import queries
 from audiobook_pipeline.db.connection import connect
+from audiobook_pipeline.db.rows import BookRow
 from audiobook_pipeline.models.book import AudioFile, BookDirectory
 from audiobook_pipeline.models.chapter import Chapter, ChapterSet
+from audiobook_pipeline.models.lifecycle import (
+    ArchivedSource,
+    CleanupResult,
+    ValidatedBook,
+)
 from audiobook_pipeline.models.metadata import BookMetadata
-from audiobook_pipeline.models.stage import Stage
+from audiobook_pipeline.models.stage import (
+    PipelineLevel,
+    PipelineMode,
+    Stage,
+    StageStatus,
+)
 from audiobook_pipeline.services import (
+    archive,
     audible,
+    cleanup,
     concat,
     convert,
     organize,
     parse,
     pipeline,
+    validate,
 )
 from audiobook_pipeline.services.pipeline import RunContext, book_hash, process_book
 from audiobook_pipeline.utils.ffmpeg import FfmpegError
@@ -62,55 +78,99 @@ def context(db: sqlite3.Connection, settings: Settings) -> RunContext:
     client = httpx.Client(
         transport=httpx.MockTransport(lambda _: httpx.Response(404, json={}))
     )
-    return RunContext(settings, db, client)
+    return RunContext(config=settings, conn=db, client=client)
 
 
-@pytest.fixture
-def stubbed(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    """Replace every real stage with a counter.
+@dataclass
+class StageFakes:
+    """Lightweight stand-ins that expose the pipeline's stage calls."""
 
-    The spine's job is ORDER, RESUMPTION and ERROR HANDLING. Running real
-    ffmpeg here would test the stages again and make "did this stage run"
-    impossible to assert directly.
-    """
-    calls = {"concat": 0, "convert": 0, "tag": 0, "place": 0}
+    calls: dict[str, int] = field(
+        default_factory=lambda: {
+            "validate": 0,
+            "concat": 0,
+            "convert": 0,
+            "tag": 0,
+            "place": 0,
+            "archive": 0,
+            "cleanup": 0,
+        }
+    )
 
-    def fake_concat(book: BookDirectory, output: Path) -> Path:
-        calls["concat"] += 1
+    def validate_book(
+        self, book: BookDirectory, _: object, __: object, book_hash: str
+    ) -> ValidatedBook:
+        self.calls["validate"] += 1
+        handoff = book.path / "handoff" / f"{book_hash}.txt"
+        handoff.parent.mkdir(parents=True, exist_ok=True)
+        handoff.write_text("ready")
+        return ValidatedBook(book=book, file_list=handoff, target_bitrate_kbps=64)
+
+    def concat_files(self, _: BookDirectory, output: Path) -> Path:
+        self.calls["concat"] += 1
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"joined")
         return output
 
-    def fake_convert(
-        source: Path, output: Path, chapters: ChapterSet, settings: object, **_: object
+    def convert_to_m4b(
+        self, _: Path, output: Path, __: ChapterSet, ___: object, **_kwargs: object
     ) -> Path:
-        calls["convert"] += 1
+        self.calls["convert"] += 1
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"converted")
         return output
 
-    def fake_tags(path: Path, metadata: BookMetadata) -> None:
-        calls["tag"] += 1
+    def write_tags(self, _: Path, __: BookMetadata) -> None:
+        self.calls["tag"] += 1
 
-    def fake_place(source: Path, destination: Path, **_: object) -> Path:
-        calls["place"] += 1
+    def place_book(self, source: Path, destination: Path, **_: object) -> Path:
+        self.calls["place"] += 1
         destination.parent.mkdir(parents=True, exist_ok=True)
         source.replace(destination)
         return destination
 
-    monkeypatch.setattr(concat, "concat_files", fake_concat)
-    monkeypatch.setattr(convert, "convert_to_m4b", fake_convert)
-    monkeypatch.setattr(pipeline, "write_tags", fake_tags)
-    monkeypatch.setattr(organize, "place_book", fake_place)
-    monkeypatch.setattr(
-        concat,
-        "build_chapters",
-        lambda book: ChapterSet(
+    def archive_source(
+        self, source: Path, _: Path, root: Path, **_kwargs: object
+    ) -> ArchivedSource:
+        self.calls["archive"] += 1
+        return ArchivedSource(
+            source_path=source,
+            archive_path=root / source.name,
+            original_count=1,
+        )
+
+    def cleanup_work_dir(
+        self, work_root: Path, book_hash: str, *, enabled: bool, dry_run: bool
+    ) -> CleanupResult:
+        self.calls["cleanup"] += 1
+        return CleanupResult(
+            work_dir=work_root / book_hash, removed=False, attempted=True
+        )
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(concat, "concat_files", self.concat_files)
+        monkeypatch.setattr(convert, "convert_to_m4b", self.convert_to_m4b)
+        monkeypatch.setattr(validate, "validate_book", self.validate_book)
+        monkeypatch.setattr(archive, "archive_source", self.archive_source)
+        monkeypatch.setattr(cleanup, "cleanup_work_dir", self.cleanup_work_dir)
+        monkeypatch.setattr(pipeline, "write_tags", self.write_tags)
+        monkeypatch.setattr(organize, "place_book", self.place_book)
+        monkeypatch.setattr(concat, "build_chapters", self.build_chapters)
+
+    @staticmethod
+    def build_chapters(_: BookDirectory) -> ChapterSet:
+        return ChapterSet(
             chapters=(Chapter(start_ms=0, end_ms=MINUTE_MS, title="One"),),
             source="files",
-        ),
-    )
-    return calls
+        )
+
+
+@pytest.fixture
+def stubbed(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Replace external stages with counters so the spine remains observable."""
+    fakes = StageFakes()
+    fakes.install(monkeypatch)
+    return fakes.calls
 
 
 def make_book(tmp_path: Path, *names: str, minutes: int = 45) -> BookDirectory:
@@ -176,7 +236,15 @@ def test_every_stage_runs_and_is_recorded(
     row = process_book(book, context)
 
     assert row.status == "completed"
-    assert stubbed == {"concat": 1, "convert": 1, "tag": 1, "place": 1}
+    assert stubbed == {
+        "validate": 1,
+        "concat": 1,
+        "convert": 1,
+        "tag": 1,
+        "place": 1,
+        "archive": 1,
+        "cleanup": 1,
+    }
     done = queries.completed_stages(context.conn, row.book_hash)
     assert {s.value for s in Stage} <= done
 
@@ -214,7 +282,64 @@ def test_a_second_run_does_no_work(
     process_book(book, context)
     process_book(book, context)
 
-    assert stubbed == {"concat": 1, "convert": 1, "tag": 1, "place": 1}
+    assert stubbed["validate"] == 1
+    assert stubbed["archive"] == 1
+    assert stubbed["cleanup"] == 1
+
+
+def test_simple_leaves_the_m4b_outside_the_library_and_source_archive(
+    tmp_path: Path, context: RunContext, stubbed: dict[str, int]
+) -> None:
+    context.config.level = PipelineLevel.SIMPLE
+
+    process_book(make_book(tmp_path, "solo.mp3"), context)
+
+    assert stubbed["place"] == 1
+    assert stubbed["archive"] == 0
+    assert stubbed["cleanup"] == 1
+    assert not context.config.paths.library_dir.exists()
+
+
+def test_validate_failure_blocks_archive_and_cleanup(
+    tmp_path: Path,
+    context: RunContext,
+    stubbed: dict[str, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def invalid(*_: object) -> ValidatedBook:
+        raise FfmpegError("ffprobe", "source is corrupt")
+
+    monkeypatch.setattr(validate, "validate_book", invalid)
+
+    row = process_book(make_book(tmp_path, "solo.mp3"), context)
+
+    assert row.status == "failed"
+    assert stubbed["archive"] == 0
+    assert stubbed["cleanup"] == 0
+
+
+def test_archive_failure_is_recorded_without_running_cleanup(
+    tmp_path: Path,
+    context: RunContext,
+    stubbed: dict[str, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused archive preserves its incomplete stage instead of cleaning evidence."""
+
+    def refuse(
+        _: Path, __: Path, archive_root: Path, **_kwargs: object
+    ) -> ArchivedSource:
+        raise archive.ArchiveError(archive_root)
+
+    monkeypatch.setattr(archive, "archive_source", refuse)
+
+    row = process_book(make_book(tmp_path, "solo.mp3"), context)
+
+    assert row.status == "failed"
+    assert stubbed["cleanup"] == 0
+    done = queries.completed_stages(context.conn, row.book_hash)
+    assert Stage.ARCHIVE.value not in done
+    assert Stage.CLEANUP.value not in done
 
 
 def test_the_library_gains_exactly_one_file_across_repeated_runs(
@@ -241,6 +366,72 @@ def test_stage_rows_survive_the_upsert_at_the_start_of_a_run(
     assert queries.completed_stages(context.conn, book_hash(book)) == before
 
 
+def test_requested_mode_replaces_a_persisted_mode_plan(
+    tmp_path: Path, context: RunContext, stubbed: dict[str, int]
+) -> None:
+    """A new command's requested mode, not an old row, chooses its stages."""
+    book = make_book(tmp_path, "solo.mp3")
+
+    process_book(book, context, mode=PipelineMode.METADATA)
+    process_book(book, context, mode=PipelineMode.CONVERT)
+
+    row = queries.get_book(context.conn, book_hash(book))
+    assert row is not None
+    assert row.mode == PipelineMode.CONVERT.value
+    assert stubbed["validate"] == 1
+    assert stubbed["convert"] == 1
+    assert stubbed["place"] == 1
+
+
+def test_archive_retry_reuses_the_organized_handoff(
+    tmp_path: Path,
+    context: RunContext,
+    stubbed: dict[str, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed archive cannot force an encode from the cleaned scratch tree."""
+    book = make_book(tmp_path, "solo.mp3")
+
+    def refuse(*_: object, **__: object) -> ArchivedSource:
+        raise archive.ArchiveError(context.config.paths.archive_dir)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(archive, "archive_source", refuse)
+        assert process_book(book, context).status == "failed"
+
+    assert process_book(book, context).status == "completed"
+    assert stubbed["convert"] == 1
+    assert stubbed["tag"] == 1
+    assert stubbed["place"] == 1
+
+
+def test_organize_mode_does_not_rewrite_tags_or_metadata(
+    tmp_path: Path, context: RunContext, stubbed: dict[str, int]
+) -> None:
+    """Organizing a known M4B is a placement operation, not enrichment."""
+    book = make_book(tmp_path, "solo.m4b")
+    queries.upsert_book(
+        context.conn,
+        BookRow(
+            book_hash=book_hash(book),
+            source_path=str(book.identity_path),
+            mode=PipelineMode.ORGANIZE.value,
+            parsed_title="Known Book",
+            parsed_author="Known Author",
+        ),
+    )
+
+    row = process_book(book, context, mode=PipelineMode.ORGANIZE)
+
+    assert row.status == "completed"
+    assert stubbed["tag"] == 0
+    assert stubbed["place"] == 1
+    assert {
+        stage.stage: stage.status
+        for stage in queries.get_stages(context.conn, row.book_hash)
+    }[Stage.METADATA.value] == StageStatus.COMPLETED.value
+
+
 # ---------------------------------------------------------------------------
 # failure
 # ---------------------------------------------------------------------------
@@ -263,6 +454,28 @@ def test_a_failed_book_is_recorded_and_does_not_raise(
 
     assert row.status == "failed"
     assert "encoder blew up" in (row.error_message or "")
+
+
+def test_a_tagging_mutagen_error_is_a_recorded_book_failure(
+    tmp_path: Path,
+    context: RunContext,
+    stubbed: dict[str, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tag parsing failures have the same one-book boundary as ffmpeg failures."""
+    monkeypatch.setattr(
+        pipeline,
+        "write_tags",
+        lambda *_args: (_ for _ in ()).throw(MutagenError("bad tag")),
+    )
+
+    row = process_book(make_book(tmp_path, "solo.mp3"), context)
+
+    assert row.status == "failed"
+    assert row.error_message == "bad tag"
+    assert Stage.METADATA.value not in queries.completed_stages(
+        context.conn, row.book_hash
+    )
 
 
 def test_a_failed_book_can_be_retried(

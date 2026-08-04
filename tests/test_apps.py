@@ -13,9 +13,20 @@ import pytest
 from click.testing import CliRunner
 
 from audiobook_pipeline.apps.audit.__main__ import main as audit_main
-from audiobook_pipeline.apps.convert.__main__ import main as convert_main
+from audiobook_pipeline.apps.convert.__main__ import (
+    _recovery_books,
+    _simple_outputs,
+)
+from audiobook_pipeline.apps.convert.__main__ import (
+    main as convert_main,
+)
+from audiobook_pipeline.db import queries
+from audiobook_pipeline.db.connection import connect
+from audiobook_pipeline.db.rows import BookRow, StageRow
+from audiobook_pipeline.models.book import AudioFile, BookDirectory
+from audiobook_pipeline.models.stage import PipelineMode, Stage, StageStatus
 from audiobook_pipeline.services import discovery
-from audiobook_pipeline.services.pipeline import RunContext
+from audiobook_pipeline.services.pipeline import RunContext, book_hash
 
 MINUTE_MS = 60 * 1000
 
@@ -174,6 +185,91 @@ def test_a_successful_run_exits_zero(
 
     assert result.exit_code == 0
     assert "1 completed, 0 failed" in result.output
+
+
+def test_recovery_includes_a_cleanup_retry_after_its_source_moved(
+    tmp_path: Path,
+) -> None:
+    """CLI recovery comes from lifecycle rows, not filesystem rediscovery."""
+    organized = tmp_path / "library" / "Known Book.m4b"
+    organized.parent.mkdir()
+    organized.write_bytes(b"finished")
+    source = tmp_path / "source" / "Known Book"
+    original = BookDirectory(
+        path=source,
+        files=(
+            AudioFile(path=source / "01.mp3", duration_ms=30_000),
+            AudioFile(path=source / "02.mp3", duration_ms=30_000),
+        ),
+    )
+    source_hash = book_hash(original)
+    with connect(tmp_path / "pipeline.db") as conn:
+        queries.upsert_book(
+            conn,
+            BookRow(
+                book_hash=source_hash,
+                source_path=str(source),
+                mode=PipelineMode.CONVERT.value,
+                status="failed",
+                total_duration=60,
+            ),
+        )
+        queries.set_stage(
+            conn,
+            StageRow(
+                book_hash=source_hash,
+                stage=Stage.ORGANIZE.value,
+                status=StageStatus.COMPLETED.value,
+                output_file=str(organized),
+            ),
+        )
+        queries.set_stage(
+            conn,
+            StageRow(
+                book_hash=source_hash,
+                stage=Stage.ARCHIVE.value,
+                status=StageStatus.COMPLETED.value,
+            ),
+        )
+
+        recovered = _recovery_books(conn, [], PipelineMode.CONVERT)
+
+    assert [book.files[0].path for book in recovered] == [source]
+    assert [book_hash(book) for book in recovered] == [source_hash]
+
+
+def test_simple_output_exclusion_is_limited_to_recorded_completed_outputs(
+    tmp_path: Path,
+) -> None:
+    """An ordinary source M4B is not hidden just because it has that suffix."""
+    generated = tmp_path / "source" / "generated.m4b"
+    original = tmp_path / "source" / "original.m4b"
+    generated.parent.mkdir()
+    generated.write_bytes(b"generated")
+    original.write_bytes(b"original")
+    with connect(tmp_path / "pipeline.db") as conn:
+        queries.upsert_book(
+            conn,
+            BookRow(
+                book_hash="simple-hash",
+                source_path=str(original),
+                mode=PipelineMode.CONVERT.value,
+            ),
+        )
+        queries.set_stage(
+            conn,
+            StageRow(
+                book_hash="simple-hash",
+                stage=Stage.CONVERT.value,
+                status=StageStatus.COMPLETED.value,
+                output_file=str(generated),
+            ),
+        )
+
+        excluded = _simple_outputs(conn, tmp_path / "source")
+
+    assert excluded == frozenset({generated.resolve()})
+    assert original.resolve() not in excluded
 
 
 # ---------------------------------------------------------------------------

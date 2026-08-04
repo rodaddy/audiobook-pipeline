@@ -20,7 +20,7 @@ Key Components:
 
 Example:
     >>> STAGE_ORDER[PipelineMode.ORGANIZE]
-    (<Stage.ASIN: 'asin'>, <Stage.METADATA: 'metadata'>, <Stage.ORGANIZE: 'organize'>)
+    (<Stage.ORGANIZE: 'organize'>,)
 
 See Also:
     - audiobook_pipeline.config: the level that decides whether AI stages run
@@ -42,6 +42,15 @@ class PipelineMode(StrEnum):
     ORGANIZE = "organize"
 
 
+class PipelineLevel(StrEnum):
+    """The intelligence and filing tier, independent from the operation mode."""
+
+    SIMPLE = "simple"
+    NORMAL = "normal"
+    AI = "ai"
+    FULL = "full"
+
+
 class Stage(StrEnum):
     """One step of a conversion, in canonical order."""
 
@@ -61,6 +70,7 @@ class StageStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    SKIPPED = "skipped"
     FAILED = "failed"
 
 
@@ -95,11 +105,10 @@ STAGE_ORDER: dict[PipelineMode, tuple[Stage, ...]] = {
         Stage.ASIN,
         Stage.METADATA,
         Stage.ORGANIZE,
-        Stage.ARCHIVE,
         Stage.CLEANUP,
     ),
-    PipelineMode.METADATA: (Stage.ASIN, Stage.METADATA),
-    PipelineMode.ORGANIZE: (Stage.ASIN, Stage.METADATA, Stage.ORGANIZE),
+    PipelineMode.METADATA: (Stage.ASIN, Stage.METADATA, Stage.CLEANUP),
+    PipelineMode.ORGANIZE: (Stage.ORGANIZE,),
 }
 
 #: Stages a mode treats as already done. Recorded rather than merely skipped,
@@ -109,8 +118,24 @@ STAGE_ORDER: dict[PipelineMode, tuple[Stage, ...]] = {
 PRE_COMPLETED_STAGES: dict[PipelineMode, tuple[Stage, ...]] = {
     PipelineMode.ENRICH: (Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT),
     PipelineMode.METADATA: (Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT),
-    PipelineMode.ORGANIZE: (Stage.VALIDATE, Stage.CONCAT, Stage.CONVERT),
+    PipelineMode.ORGANIZE: (
+        Stage.VALIDATE,
+        Stage.CONCAT,
+        Stage.CONVERT,
+        Stage.ASIN,
+        Stage.METADATA,
+    ),
 }
+
+
+def stages_for(mode: PipelineMode, level: PipelineLevel) -> tuple[Stage, ...]:
+    """Return the lifecycle stages selected by independent mode and level axes."""
+    stages = STAGE_ORDER[mode]
+    if level is PipelineLevel.SIMPLE:
+        return tuple(
+            stage for stage in stages if stage not in (Stage.ORGANIZE, Stage.ARCHIVE)
+        )
+    return stages
 
 
 class StageResult(BaseModel):

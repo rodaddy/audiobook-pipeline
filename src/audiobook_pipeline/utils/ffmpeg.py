@@ -256,6 +256,7 @@ def probe(path: Path, *, timeout: int = PROBE_TIMEOUT_SECONDS) -> ProbeResult:
         path=path,
         duration_ms=duration_ms,
         stream=_parse_stream(payload.get("streams", [])),
+        format_name=str(fmt.get("format_name", "unknown")),
         chapters=_parse_chapters(payload.get("chapters", [])),
         tags={str(k): str(v) for k, v in fmt.get("tags", {}).items()},
     )

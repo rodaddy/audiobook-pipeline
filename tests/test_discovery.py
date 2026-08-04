@@ -71,6 +71,18 @@ def test_extension_matching_is_case_insensitive(tmp_path: Path) -> None:
     assert is_source_audio(path)
 
 
+def test_explicitly_excluded_simple_output_is_not_rediscovered(
+    tmp_path: Path, durations: DurationMap
+) -> None:
+    """Only the recorded simple output is hidden; ordinary M4Bs stay inputs."""
+    generated = make_audio(tmp_path / "Book", "Book.m4b", durations, hours=8)
+    source = make_audio(tmp_path / "Book", "original.m4b", durations, hours=8)
+
+    found = discover_books(tmp_path, excluded=frozenset({generated.resolve()}))
+
+    assert [audio.path for book in found for audio in book.files] == [source]
+
+
 def test_non_audio_and_hidden_files_are_not_audio(tmp_path: Path) -> None:
     for name in ("cover.jpg", "notes.txt", ".DS_Store", "._Book.mp3"):
         path = tmp_path / name

@@ -60,11 +60,12 @@ def _is_hidden(path: Path) -> bool:
     return path.name.startswith(".")
 
 
-def is_source_audio(path: Path) -> bool:
+def is_source_audio(path: Path, *, excluded: frozenset[Path] = frozenset()) -> bool:
     """Whether a file is audio the pipeline could work with.
 
     Args:
         path: The file to test.
+        excluded: Absolute output paths to keep out of this discovery run.
 
     Returns:
         True when the suffix is a known audio extension. This is the ONLY
@@ -74,15 +75,17 @@ def is_source_audio(path: Path) -> bool:
     return (
         path.is_file()
         and not _is_hidden(path)
+        and path.resolve() not in excluded
         and path.suffix.lower() in SOURCE_EXTENSIONS
     )
 
 
-def _audio_files_in(directory: Path) -> list[Path]:
+def _audio_files_in(directory: Path, excluded: frozenset[Path]) -> list[Path]:
     """Audio files directly inside a directory, in play order.
 
     Args:
         directory: The directory to list. Not recursive.
+        excluded: Absolute output paths to keep out of this discovery run.
 
     Returns:
         Sorted paths. Sorted HERE because this is where the filenames are still
@@ -90,7 +93,11 @@ def _audio_files_in(directory: Path) -> list[Path]:
         the answer, and there is nothing left to re-derive it from.
     """
     return sorted(
-        (child for child in directory.iterdir() if is_source_audio(child)),
+        (
+            child
+            for child in directory.iterdir()
+            if is_source_audio(child, excluded=excluded)
+        ),
         key=lambda p: p.name.lower(),
     )
 
@@ -114,7 +121,7 @@ def _probe_duration(path: Path) -> int | None:
     try:
         return probe(path).duration_ms
     except FfmpegError as exc:
-        log.warning("skipping unreadable audio {}: {}", path, exc)
+        logger.warning("skipping unreadable audio {}: {}", path, exc)
         return None
 
 
@@ -139,7 +146,9 @@ def _build_candidate(directory: Path, paths: list[Path]) -> BookDirectory | None
     return BookDirectory(path=directory, files=files)
 
 
-def walk_candidates(root: Path) -> Iterator[BookDirectory]:
+def walk_candidates(
+    root: Path, *, excluded: frozenset[Path] = frozenset()
+) -> Iterator[BookDirectory]:
     """Yield a candidate for every directory in the tree that holds audio.
 
     THE WALK NEVER STOPS EARLY. A directory that holds audio yields a candidate
@@ -148,6 +157,7 @@ def walk_candidates(root: Path) -> Iterator[BookDirectory]:
 
     Args:
         root: Directory to walk. Also considered itself.
+        excluded: Absolute output paths to keep out of this discovery run.
 
     Yields:
         One candidate per directory containing readable audio, parents first.
@@ -155,7 +165,7 @@ def walk_candidates(root: Path) -> Iterator[BookDirectory]:
     if not root.is_dir():
         return
 
-    paths = _audio_files_in(root)
+    paths = _audio_files_in(root, excluded)
     if paths:
         candidate = _build_candidate(root, paths)
         if candidate is not None:
@@ -163,10 +173,12 @@ def walk_candidates(root: Path) -> Iterator[BookDirectory]:
 
     for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
         if child.is_dir() and not _is_hidden(child):
-            yield from walk_candidates(child)
+            yield from walk_candidates(child, excluded=excluded)
 
 
-def discover_books(root: Path) -> list[BookDirectory]:
+def discover_books(
+    root: Path, *, excluded: frozenset[Path] = frozenset()
+) -> list[BookDirectory]:
     """Find every book under a source directory.
 
     A candidate holding SEPARATE books is split into one entry per file, so the
@@ -175,12 +187,13 @@ def discover_books(root: Path) -> list[BookDirectory]:
 
     Args:
         root: Directory to search.
+        excluded: Absolute output paths to keep out of this discovery run.
 
     Returns:
         One entry per book found, in tree order.
     """
     books: list[BookDirectory] = []
-    for candidate in walk_candidates(root):
+    for candidate in walk_candidates(root, excluded=excluded):
         if candidate.is_multi_file_book:
             books.append(candidate)
             continue

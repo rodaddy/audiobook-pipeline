@@ -20,6 +20,7 @@ See Also:
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -27,11 +28,17 @@ import click
 from loguru import logger
 
 from audiobook_pipeline.config import load_settings
+from audiobook_pipeline.db import queries
 from audiobook_pipeline.db.connection import connect
 from audiobook_pipeline.models.book import BookDirectory
-from audiobook_pipeline.models.stage import PipelineMode
+from audiobook_pipeline.models.stage import PipelineMode, Stage, StageStatus
 from audiobook_pipeline.services.discovery import discover_books
-from audiobook_pipeline.services.pipeline import RunContext, process_book
+from audiobook_pipeline.services.pipeline import (
+    RunContext,
+    book_from_row,
+    book_hash,
+    process_book,
+)
 from audiobook_pipeline.utils.http import build_client
 
 log = logger.bind(stage="convert-cli")
@@ -67,6 +74,34 @@ def _report(results: list[str]) -> int:
     return 1 if failed else 0
 
 
+def _recovery_books(
+    conn: sqlite3.Connection, books: list[BookDirectory], mode: PipelineMode
+) -> list[BookDirectory]:
+    """Return failed database rows no longer visible to filesystem discovery."""
+    known = {book_hash(book) for book in books}
+    rows = queries.list_books(conn, mode=mode.value)
+    return [
+        book_from_row(row)
+        for row in rows
+        if row.status != "completed" and row.book_hash not in known
+    ]
+
+
+def _simple_outputs(conn: sqlite3.Connection, source: Path) -> frozenset[Path]:
+    """Read completed simple-mode outputs so discovery does not consume them."""
+    outputs = {
+        Path(stage.output_file).resolve()
+        for row in queries.list_books(conn)
+        for stage in queries.get_stages(conn, row.book_hash)
+        if stage.stage == Stage.CONVERT.value
+        and stage.status == StageStatus.COMPLETED.value
+        and stage.output_file is not None
+        and Path(stage.output_file).is_file()
+        and Path(stage.output_file).resolve().is_relative_to(source.resolve())
+    }
+    return frozenset(outputs)
+
+
 @click.command()
 @click.argument(
     "source",
@@ -100,25 +135,27 @@ def main(
     """Convert the audiobooks under SOURCE into the configured library."""
     config = load_settings(profile=profile)
 
-    books = discover_books(source)
-    if limit is not None:
-        # Reported, never silent. A truncated run that looks like a complete
-        # one is how a library ends up half-converted with nothing saying so.
-        click.echo(f"Limiting to {limit} of {len(books)} discovered book(s).")
-        books = books[:limit]
+    with connect(config.paths.db_path) as conn:
+        books = discover_books(source, excluded=_simple_outputs(conn, source))
+        if limit is not None:
+            click.echo(f"Limiting to {limit} of {len(books)} discovered book(s).")
+            books = books[:limit]
 
-    if dry_run:
-        click.echo(f"{len(books)} book(s) under {source}:")
-        for book in books:
-            click.echo(_describe(book))
-        return
+        if dry_run:
+            click.echo(f"{len(books)} book(s) under {source}:")
+            for book in books:
+                click.echo(_describe(book))
+            return
 
-    with connect(config.paths.db_path) as conn, build_client() as client:
-        context = RunContext(config, conn, client, source_root=source)
-        results = [
-            process_book(book, context, mode=PipelineMode(mode)).status
-            for book in books
-        ]
+        with build_client() as client:
+            context = RunContext(
+                config=config, conn=conn, client=client, source_root=source
+            )
+            books.extend(_recovery_books(conn, books, PipelineMode(mode)))
+            results = [
+                process_book(book, context, mode=PipelineMode(mode)).status
+                for book in books
+            ]
 
     sys.exit(_report(results))
 

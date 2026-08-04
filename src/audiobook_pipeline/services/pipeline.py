@@ -29,33 +29,38 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 from loguru import logger
+from mutagen import MutagenError
+from pydantic import BaseModel, ConfigDict
 
 from audiobook_pipeline.config import Settings
 from audiobook_pipeline.db import queries
 from audiobook_pipeline.db.rows import BookRow, StageRow
-from audiobook_pipeline.models.book import BookDirectory
+from audiobook_pipeline.models.book import AudioFile, BookDirectory
 from audiobook_pipeline.models.chapter import ChapterSet
+from audiobook_pipeline.models.lifecycle import StagePlan
 from audiobook_pipeline.models.metadata import BookMetadata
 from audiobook_pipeline.models.parsed import ParsedPath
 from audiobook_pipeline.models.stage import (
     PRE_COMPLETED_STAGES,
-    STAGE_ORDER,
     PipelineMode,
     Stage,
     StageStatus,
+    stages_for,
 )
 from audiobook_pipeline.services import (
+    archive,
     audible,
+    cleanup,
     concat,
     convert,
     identify,
     organize,
     parse,
+    validate,
 )
 from audiobook_pipeline.utils.ffmpeg import FfmpegError
 from audiobook_pipeline.utils.tagging import write_tags
@@ -63,8 +68,15 @@ from audiobook_pipeline.utils.tagging import write_tags
 log = logger.bind(stage="pipeline")
 
 
-@dataclass(frozen=True)
-class Identified:
+class ResumeError(ValueError):
+    """A database row says a stage completed but its durable handoff is absent."""
+
+    def __init__(self, stage: Stage) -> None:
+        """Build an error that identifies the completed stage that cannot resume."""
+        super().__init__(f"completed {stage.value} stage lacks its durable handoff")
+
+
+class Identified(BaseModel):
     """What the pipeline worked out about one book.
 
     The metadata and the chapter table are produced together by the identify
@@ -72,12 +84,13 @@ class Identified:
     value rather than as two parameters threaded side by side.
     """
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
     metadata: BookMetadata
     chapters: ChapterSet
 
 
-@dataclass(frozen=True)
-class RunContext:
+class RunContext(BaseModel):
     """The three long-lived objects every stage needs.
 
     Grouped rather than threaded through as separate parameters: they have the
@@ -85,6 +98,8 @@ class RunContext:
     they push every stage function past the five-argument ceiling for no
     expressive gain.
     """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True, extra="forbid")
 
     config: Settings
     conn: sqlite3.Connection
@@ -113,6 +128,16 @@ def book_hash(book: BookDirectory) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
+def book_from_row(row: BookRow) -> BookDirectory:
+    """Make a minimal book handle for a database-only lifecycle retry."""
+    source = Path(row.source_path)
+    duration_ms = max(round((row.total_duration or 0.001) * 1000), 1)
+    return BookDirectory(
+        path=source if source.is_dir() else source.parent,
+        files=(AudioFile(path=source, duration_ms=duration_ms),),
+    )
+
+
 def _remaining(done: set[Stage], order: tuple[Stage, ...]) -> tuple[Stage, ...]:
     """The stages still to run.
 
@@ -124,6 +149,43 @@ def _remaining(done: set[Stage], order: tuple[Stage, ...]) -> tuple[Stage, ...]:
         Stages not yet done, in order.
     """
     return tuple(stage for stage in order if stage not in done)
+
+
+def _done_stages(conn: sqlite3.Connection, hash_: str) -> set[Stage]:
+    """Return stages that have completed or were explicitly skipped."""
+    return {
+        Stage(row.stage)
+        for row in queries.get_stages(conn, hash_)
+        if row.status in {StageStatus.COMPLETED.value, StageStatus.SKIPPED.value}
+    }
+
+
+def _reset_stage_plan(conn: sqlite3.Connection, hash_: str) -> None:
+    """Discard prior-mode stage receipts before applying a new requested mode."""
+    for stage in Stage:
+        _record_stage(conn, hash_, stage, StageStatus.PENDING)
+
+
+def _requested_row(
+    book: BookDirectory, conn: sqlite3.Connection, mode: PipelineMode
+) -> BookRow:
+    """Create or reconcile the durable row with the caller's requested mode."""
+    hash_ = book_hash(book)
+    existing = queries.get_book(conn, hash_)
+    if existing is None:
+        return BookRow(
+            book_hash=hash_,
+            source_path=str(book.identity_path),
+            mode=mode.value,
+            file_count=len(book.files),
+            total_duration=book.total_duration_ms / 1000,
+        )
+    if existing.mode == mode.value:
+        return existing
+    _reset_stage_plan(conn, hash_)
+    return existing.model_copy(
+        update={"mode": mode.value, "status": "pending", "error_message": None}
+    )
 
 
 def _title_hint(book: BookDirectory) -> str:
@@ -142,7 +204,12 @@ def _title_hint(book: BookDirectory) -> str:
 
 
 def _record_stage(
-    conn: sqlite3.Connection, hash_: str, stage: Stage, status: StageStatus
+    conn: sqlite3.Connection,
+    hash_: str,
+    stage: Stage,
+    status: StageStatus,
+    *,
+    output_file: Path | None = None,
 ) -> None:
     """Write one stage's outcome.
 
@@ -151,25 +218,17 @@ def _record_stage(
         hash_: The book's identity.
         stage: The stage that ran.
         status: What happened.
+        output_file: Durable file produced by the completed stage, if any.
     """
     queries.set_stage(
-        conn, StageRow(book_hash=hash_, stage=stage.value, status=status.value)
+        conn,
+        StageRow(
+            book_hash=hash_,
+            stage=stage.value,
+            status=status.value,
+            output_file=str(output_file) if output_file is not None else None,
+        ),
     )
-
-
-def _record_bookkeeping_stages(conn: sqlite3.Connection, hash_: str) -> None:
-    """Record the stages that have no work of their own in this mode.
-
-    Without this the early "already complete" return in ``process_book`` is
-    UNREACHABLE: these three are in STAGE_ORDER, nothing ever marks them done,
-    so `todo` never empties and every re-run redoes the whole book.
-
-    Args:
-        conn: Open connection.
-        hash_: The book's identity.
-    """
-    for stage in (Stage.VALIDATE, Stage.ARCHIVE, Stage.CLEANUP):
-        _record_stage(conn, hash_, stage, StageStatus.COMPLETED)
 
 
 def _fallback_metadata(claim: ParsedPath, hint: str) -> BookMetadata:
@@ -271,33 +330,127 @@ def process_book(
         The book's record, with status ``completed`` or ``failed``.
     """
     conn = context.conn
-    hash_ = book_hash(book)
-    row = queries.get_book(conn, hash_) or BookRow(
-        book_hash=hash_,
-        source_path=str(book.identity_path),
-        mode=mode.value,
-        file_count=len(book.files),
-        total_duration=book.total_duration_ms / 1000,
-    )
+    row = _requested_row(book, conn, mode)
+    hash_ = row.book_hash
     queries.upsert_book(conn, row)
 
     for stage in PRE_COMPLETED_STAGES.get(mode, ()):
         _record_stage(conn, hash_, stage, StageStatus.COMPLETED)
 
-    todo = _remaining(
-        {Stage(s) for s in queries.completed_stages(conn, hash_)}, STAGE_ORDER[mode]
-    )
+    order = stages_for(mode, context.config.level)
+    todo = _remaining(_done_stages(conn, hash_), order)
     if not todo:
         log.info("{} is already complete", book.identity_path.name)
         return row
 
     try:
-        return _run_stages(book, context, row=row, todo=todo)
-    except (FfmpegError, OSError) as exc:
-        log.exception("{} failed", book.identity_path.name)
-        failed = row.model_copy(update={"status": "failed", "error_message": str(exc)})
+        return _run_stages(book, context, row=row, todo=todo, stages=order)
+    except (FfmpegError, MutagenError, OSError, ValueError) as exc:
+        logger.exception("{} failed", book.identity_path.name)
+        current = queries.get_book(conn, hash_) or row
+        failed = current.model_copy(
+            update={"status": "failed", "error_message": str(exc)}
+        )
         queries.update_book(conn, failed)
         return failed
+
+
+def _stored_output(conn: sqlite3.Connection, hash_: str, stage: Stage) -> Path:
+    """Read a completed stage's durable output or refuse an unsafe resume."""
+    output = next(
+        (
+            row.output_file
+            for row in queries.get_stages(conn, hash_)
+            if row.stage == stage.value
+        ),
+        None,
+    )
+    if output is None or not Path(output).is_file():
+        raise ResumeError(stage)
+    return Path(output)
+
+
+def _validated_book(
+    book: BookDirectory, context: RunContext, plan: StagePlan
+) -> BookDirectory:
+    """Run source validation only when this mode still requires it."""
+    if Stage.VALIDATE in plan.todo:
+        result = validate.validate_book(
+            book, context.config.paths, context.config.encoding, plan.book_hash
+        )
+        _record_stage(
+            context.conn, plan.book_hash, Stage.VALIDATE, StageStatus.COMPLETED
+        )
+        return result.book
+    if Stage.CONCAT in plan.todo:
+        return validate.load_validated_book(book, context.config.paths, plan.book_hash)
+    return book
+
+
+def _concat_source(book: BookDirectory, context: RunContext, plan: StagePlan) -> Path:
+    """Produce or recover the single source used by conversion."""
+    source = book.files[0].path
+    if not book.is_multi_file_book:
+        if Stage.CONCAT in plan.todo:
+            _record_stage(
+                context.conn,
+                plan.book_hash,
+                Stage.CONCAT,
+                StageStatus.COMPLETED,
+                output_file=source,
+            )
+        return source
+
+    joined = context.config.paths.work_dir / plan.book_hash / f"joined{source.suffix}"
+    if Stage.CONCAT in plan.todo:
+        source = concat.concat_files(book, joined)
+        _record_stage(
+            context.conn,
+            plan.book_hash,
+            Stage.CONCAT,
+            StageStatus.COMPLETED,
+            output_file=source,
+        )
+        return source
+    return _stored_output(context.conn, plan.book_hash, Stage.CONCAT)
+
+
+def _metadata_from_row(row: BookRow) -> BookMetadata:
+    """Reconstruct a completed ASIN stage's durable metadata for a retry."""
+    if row.parsed_title is None:
+        raise ResumeError(Stage.ASIN)
+    return BookMetadata(
+        title=row.parsed_title,
+        author=row.parsed_author or "",
+        series=row.parsed_series or "",
+        series_position=row.parsed_position or "",
+        asin=row.parsed_asin or "",
+        narrator=row.parsed_narrator or "",
+    )
+
+
+def _identified(
+    book: BookDirectory,
+    context: RunContext,
+    row: BookRow,
+    todo: tuple[Stage, ...],
+) -> tuple[BookRow, Identified]:
+    """Resolve metadata once, persisting it before later stages can fail."""
+    chapters = concat.build_chapters(book)
+    if Stage.ASIN not in todo:
+        return row, Identified(metadata=_metadata_from_row(row), chapters=chapters)
+    parsed = (
+        parse.parse_path(book.identity_path, context.source_root)
+        if context.source_root
+        else None
+    )
+    metadata, chapters = _identify(context.client, book, chapters, parsed)
+    updated = _completed_row(row, metadata, chapters).model_copy(
+        update={"status": "pending"}
+    )
+    queries.update_book(context.conn, updated)
+    _record_stage(context.conn, row.book_hash, Stage.ASIN, StageStatus.COMPLETED)
+    return updated, Identified(metadata=metadata, chapters=chapters)
 
 
 def _encode_and_tag(
@@ -305,8 +458,7 @@ def _encode_and_tag(
     source: Path,
     identified: Identified,
     *,
-    todo: tuple[Stage, ...],
-    hash_: str,
+    plan: StagePlan,
 ) -> Path:
     """Encode the audio and write its tags.
 
@@ -314,17 +466,16 @@ def _encode_and_tag(
         context: Configuration, database, and HTTP client for this run.
         source: The joined or single input file.
         identified: The metadata to tag with and the chapters to embed.
-        todo: Stages still to run.
-        hash_: The book's identity, which names its scratch directory.
+        plan: Selected stages and the book identity for this run.
 
     Returns:
         The converted file's path.
     """
     conn = context.conn
-    work_dir = context.config.paths.work_dir / hash_
+    work_dir = context.config.paths.work_dir / plan.book_hash
     converted = work_dir / "converted.m4b"
 
-    if Stage.CONVERT in todo:
+    if Stage.CONVERT in plan.todo:
         convert.convert_to_m4b(
             source,
             converted,
@@ -332,13 +483,102 @@ def _encode_and_tag(
             context.config.encoding,
             work_dir=work_dir,
         )
-    _record_stage(conn, hash_, Stage.CONVERT, StageStatus.COMPLETED)
+        _record_stage(
+            conn,
+            plan.book_hash,
+            Stage.CONVERT,
+            StageStatus.COMPLETED,
+            output_file=converted,
+        )
+    elif Stage.CONVERT in plan.stages:
+        converted = _stored_output(conn, plan.book_hash, Stage.CONVERT)
+    else:
+        converted = source
 
-    if Stage.METADATA in todo:
+    if Stage.METADATA in plan.todo:
         write_tags(converted, identified.metadata)
-    _record_stage(conn, hash_, Stage.METADATA, StageStatus.COMPLETED)
+        _record_stage(
+            conn,
+            plan.book_hash,
+            Stage.METADATA,
+            StageStatus.COMPLETED,
+            output_file=converted,
+        )
 
     return converted
+
+
+def _organize_output(
+    book: BookDirectory,
+    converted: Path,
+    identified: Identified,
+    context: RunContext,
+    plan: StagePlan,
+) -> Path:
+    """Place a completed M4B only when this level schedules library filing."""
+    if Stage.ORGANIZE not in plan.stages:
+        if Stage.CONVERT in plan.stages:
+            if converted.parent == book.path:
+                return converted
+            source_output = book.path / f"{organize.book_stem(identified.metadata)}.m4b"
+            final = organize.place_book(converted, source_output)
+            _record_stage(
+                context.conn,
+                plan.book_hash,
+                Stage.CONVERT,
+                StageStatus.COMPLETED,
+                output_file=final,
+            )
+            return final
+        return converted
+    if Stage.ORGANIZE not in plan.todo:
+        return _stored_output(context.conn, plan.book_hash, Stage.ORGANIZE)
+    final = organize.build_library_path(
+        context.config.paths.library_dir, identified.metadata
+    )
+    final = organize.place_book(converted, final)
+    _record_stage(
+        context.conn,
+        plan.book_hash,
+        Stage.ORGANIZE,
+        StageStatus.COMPLETED,
+        output_file=final,
+    )
+    return final
+
+
+def _archive_and_cleanup(
+    book: BookDirectory,
+    final: Path,
+    context: RunContext,
+    plan: StagePlan,
+) -> None:
+    """Finish destructive lifecycle work strictly after a validated output exists."""
+    if Stage.ARCHIVE in plan.todo and context.config.dry_run:
+        _record_stage(context.conn, plan.book_hash, Stage.ARCHIVE, StageStatus.SKIPPED)
+    elif Stage.ARCHIVE in plan.todo:
+        archived = archive.archive_source(
+            book.identity_path,
+            final,
+            context.config.paths.archive_dir,
+            source_duration_ms=book.total_duration_ms,
+        )
+        _record_stage(
+            context.conn,
+            plan.book_hash,
+            Stage.ARCHIVE,
+            StageStatus.COMPLETED,
+            output_file=archived.archive_path,
+        )
+    if Stage.CLEANUP in plan.todo:
+        result = cleanup.cleanup_work_dir(
+            context.config.paths.work_dir,
+            plan.book_hash,
+            enabled=context.config.cleanup_work_dir,
+            dry_run=context.config.dry_run,
+        )
+        status = StageStatus.COMPLETED if result.attempted else StageStatus.SKIPPED
+        _record_stage(context.conn, plan.book_hash, Stage.CLEANUP, status)
 
 
 def _run_stages(
@@ -347,6 +587,7 @@ def _run_stages(
     *,
     row: BookRow,
     todo: tuple[Stage, ...],
+    stages: tuple[Stage, ...],
 ) -> BookRow:
     """Execute the stages for one book.
 
@@ -359,45 +600,28 @@ def _run_stages(
         context: Configuration, database, and HTTP client for this run.
         row: The book's current record.
         todo: Stages still to run.
+        stages: The requested mode and level's complete stage plan.
 
     Returns:
         The updated record.
     """
-    config, conn, client = context.config, context.conn, context.client
-    hash_ = row.book_hash
-    work_dir = config.paths.work_dir / hash_
-    source = book.files[0].path
+    plan = StagePlan(book_hash=row.book_hash, todo=todo, stages=stages)
+    if set(todo) <= {Stage.ARCHIVE, Stage.CLEANUP}:
+        final = _stored_output(context.conn, plan.book_hash, Stage.ORGANIZE)
+        _archive_and_cleanup(book, final, context, plan)
+        completed = row.model_copy(update={"status": "completed"})
+        queries.update_book(context.conn, completed)
+        return completed
 
-    chapters = concat.build_chapters(book)
-    if book.is_multi_file_book and Stage.CONCAT in todo:
-        source = concat.concat_files(book, work_dir / f"joined{source.suffix}")
-    _record_stage(conn, hash_, Stage.CONCAT, StageStatus.COMPLETED)
+    validated = _validated_book(book, context, plan)
+    source = _concat_source(validated, context, plan)
+    row, identified = _identified(validated, context, row, todo)
+    converted = _encode_and_tag(context, source, identified, plan=plan)
+    final = _organize_output(validated, converted, identified, context, plan)
+    _archive_and_cleanup(validated, final, context, plan)
 
-    parsed = (
-        parse.parse_path(book.identity_path, context.source_root)
-        if context.source_root
-        else None
-    )
-    metadata, chapters = _identify(client, book, chapters, parsed)
-    _record_stage(conn, hash_, Stage.ASIN, StageStatus.COMPLETED)
-
-    identified = Identified(metadata, chapters)
-    converted = _encode_and_tag(context, source, identified, todo=todo, hash_=hash_)
-
-    # EVERY stage is guarded, not just the expensive ones. Re-running organize
-    # on a book already in the library does not overwrite -- place_book refuses
-    # to -- it writes "Title (2).m4b", so an unguarded re-run DUPLICATES the
-    # whole library rather than failing. Observed 2026-08-02 on the real
-    # end-to-end run, which is the only place this could have shown up.
-    final = organize.build_library_path(config.paths.library_dir, metadata)
-    if Stage.ORGANIZE in todo:
-        final = organize.place_book(converted, final)
-    _record_stage(conn, hash_, Stage.ORGANIZE, StageStatus.COMPLETED)
-
-    _record_bookkeeping_stages(conn, hash_)
-
-    completed = _completed_row(row, metadata, chapters)
-    queries.update_book(conn, completed)
+    completed = _completed_row(row, identified.metadata, identified.chapters)
+    queries.update_book(context.conn, completed)
     log.success("{} -> {}", book.identity_path.name, final)
     return completed
 

@@ -81,6 +81,7 @@ class ProbeResult(BaseModel):
     path: Path
     duration_ms: int = Field(gt=0)
     stream: AudioStream
+    format_name: str = Field(default="unknown", min_length=1)
     chapters: ChapterSet = ChapterSet()
 
     #: Tags read from the container. Kept as strings because that is what they

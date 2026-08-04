@@ -97,6 +97,8 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+from audiobook_pipeline.models.stage import PipelineLevel
+
 # --------------------------------------------------------------------------
 # Constants. Named at module level, never inline in a field default -- a magic
 # number in a default is invisible to anyone reading the class.
@@ -111,10 +113,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = Path("data")
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-
-#: Intelligence tier. simple/normal never call an LLM; ai/full do.
-PipelineLevelName = Literal["simple", "normal", "ai", "full"]
-
 
 # --------------------------------------------------------------------------
 # Sections
@@ -342,7 +340,7 @@ class Settings(BaseSettings):
     profile: str = "default"
 
     #: Intelligence tier. Controls whether the AI stages run at all.
-    level: PipelineLevelName = "normal"
+    level: PipelineLevel = PipelineLevel.NORMAL
 
     dry_run: bool = False
     force: bool = False
@@ -422,7 +420,10 @@ class Settings(BaseSettings):
         # An AI tier with no endpoint configured starts, runs, and fails at the
         # first book -- after the convert stage has already spent minutes of
         # CPU. Refuse at startup instead.
-        if self.level in ("ai", "full") and not self.ai.base_url:
+        if (
+            self.level in (PipelineLevel.AI, PipelineLevel.FULL)
+            and not self.ai.base_url
+        ):
             msg = (
                 f"level={self.level!r} requires ai.base_url, which is empty. "
                 f"ACTION REQUIRED: set AUDIOBOOK_AI__BASE_URL, or use "
