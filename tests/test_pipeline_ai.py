@@ -204,6 +204,38 @@ def test_ai_selected_edition_still_falls_back_when_runtime_mismatches(
     selected.close()
 
 
+def test_catalogue_candidate_evidence_flattens_and_caps_external_text() -> None:
+    noisy = f"{'x' * 241}\nremaining"
+    candidate = BookMetadata(
+        title=noisy,
+        author=noisy,
+        asin="ASIN-noisy",
+        series=noisy,
+        series_position=noisy,
+    )
+    invalid_asin_candidates = [
+        candidate.model_copy(update={"asin": "A" * 41}),
+        candidate.model_copy(update={"asin": "ASIN\r\ninvalid"}),
+    ]
+
+    evidence = ai_selection.evidence_for(
+        book(), ParsedPath(), candidate, [*invalid_asin_candidates, candidate]
+    )
+    offered = evidence.candidates[0]
+
+    text_values = (
+        offered.title,
+        offered.author,
+        offered.series,
+        offered.series_position,
+    )
+    assert all("\n" not in value and "\r" not in value for value in text_values)
+    assert len(offered.title) == len(offered.author) == len(offered.series) == 240
+    assert len(offered.series_position) == 40
+    assert len(evidence.candidates) == 1
+    assert offered.asin == "ASIN-noisy"
+
+
 def test_pipeline_closes_only_the_resolver_it_creates(
     context: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:

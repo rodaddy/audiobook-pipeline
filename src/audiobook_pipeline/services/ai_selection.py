@@ -12,6 +12,10 @@ from audiobook_pipeline.models.parsed import ParsedPath
 from audiobook_pipeline.models.stage import PipelineLevel
 from audiobook_pipeline.services.ai import AiResolver
 
+_MAX_EVIDENCE_TEXT = 240
+_MAX_POSITION_TEXT = 40
+_MAX_ASIN_TEXT = 40
+
 
 def resolver_for(
     config: Settings, injected: AiResolver | None
@@ -87,17 +91,41 @@ def _offered_candidates(candidates: list[BookMetadata]) -> tuple[AiCandidate, ..
     offered: list[AiCandidate] = []
     seen_asins: set[str] = set()
     for candidate in candidates[:5]:
-        if not candidate.asin or not candidate.author or candidate.asin in seen_asins:
+        title = _safe_candidate_text(candidate.title)
+        author = _safe_candidate_text(candidate.author)
+        if (
+            not _is_safe_candidate_asin(candidate.asin)
+            or not title
+            or not author
+            or candidate.asin in seen_asins
+        ):
             continue
         seen_asins.add(candidate.asin)
         offered.append(
             AiCandidate(
                 candidate_id=candidate.asin,
                 asin=candidate.asin,
-                title=candidate.title,
-                author=candidate.author,
-                series=candidate.series,
-                series_position=candidate.series_position,
+                title=title,
+                author=author,
+                series=_safe_candidate_text(candidate.series),
+                series_position=_safe_candidate_text(
+                    candidate.series_position, _MAX_POSITION_TEXT
+                ),
             )
         )
     return tuple(offered)
+
+
+def _safe_candidate_text(value: str, limit: int = _MAX_EVIDENCE_TEXT) -> str:
+    """Flatten untrusted catalogue text and cap it before Pydantic validation."""
+    return value.replace("\n", " ").replace("\r", " ").strip()[:limit]
+
+
+def _is_safe_candidate_asin(value: str) -> bool:
+    """Accept only identities that AiCandidate can retain exactly."""
+    return (
+        bool(value)
+        and len(value) <= _MAX_ASIN_TEXT
+        and "\n" not in value
+        and "\r" not in value
+    )
