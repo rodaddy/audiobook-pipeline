@@ -52,6 +52,7 @@ from audiobook_pipeline.models.stage import (
     stages_for,
 )
 from audiobook_pipeline.services import (
+    ai_selection,
     archive,
     audible,
     cleanup,
@@ -62,6 +63,7 @@ from audiobook_pipeline.services import (
     parse,
     validate,
 )
+from audiobook_pipeline.services.ai import AiResolver
 from audiobook_pipeline.utils.ffmpeg import FfmpegError
 from audiobook_pipeline.utils.tagging import write_tags
 
@@ -104,6 +106,7 @@ class RunContext(BaseModel):
     config: Settings
     conn: sqlite3.Connection
     client: httpx.Client
+    ai_resolver: AiResolver | None = None
 
     #: The directory this run was pointed at. Carried so a book whose catalogue
     #: lookup fails can still be filed under the author its own source tree
@@ -252,7 +255,7 @@ def _fallback_metadata(claim: ParsedPath, hint: str) -> BookMetadata:
 
 
 def _identify(
-    client: httpx.Client,
+    context: RunContext,
     book: BookDirectory,
     chapters: ChapterSet,
     parsed: ParsedPath | None = None,
@@ -260,7 +263,7 @@ def _identify(
     """Look the book up and improve its chapters if the catalogue knows better.
 
     Args:
-        client: Shared HTTP client.
+        context: Run configuration and caller-owned HTTP boundaries.
         book: The discovered book.
         chapters: The chapters derived locally.
         parsed: What the source path claims. Used to SEARCH -- a clean title
@@ -278,19 +281,49 @@ def _identify(
     fallback = _fallback_metadata(claim, hint)
 
     query = f"{hint} {claim.author}".strip()
-    match = identify.best_match(
-        audible.search(client, query), title_hint=hint, author_hint=claim.author
-    )
+    candidates = audible.search(context.client, query)
+    match = identify.best_match(candidates, title_hint=hint, author_hint=claim.author)
     if match is None:
         log.warning("no catalogue match for {!r}", query)
         return fallback, chapters
 
+    resolver, owns_resolver = ai_selection.resolver_for(
+        context.config, context.ai_resolver
+    )
+    try:
+        evidence = ai_selection.evidence_for(book, claim, match, candidates)
+        if context.config.ai.all_books:
+            evidence = evidence.model_copy(update={"resolution_requested": True})
+        selected = ai_selection.selected_match(
+            resolver, context.config.level, evidence, candidates
+        )
+        if selected is not None:
+            match = selected
+        identified = _identified_match(
+            context.client,
+            book,
+            fallback,
+            Identified(metadata=match, chapters=chapters),
+        )
+        return identified.metadata, identified.chapters
+    finally:
+        if owns_resolver and resolver is not None:
+            resolver.close()
+
+
+def _identified_match(
+    client: httpx.Client,
+    book: BookDirectory,
+    fallback: BookMetadata,
+    identified: Identified,
+) -> Identified:
+    """Adopt a candidate only after the existing edition-duration guard."""
     # Fetched chapters only WIN when the local table came from file boundaries.
     # Marks embedded in the source describe this exact file; the catalogue's
     # describe an edition that merely shares an ASIN.
-    if chapters.source != concat.SOURCE_EMBEDDED:
+    if identified.chapters.source != concat.SOURCE_EMBEDDED:
         fetched = identify.fetch_chapters(
-            client, match.asin, local_ms=book.total_duration_ms
+            client, identified.metadata.asin, local_ms=book.total_duration_ms
         )
 
         # A runtime that disagrees does not merely make the CHAPTERS wrong -- it
@@ -302,15 +335,15 @@ def _identify(
         if fetched.edition_mismatch:
             log.warning(
                 "discarding match {!r} ({}): runtime disagrees with the audio",
-                match.title,
-                match.asin,
+                identified.metadata.title,
+                identified.metadata.asin,
             )
-            return fallback, chapters
+            return Identified(metadata=fallback, chapters=identified.chapters)
 
         if not fetched.is_empty:
-            return match, fetched.chapters
+            return Identified(metadata=identified.metadata, chapters=fetched.chapters)
 
-    return match, chapters
+    return identified
 
 
 def process_book(
@@ -444,7 +477,7 @@ def _identified(
         if context.source_root
         else None
     )
-    metadata, chapters = _identify(context.client, book, chapters, parsed)
+    metadata, chapters = _identify(context, book, chapters, parsed)
     updated = _completed_row(row, metadata, chapters).model_copy(
         update={"status": "pending"}
     )

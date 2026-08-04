@@ -540,7 +540,7 @@ def client_returning(payload: dict[str, object]) -> httpx.Client:
 
 
 def test_a_book_the_catalogue_cannot_find_keeps_its_authors_name(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, context: RunContext
 ) -> None:
     """The Unknown Author defect, at the level that actually decides it.
 
@@ -554,14 +554,17 @@ def test_a_book_the_catalogue_cannot_find_keeps_its_authors_name(
 
     with client_returning({}) as client:
         metadata, _ = pipeline._identify(
-            client, book, ChapterSet(), parse.parse_path(book.identity_path, root)
+            context.model_copy(update={"client": client}),
+            book,
+            ChapterSet(),
+            parse.parse_path(book.identity_path, root),
         )
 
     assert metadata.author == "Brian McClellan"
 
 
 def test_a_match_whose_runtime_disagrees_is_not_adopted_as_the_identity(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, context: RunContext
 ) -> None:
     """A wrong ASIN's title and series are wrong too, not just its chapters.
 
@@ -584,7 +587,7 @@ def test_a_match_whose_runtime_disagrees_is_not_adopted_as_the_identity(
         "chapters": [],
     }) as client:
         metadata, _ = pipeline._identify(
-            client,
+            context.model_copy(update={"client": client}),
             book,
             ChapterSet(source="file-boundary"),
             parse.parse_path(book.identity_path, root),
