@@ -42,6 +42,12 @@ def parse_dependencies(pyproject_text: str) -> list[str]:
 
 
 def main() -> int:
+    """Synchronize requirements.txt from canonical project dependencies.
+
+    Returns:
+        Zero when requirements are current or updated; one when pyproject.toml
+        is unavailable.
+    """
     if not PYPROJECT.exists():
         print(f"Error: {PYPROJECT} not found", file=sys.stderr)
         return 1

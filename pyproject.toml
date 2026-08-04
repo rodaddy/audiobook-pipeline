@@ -6,7 +6,7 @@ name = "audiobook-pipeline"
 version = "1.0.0"
 description = "Convert loose audio files into chaptered, tagged M4B audiobooks with Audible metadata."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "click>=8.1",
     "httpx>=0.27",
@@ -35,6 +35,7 @@ audiobook-audit = "audiobook_pipeline.apps.audit.__main__:main"
 dev = [
     "pytest>=8.0",
     "pytest-httpx>=0.30",
+    "pytest-asyncio>=0.25",
     # The hooks and CI invoke these by name and fail closed when they are
     # missing. Before this, CLAUDE.md documented `ruff format` as the repo
     # formatter while ruff was in no dependency list at all -- `uv run ruff`
@@ -64,7 +65,7 @@ artifacts = ["src/audiobook_pipeline/py.typed"]
 [tool.ruff]
 # Matches requires-python above. Both must agree; a mismatch means the linter
 # permits syntax the interpreter rejects.
-target-version = "py311"
+target-version = "py313"
 line-length = 88
 src = ["src", "tests"]
 
@@ -98,6 +99,10 @@ select = [
     "C4",     # flake8-comprehensions
     "DTZ",    # flake8-datetimez -- naive datetimes
     "T10",    # flake8-debugger -- a committed set_trace() hangs CI on stdin
+    "T20",    # flake8-print -- library code logs; scripts are exempt below
+    "S105",   # hardcoded-password-string
+    "S106",   # hardcoded-password-func-arg
+    "S107",   # hardcoded-password-default
     "SIM",    # flake8-simplify
     "PTH",    # flake8-use-pathlib
     "RUF",    # ruff's own rules
@@ -168,7 +173,7 @@ max-statements = 25
 max-args = 5
 
 [tool.ruff.lint.mccabe]
-max-complexity = 12
+max-complexity = 10
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +181,7 @@ max-complexity = 12
 # all before now: the config lived only on the unmerged rails branch.
 # ---------------------------------------------------------------------------
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 # Scoped to what the rewrite has actually landed. The remaining tests target
 # the pre-rewrite API and are re-enabled here as each service is rebuilt --
 # see _plans/python-rewrite-sequence.md. Listing them explicitly, rather than

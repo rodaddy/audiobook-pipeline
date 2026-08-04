@@ -42,7 +42,7 @@ import sys
 import tokenize
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 #: Hard ceilings, from _DOCS/STANDARDS-python.md ## Size. Code lines only.
 FILE_MAX = 500
@@ -50,7 +50,7 @@ FUNCTION_MAX = 50
 
 #: Directories scanned by default. Tests count too -- a 900-line test file is
 #: as hard to navigate as a 900-line module, and the fixtures hide in it.
-DEFAULT_ROOTS = ("src", "tests", "scripts")
+DEFAULT_ROOTS = ("src", "tests", "scripts", "_githooks")
 
 
 def _docstring_lines(tree: ast.AST) -> set[int]:
@@ -135,34 +135,34 @@ def oversized_functions(path: Path, code_lines: set[int]) -> list[tuple[str, int
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     over: list[tuple[str, int]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        span = range(node.body[0].lineno, (node.end_lineno or node.lineno) + 1)
-        size = len(code_lines.intersection(span))
-        if size > FUNCTION_MAX:
-            over.append((node.name, size))
+
+    def visit(node: ast.AST, parents: tuple[str, ...] = ()) -> None:
+        name = getattr(node, "name", None)
+        nested = parents + ((name,) if isinstance(name, str) else ())
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            span = range(node.body[0].lineno, (node.end_lineno or node.lineno) + 1)
+            size = len(code_lines.intersection(span))
+            if size > FUNCTION_MAX:
+                over.append((".".join(nested), size))
+        for child in ast.iter_child_nodes(node):
+            visit(child, nested)
+
+    visit(tree)
     return over
 
 
-def check_file(path: Path) -> list[str]:
+def check_file(path: Path, project_root: Path = PROJECT_ROOT) -> list[str]:
     """Measure one file and return a breach message for each ceiling exceeded.
 
     Args:
         path: Python file to check.
+        project_root: Root used to render a stable logical path.
 
     Returns:
         Human-readable breach lines, empty when the file is within all ceilings.
     """
     code_lines = code_line_set(path)
-    # Display path relative to the repo when possible. The pre-commit hook feeds
-    # this script staged copies checked out under `.git/`, which are OUTSIDE
-    # PROJECT_ROOT, so a bare `relative_to` would crash on exactly the path that
-    # matters most. Fall back to the path as given.
-    try:
-        rel: Path | str = path.relative_to(PROJECT_ROOT)
-    except ValueError:
-        rel = path
+    rel = path.relative_to(project_root)
     breaches: list[str] = []
     if len(code_lines) > FILE_MAX:
         breaches.append(f"{rel}: {len(code_lines)} code lines (ceiling {FILE_MAX})")
@@ -173,11 +173,12 @@ def check_file(path: Path) -> list[str]:
     return breaches
 
 
-def iter_targets(explicit: list[str]) -> list[Path]:
+def iter_targets(explicit: list[str], project_root: Path = PROJECT_ROOT) -> list[Path]:
     """Resolve the files to check: named paths, or the default roots.
 
     Args:
         explicit: Paths passed on the command line; empty means scan the roots.
+        project_root: Repository snapshot whose enforcement roots are scanned.
 
     Returns:
         Existing Python files, sorted and de-duplicated.
@@ -187,7 +188,7 @@ def iter_targets(explicit: list[str]) -> list[Path]:
         return sorted({p for p in named if p.suffix == ".py" and p.is_file()})
     found: set[Path] = set()
     for root in DEFAULT_ROOTS:
-        found.update((PROJECT_ROOT / root).rglob("*.py"))
+        found.update((project_root / root).rglob("*.py"))
     return sorted(found)
 
 
@@ -204,11 +205,15 @@ def main() -> int:
         help="exit 1 when any file or function exceeds its code-line ceiling",
     )
     parser.add_argument("paths", nargs="*", help="specific files; default scans roots")
+    parser.add_argument(
+        "--root", type=Path, default=PROJECT_ROOT, help="repository snapshot root"
+    )
     args = parser.parse_args()
+    project_root = args.root.resolve()
 
     breaches: list[str] = []
-    for target in iter_targets(args.paths):
-        breaches.extend(check_file(target))
+    for target in iter_targets(args.paths, project_root):
+        breaches.extend(check_file(target, project_root))
 
     if not breaches:
         print(

@@ -1,4 +1,6 @@
-"""The command-line applications. Thin by design.
+# Apps
+
+The command-line applications. Thin by design.
 
 Purpose:
     An app parses arguments, calls ``load_settings`` once, and hands off to
@@ -27,6 +29,6 @@ Example:
 
 See Also:
     - audiobook_pipeline.config: load_settings, the one sanctioned entry point
-"""
 
-from __future__ import annotations
+---
+*Auto-generated from `__init__.py` by `_githooks/generate_folder_docs.py`.*

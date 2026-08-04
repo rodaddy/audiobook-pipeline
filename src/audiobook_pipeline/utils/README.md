@@ -1,4 +1,6 @@
-"""Shared, dependency-free helpers used across every part of the pipeline.
+# Utils
+
+Shared, dependency-free helpers used across every part of the pipeline.
 
 Purpose:
     The bottom of the import graph. Anything here may be imported by any
@@ -49,6 +51,6 @@ Example:
 See Also:
     - audiobook_pipeline.config: the keystone that calls into logging_config
     - _DOCS/STANDARDS-python.md: the utils/ contract
-"""
 
-from __future__ import annotations
+---
+*Auto-generated from `__init__.py` by `_githooks/generate_folder_docs.py`.*

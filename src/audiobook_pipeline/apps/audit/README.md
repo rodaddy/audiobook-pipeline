@@ -1,4 +1,6 @@
-"""Audit - report what an audiobook library and its state database contain.
+# Audit
+
+Audit - report what an audiobook library and its state database contain.
 
 The audit application is a thin command boundary. It parses requested checks,
 loads configuration once, and delegates inspection to the pipeline services.
@@ -21,6 +23,6 @@ Example:
 See Also:
     - audiobook_pipeline.apps.convert
     - audiobook_pipeline.config
-"""
 
-from __future__ import annotations
+---
+*Auto-generated from `__init__.py` by `_githooks/generate_folder_docs.py`.*

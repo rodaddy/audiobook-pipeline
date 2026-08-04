@@ -1,4 +1,6 @@
-"""The work itself. One module per stage, each one callable on its own.
+# Services
+
+The work itself. One module per stage, each one callable on its own.
 
 Purpose:
     A stage takes validated input, does one thing, and returns a model. It does
@@ -53,6 +55,6 @@ Example:
 
 See Also:
     - audiobook_pipeline.models.stage: the stage vocabulary and STAGE_ORDER
-"""
 
-from __future__ import annotations
+---
+*Auto-generated from `__init__.py` by `_githooks/generate_folder_docs.py`.*

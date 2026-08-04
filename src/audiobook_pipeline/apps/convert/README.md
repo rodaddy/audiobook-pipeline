@@ -1,4 +1,6 @@
-"""Convert - turn a source directory into library-ready M4B audiobooks.
+# Convert
+
+Convert - turn a source directory into library-ready M4B audiobooks.
 
 The conversion application owns the command-line boundary only: it validates
 operator arguments, loads settings once, invokes the pipeline, and translates
@@ -21,6 +23,6 @@ Example:
 See Also:
     - audiobook_pipeline.services.pipeline
     - audiobook_pipeline.config
-"""
 
-from __future__ import annotations
+---
+*Auto-generated from `__init__.py` by `_githooks/generate_folder_docs.py`.*
