@@ -104,6 +104,17 @@ def _genres(ladders: list[dict[str, Any]]) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _cover_url(product_images: object) -> str:
+    """Pick Audible's largest requested cover image, if present."""
+    if not isinstance(product_images, dict):
+        return ""
+    for size in ("1024", "500"):
+        value = product_images.get(size)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
 def _to_metadata(product: dict[str, Any]) -> BookMetadata | None:
     """Map one catalogue product into a validated model.
 
@@ -135,6 +146,7 @@ def _to_metadata(product: dict[str, Any]) -> BookMetadata | None:
         summary=_strip_html(str(product.get("publisher_summary") or "")),
         copyright=str(product.get("copyright") or ""),
         genres=_genres(product.get("category_ladders") or []),
+        cover_url=_cover_url(product.get("product_images")),
     )
 
 

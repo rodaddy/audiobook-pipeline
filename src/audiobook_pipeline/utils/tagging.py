@@ -38,9 +38,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from loguru import logger
-from mutagen.mp4 import MP4, MP4FreeForm
+from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm
 
-from audiobook_pipeline.models.metadata import BookMetadata
+from audiobook_pipeline.models.metadata import BookMetadata, CoverArt
 
 log = logger.bind(stage="tag")
 
@@ -89,6 +89,22 @@ def _encode(value: str) -> MP4FreeForm:
     return MP4FreeForm(value.encode("utf-8"))
 
 
+def _album_text(metadata: BookMetadata) -> str:
+    """Build the legacy-visible album text from series metadata."""
+    if metadata.series and metadata.series_position:
+        return f"{metadata.series}, Book {metadata.series_position}"
+    if metadata.series:
+        return metadata.series
+    return metadata.title
+
+
+def _grouping_text(metadata: BookMetadata) -> str:
+    """Build the legacy-visible grouping text from series metadata."""
+    if metadata.series_position:
+        return f"{metadata.series}, Book #{metadata.series_position}"
+    return metadata.series
+
+
 def _standard_values(metadata: BookMetadata) -> dict[str, list[str]]:
     """Build the standard-atom payload, omitting anything empty.
 
@@ -118,22 +134,61 @@ def _standard_values(metadata: BookMetadata) -> dict[str, list[str]]:
         values["\xa9gen"] = [", ".join(metadata.genres)]
 
     if metadata.has_series:
-        values["\xa9alb"] = [metadata.title]
+        values["\xa9alb"] = [_album_text(metadata)]
         values["sonm"] = [metadata.sort_title]
         # soal is what a library sorts a series by. Without it a series lists
         # alphabetically, so book 10 sits between book 1 and book 2.
         values["soal"] = [metadata.sort_title]
-        values["\xa9grp"] = [f"{metadata.series}, Book #{metadata.series_position}"]
+        values["\xa9grp"] = [_grouping_text(metadata)]
 
     return values
 
 
-def write_tags(path: Path, metadata: BookMetadata) -> None:
+def _write_freeform(tags: object, metadata: BookMetadata) -> None:
+    """Write non-standard metadata, leaving absent values absent."""
+    values = {
+        "ASIN": metadata.asin,
+        "SERIES": metadata.series,
+        "SERIES-PART": metadata.series_position,
+        "PUBLISHER": metadata.publisher,
+    }
+    for name in FREEFORM_ATOMS:
+        value = values[name]
+        if value:
+            tags[_freeform(name)] = [_encode(value)]  # type: ignore[index]
+
+
+def _write_series_atoms(tags: object, metadata: BookMetadata) -> None:
+    """Write Apple Books work/movement atoms when the values are valid."""
+    if not metadata.has_series:
+        return
+    tags["shwm"] = [1]  # type: ignore[index]
+    tags["\xa9mvn"] = [metadata.series]  # type: ignore[index]
+    if metadata.series_position.isdecimal():
+        tags["\xa9mvi"] = [int(metadata.series_position)]  # type: ignore[index]
+
+
+def _write_cover(tags: object, cover: CoverArt | None) -> None:
+    """Embed validated cover art using Mutagen's native MP4 wrapper."""
+    if cover is None:
+        return
+    image_format = (
+        MP4Cover.FORMAT_JPEG
+        if cover.content_type == "image/jpeg"
+        else MP4Cover.FORMAT_PNG
+    )
+    tags["covr"] = [MP4Cover(cover.data, imageformat=image_format)]  # type: ignore[index]
+
+
+def write_tags(
+    path: Path, metadata: BookMetadata, *, cover: CoverArt | None = None
+) -> None:
     """Write every tag onto a finished M4B.
 
     Args:
         path: The M4B to tag, modified in place.
         metadata: What to write.
+        cover: Validated optional JPEG or PNG bytes to embed.
 
     Raises:
         FileNotFoundError: The file does not exist.
@@ -144,36 +199,17 @@ def write_tags(path: Path, metadata: BookMetadata) -> None:
         audio.add_tags()
     tags = audio.tags
     if tags is None:  # pragma: no cover - add_tags() guarantees this
-        msg = f"{path} has no tag block and one could not be created"
+        msg = "MP4 container has no tag block and one could not be created"
         raise RuntimeError(msg)
-
     for atom, values in _standard_values(metadata).items():
         tags[atom] = values
-
     tags["stik"] = [MEDIA_TYPE_AUDIOBOOK]
-    # Gapless. A chapter boundary mid-sentence is audible without it.
     tags["pgap"] = True
-
-    freeform_values = {
-        "ASIN": metadata.asin,
-        "SERIES": metadata.series,
-        "SERIES-PART": metadata.series_position,
-        "PUBLISHER": metadata.publisher,
-    }
-    for name in FREEFORM_ATOMS:
-        value = freeform_values.get(name, "")
-        if value:
-            tags[_freeform(name)] = [_encode(value)]
-
-    if metadata.has_series:
-        # iTunes/Apple Books series display.
-        tags["shwm"] = [1]
-        tags[_freeform("MOVEMENTNAME")] = [_encode(metadata.series)]
-        if metadata.series_position:
-            tags[_freeform("MOVEMENT")] = [_encode(metadata.series_position)]
-
+    _write_freeform(tags, metadata)
+    _write_series_atoms(tags, metadata)
+    _write_cover(tags, cover)
     audio.save()
-    log.debug("tagged {} (asin={})", path.name, metadata.asin or "none")
+    log.debug("tagging complete")
 
 
 def read_asin(path: Path) -> str:

@@ -30,9 +30,15 @@ See Also:
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from audiobook_pipeline.models.chapter import Chapter, ChapterSet
+
+
+class InvalidCoverArtError(ValueError):
+    """Raised when a cover's claimed type does not match its image bytes."""
 
 
 class AudnexusChapter(BaseModel):
@@ -148,6 +154,31 @@ class AudibleResult(BaseModel):
         return self.authors[0] if self.authors else ""
 
 
+class CoverArt(BaseModel):
+    """Validated image bytes that may safely be embedded in an M4B.
+
+    The fetch boundary validates the response before it reaches this model;
+    repeating the magic-byte check here keeps every future caller held to the
+    same JPEG/PNG-only contract.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    content_type: Literal["image/jpeg", "image/png"]
+    data: bytes = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def has_matching_image_magic(self) -> CoverArt:
+        """Reject claimed image types whose bytes do not match their header."""
+        if self.content_type == "image/jpeg" and self.data.startswith(b"\xff\xd8\xff"):
+            return self
+        if self.content_type == "image/png" and self.data.startswith(
+            b"\x89PNG\r\n\x1a\n"
+        ):
+            return self
+        raise InvalidCoverArtError
+
+
 class BookMetadata(BaseModel):
     """The resolved metadata written into a finished M4B.
 
@@ -175,6 +206,7 @@ class BookMetadata(BaseModel):
     summary: str = ""
     copyright: str = ""
     genres: tuple[str, ...] = ()
+    cover_url: str = ""
 
     @property
     def has_series(self) -> bool:
