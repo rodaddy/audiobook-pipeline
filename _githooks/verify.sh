@@ -9,7 +9,15 @@
 set -uo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-temp_root="/Volumes/ThunderBolt/_tmp/audiobook-pipeline"
+
+# Scratch space for the throwaway worktrees this check builds. The maintainer's
+# machine keeps them off the system disk, but that path exists nowhere else, so
+# fall back to the OS temp directory rather than failing on every other clone.
+if [[ -d /Volumes/ThunderBolt/_tmp && -w /Volumes/ThunderBolt/_tmp ]]; then
+  temp_root="/Volumes/ThunderBolt/_tmp/audiobook-pipeline"
+else
+  temp_root="${TMPDIR:-/tmp}/audiobook-pipeline"
+fi
 run_id="hook-verify-$(date +%Y%m%d-%H%M%S)-$$"
 worktree_root="$temp_root/_worktrees"
 archive_root="$temp_root/_archive"

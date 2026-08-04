@@ -9,33 +9,63 @@ Thanks for your interest in contributing. This guide covers everything you need 
 gh repo fork rodaddy/audiobook-pipeline --clone
 cd audiobook-pipeline
 
-# Set up config for local testing
-cp config.env.example config.env
-# Edit config.env -- point WORK_DIR, OUTPUT_DIR, etc. to local test paths
+# Install Python 3.13 via uv, sync locked dependencies, print command help
+./scripts/run setup
 
-# Check dependencies
-./install.sh
+# Point a profile at local test paths, so a mistake cannot touch a real library
+cp examples/config/simple-no-ai.json config/config.mine.json
+# Edit the paths in config/config.mine.json, then:
 
-# Test with dry-run
-bin/audiobook-convert --dry-run --verbose /path/to/test-audiobook/
+# Discovery only -- converts nothing, writes no database
+uv run audiobook-convert --profile mine --dry-run /path/to/test-audiobook/
 ```
+
+Profiles other than `config.json` and `config.sandbox.json` are gitignored, so
+`config.mine.json` stays local to your checkout.
 
 ## Development Setup
 
 ### Dependencies
 
-See the [README](README.md#installation) for the full dependency list. Run `./install.sh` to check and install everything.
+`ffmpeg` and `uv` are the only external requirements; see the
+[README](README.md#requirements). `./scripts/run setup` installs Python 3.13
+through `uv` and syncs the locked dependencies.
 
 ### Project Structure
 
 ```
-bin/              CLI entry points (audiobook-convert, cron-scanner, queue-processor)
-lib/              Shared libraries (sourced by stages, never executed directly)
-stages/           Pipeline stages (01-09, each self-contained with stage_*() function)
-config.env.example  Configuration template (copy to config.env)
-docs/development/   Architecture docs, phase plans, and research history
-.github/            Issue templates, PR template, CI workflow
+src/audiobook_pipeline/
+  apps/       CLI entry points: convert, audit, watch
+  services/   One module per stage, each callable and testable alone
+  models/     Pydantic models -- every boundary in the system has one
+  utils/      The shared floor: text, paths, ffmpeg, http, tagging, logging
+  db/         SQLite state, connection handling, and typed row factories
+  config.py   The keystone. Every setting, and the only place logging is set up
+tests/        Mirrors the source tree
+config/       Committed profiles. PLACEHOLDER paths only -- never a real one
+examples/     Worked configuration profiles to copy
+docs/         install.md, ai.md, and development history
+.github/      Issue templates, PR template, CI workflow
 ```
+
+Two rules the layout depends on. A service never imports another service --
+shared behaviour goes in `utils/`, shared shapes in `models/`. And `utils/`
+never imports from `services/`, so it cannot participate in a cycle.
+
+### Searching the code
+
+The repository is indexed for semantic search with
+[qmd](https://github.com/rodaddy/qmd), which answers "how does X work"
+questions that a text search cannot. The index is machine-local and
+gitignored -- it is a rebuildable artifact of one checkout and was 15 MB, so
+it is not shipped. Build your own if you want it:
+
+```bash
+qmd index .          # build the local index
+qmd query "how are chapters carried across from the source"
+```
+
+This is entirely optional. `rg` covers most needs and needs no setup.
 
 ### How Stages Work
 

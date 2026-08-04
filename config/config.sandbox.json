@@ -1,11 +1,11 @@
 {
   "paths": {
-    "data_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox3",
-    "work_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox3/work",
-    "log_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox3/logs",
-    "archive_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox3/archive",
-    "lock_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox3/locks",
-    "output_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox3/output",
-    "library_dir": "/Volumes/ThunderBolt/AudioBookStuff/sandbox3/library"
+    "data_dir": "~/audiobook-pipeline/sandbox",
+    "work_dir": "~/audiobook-pipeline/sandbox/work",
+    "log_dir": "~/audiobook-pipeline/sandbox/logs",
+    "archive_dir": "~/audiobook-pipeline/sandbox/archive",
+    "lock_dir": "~/audiobook-pipeline/sandbox/locks",
+    "output_dir": "~/audiobook-pipeline/sandbox/output",
+    "library_dir": "~/audiobook-pipeline/sandbox/library"
   }
 }
