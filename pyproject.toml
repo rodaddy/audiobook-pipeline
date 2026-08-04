@@ -31,6 +31,7 @@ dependencies = [
 [project.scripts]
 audiobook-convert = "audiobook_pipeline.apps.convert.__main__:main"
 audiobook-audit = "audiobook_pipeline.apps.audit.__main__:main"
+audiobook-watch = "audiobook_pipeline.apps.watch.__main__:main"
 
 [project.optional-dependencies]
 dev = [
@@ -221,6 +222,7 @@ files = [
     "tests/test_watch.py",
     "tests/test_batch.py",
     "tests/test_watch_recovery.py",
+    "tests/test_watch_app.py",
     "tests/test_pipeline_metadata.py",
 ]
 strict = true
@@ -310,6 +312,7 @@ testpaths = [
     "tests/test_batch.py",
     "tests/test_watch_recovery.py",
     "tests/test_pipeline_metadata.py",
+    "tests/test_watch_app.py",
 ]
 # Fail on an unregistered mark rather than silently skipping the test it was
 # meant to select -- a typo'd `@pytest.mark.slwo` otherwise runs nothing and

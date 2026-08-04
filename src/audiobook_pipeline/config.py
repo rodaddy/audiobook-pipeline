@@ -97,7 +97,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from audiobook_pipeline.models.stage import PipelineLevel
+from audiobook_pipeline.models.stage import PipelineLevel, PipelineMode
 
 # --------------------------------------------------------------------------
 # Constants. Named at module level, never inline in a field default -- a magic
@@ -295,6 +295,9 @@ class AutomationSettings(BaseModel):
     #: written. A file still being copied is not ready to convert, and the
     #: failure looks like a corrupt source rather than a race.
     stability_threshold: int = Field(default=120, ge=0)
+
+    poll_interval_seconds: float = Field(default=30.0, gt=0, le=3600)
+    watch_mode: PipelineMode = PipelineMode.CONVERT
 
     max_retries: int = Field(default=3, ge=0, le=10)
     archive_retention_days: int = Field(default=90, ge=0)
