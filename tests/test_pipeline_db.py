@@ -1,386 +1,220 @@
-"""Tests for pipeline_db.py -- SQLite state machine replacing JSON manifests."""
+"""Historical state-machine guards at the typed SQLite public boundary."""
 
-import threading
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
-from audiobook_pipeline.pipeline_db import PipelineDB
-from audiobook_pipeline.models import (
+from audiobook_pipeline.db.connection import connect
+from audiobook_pipeline.db.queries import (
+    acquire_lock,
+    completed_stages,
+    delete_book,
+    get_alias,
+    get_book,
+    get_cover,
+    get_stages,
+    get_variants,
+    increment_retry,
+    list_books,
+    release_lock,
+    save_alias,
+    set_stage,
+    store_cover,
+    update_book,
+    upsert_book,
+)
+from audiobook_pipeline.db.rows import BookRow, StageRow, utc_now
+from audiobook_pipeline.errors import ManifestError
+from audiobook_pipeline.models.stage import (
+    PRE_COMPLETED_STAGES,
     ErrorCategory,
+    PipelineLevel,
     PipelineMode,
     Stage,
     StageStatus,
+    stages_for,
 )
-from audiobook_pipeline.errors import ManifestError
 
 
 @pytest.fixture
-def db(tmp_path):
-    pdb = PipelineDB(tmp_path / "test.db")
-    yield pdb
-    pdb.close()
-
-
-@pytest.fixture
-def book(db):
-    """Create a book record and return (db, book_hash)."""
-    db.create("abc123", "/input/book", PipelineMode.CONVERT)
-    return db, "abc123"
-
-
-class TestCreate:
-    def test_creates_book_record(self, db):
-        data = db.create("h1", "/src/book", PipelineMode.CONVERT)
-        assert data["book_hash"] == "h1"
-        assert data["source_path"] == "/src/book"
-        assert data["mode"] == "convert"
-        assert data["status"] == "pending"
-        assert data["retry_count"] == 0
-
-    def test_all_stages_pending_for_convert(self, db):
-        data = db.create("h1", "/src", PipelineMode.CONVERT)
-        for stage in Stage:
-            assert data["stages"][stage.value]["status"] == "pending"
-
-    def test_enrich_pre_completes_early_stages(self, db):
-        data = db.create("h1", "/src/book.m4b", PipelineMode.ENRICH)
-        assert data["stages"]["validate"]["status"] == "completed"
-        assert data["stages"]["concat"]["status"] == "completed"
-        assert data["stages"]["convert"]["status"] == "completed"
-        assert data["stages"]["convert"]["output_file"] == "/src/book.m4b"
-        assert data["stages"]["asin"]["status"] == "pending"
-
-    def test_organize_pre_completes_three_stages(self, db):
-        data = db.create("h1", "/src/book.m4b", PipelineMode.ORGANIZE)
-        assert data["stages"]["validate"]["status"] == "completed"
-        assert data["stages"]["concat"]["status"] == "completed"
-        assert data["stages"]["convert"]["status"] == "completed"
-        assert data["stages"]["asin"]["status"] == "pending"
-        assert data["stages"]["metadata"]["status"] == "pending"
-        assert data["stages"]["organize"]["status"] == "pending"
-
-    def test_returns_created_data(self, db):
-        data = db.create("h1", "/src", PipelineMode.CONVERT)
-        assert isinstance(data, dict)
-        assert "created_at" in data
-
-    def test_create_replaces_existing(self, db):
-        db.create("h1", "/src/old", PipelineMode.CONVERT)
-        data = db.create("h1", "/src/new", PipelineMode.CONVERT)
-        assert data["source_path"] == "/src/new"
-
-
-class TestRead:
-    def test_read_existing(self, book):
-        pdb, h = book
-        data = pdb.read(h)
-        assert data is not None
-        assert data["book_hash"] == h
-
-    def test_read_missing_returns_none(self, db):
-        assert db.read("nonexistent") is None
-
-    def test_read_field_dotted_path(self, book):
-        pdb, h = book
-        status = pdb.read_field(h, "stages.validate.status")
-        assert status == "pending"
-
-    def test_read_field_missing_returns_none(self, db):
-        assert db.read_field("nope", "anything") is None
-
-    def test_read_field_metadata_shortcut(self, db):
-        db.create("h1", "/src", PipelineMode.CONVERT)
-        db.update("h1", {"metadata": {"parsed_author": "Tolkien"}})
-        result = db.read_field("h1", "metadata.parsed_author")
-        assert result == "Tolkien"
-
-    def test_read_field_stage_output_file(self, db):
-        db.create("h1", "/src", PipelineMode.CONVERT)
-        db.update(
-            "h1",
-            {"stages": {"convert": {"output_file": "/out/book.m4b"}}},
-        )
-        result = db.read_field("h1", "stages.convert.output_file")
-        assert result == "/out/book.m4b"
-
-
-class TestUpdate:
-    def test_update_status(self, book):
-        pdb, h = book
-        pdb.update(h, {"status": "processing"})
-        data = pdb.read(h)
-        assert data["status"] == "processing"
-
-    def test_update_metadata(self, book):
-        pdb, h = book
-        pdb.update(
-            h,
-            {
-                "metadata": {
-                    "parsed_author": "Sanderson",
-                    "parsed_title": "Mistborn",
-                    "target_bitrate": 96,
-                }
-            },
-        )
-        data = pdb.read(h)
-        assert data["metadata"]["parsed_author"] == "Sanderson"
-        assert data["metadata"]["parsed_title"] == "Mistborn"
-        assert data["metadata"]["target_bitrate"] == 96
-
-    def test_update_stage_data(self, book):
-        pdb, h = book
-        pdb.update(
-            h,
-            {"stages": {"convert": {"output_file": "/out/book.m4b"}}},
-        )
-        data = pdb.read(h)
-        assert data["stages"]["convert"]["output_file"] == "/out/book.m4b"
-
-    def test_update_missing_raises(self, db):
-        with pytest.raises(ManifestError):
-            db.update("nope", {"status": "x"})
-
-
-class TestSetStage:
-    def test_set_stage_running(self, book):
-        pdb, h = book
-        pdb.set_stage(h, Stage.VALIDATE, StageStatus.RUNNING)
-        status = pdb.read_field(h, "stages.validate.status")
-        assert status == "running"
-
-    def test_set_stage_completed_adds_timestamp(self, book):
-        pdb, h = book
-        pdb.set_stage(h, Stage.VALIDATE, StageStatus.COMPLETED)
-        data = pdb.read(h)
-        assert data["stages"]["validate"]["status"] == "completed"
-        assert "completed_at" in data["stages"]["validate"]
-
-    def test_set_stage_failed_no_timestamp(self, book):
-        pdb, h = book
-        pdb.set_stage(h, Stage.VALIDATE, StageStatus.FAILED)
-        data = pdb.read(h)
-        assert data["stages"]["validate"]["status"] == "failed"
-        assert "completed_at" not in data["stages"]["validate"]
-
-
-class TestCheckStatus:
-    def test_new_when_no_record(self, db):
-        assert db.check_status("nope") == "new"
-
-    def test_pending_after_create(self, book):
-        pdb, h = book
-        assert pdb.check_status(h) == "pending"
-
-    def test_reflects_updates(self, book):
-        pdb, h = book
-        pdb.update(h, {"status": "completed"})
-        assert pdb.check_status(h) == "completed"
-
-
-class TestGetNextStage:
-    def test_first_stage_for_convert(self, book):
-        pdb, h = book
-        nxt = pdb.get_next_stage(h, PipelineMode.CONVERT)
-        assert nxt == Stage.VALIDATE
-
-    def test_skips_completed_stages(self, book):
-        pdb, h = book
-        pdb.set_stage(h, Stage.VALIDATE, StageStatus.COMPLETED)
-        nxt = pdb.get_next_stage(h, PipelineMode.CONVERT)
-        assert nxt == Stage.CONCAT
-
-    def test_returns_none_when_all_done(self, db):
-        db.create("done", "/src", PipelineMode.ORGANIZE)
-        db.set_stage("done", Stage.ASIN, StageStatus.COMPLETED)
-        db.set_stage("done", Stage.METADATA, StageStatus.COMPLETED)
-        db.set_stage("done", Stage.ORGANIZE, StageStatus.COMPLETED)
-        assert db.get_next_stage("done", PipelineMode.ORGANIZE) is None
-
-    def test_enrich_starts_at_asin(self, db):
-        db.create("e1", "/src/b.m4b", PipelineMode.ENRICH)
-        nxt = db.get_next_stage("e1", PipelineMode.ENRICH)
-        assert nxt == Stage.ASIN
-
-    def test_missing_book_raises(self, db):
-        with pytest.raises(ManifestError):
-            db.get_next_stage("nope", PipelineMode.CONVERT)
-
-
-class TestRetryAndError:
-    def test_increment_retry(self, book):
-        pdb, h = book
-        pdb.increment_retry(h)
-        data = pdb.read(h)
-        assert data["retry_count"] == 1
-        pdb.increment_retry(h)
-        data = pdb.read(h)
-        assert data["retry_count"] == 2
-
-    def test_set_error(self, book):
-        pdb, h = book
-        pdb.set_error(h, "validate", 2, ErrorCategory.PERMANENT, "bad input")
-        data = pdb.read(h)
-        err = data["last_error"]
-        assert err["stage"] == "validate"
-        assert err["exit_code"] == 2
-        assert err["category"] == "permanent"
-        assert err["message"] == "bad input"
-        assert "timestamp" in err
-
-    def test_error_on_missing_raises(self, db):
-        with pytest.raises(ManifestError):
-            db.set_error("nope", "x", 1, ErrorCategory.TRANSIENT, "msg")
-
-    def test_retry_on_missing_raises(self, db):
-        with pytest.raises(ManifestError):
-            db.increment_retry("nope")
-
-
-class TestCoverArt:
-    def test_store_and_retrieve(self, book):
-        pdb, h = book
-        img = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-        pdb.store_cover(h, img)
-        result = pdb.get_cover(h)
-        assert result == img
-
-    def test_get_cover_returns_none_when_empty(self, book):
-        pdb, h = book
-        assert pdb.get_cover(h) is None
-
-    def test_get_cover_returns_none_for_missing_book(self, db):
-        assert db.get_cover("nope") is None
-
-    def test_extract_cover_to_file(self, book, tmp_path):
-        pdb, h = book
-        img = b"\xff\xd8\xff\xe0" + b"\x00" * 50
-        pdb.store_cover(h, img)
-        cover_path = pdb.extract_cover_to_file(h, tmp_path / "covers")
-        assert cover_path is not None
-        assert cover_path.exists()
-        assert cover_path.read_bytes() == img
-
-    def test_extract_cover_returns_none_when_no_cover(self, book, tmp_path):
-        pdb, h = book
-        assert pdb.extract_cover_to_file(h, tmp_path / "covers") is None
-
-    def test_cover_art_size_tracked(self, book):
-        pdb, h = book
-        img = b"\x89PNG" + b"\x00" * 200
-        pdb.store_cover(h, img)
-        data = pdb.read(h)
-        conn = pdb._get_conn()
-        row = conn.execute(
-            "SELECT cover_art_size FROM books WHERE book_hash = ?", (h,)
-        ).fetchone()
-        assert row["cover_art_size"] == len(img)
-
-
-class TestAuthorAliases:
-    def test_save_and_get(self, db):
-        db.save_alias("J.R.R. Tolkien", "J. R. R. Tolkien")
-        assert db.get_alias("J.R.R. Tolkien") == "J. R. R. Tolkien"
-
-    def test_get_missing_returns_none(self, db):
-        assert db.get_alias("Unknown") is None
-
-    def test_get_aliases_for(self, db):
-        db.save_alias("JRR Tolkien", "J. R. R. Tolkien")
-        db.save_alias("Tolkien, J.R.R.", "J. R. R. Tolkien")
-        aliases = db.get_aliases_for("J. R. R. Tolkien")
-        assert sorted(aliases) == ["JRR Tolkien", "Tolkien, J.R.R."]
-
-    def test_save_same_as_canonical_is_noop(self, db):
-        db.save_alias("Same", "Same")
-        assert db.get_alias("Same") is None
-
-    def test_upsert_overwrites(self, db):
-        db.save_alias("variant", "canonical1")
-        db.save_alias("variant", "canonical2")
-        assert db.get_alias("variant") == "canonical2"
-
-
-class TestLocking:
-    def test_acquire_and_release(self, db):
-        assert db.acquire_reorganize_lock() is True
-        db.release_reorganize_lock()
-
-    def test_double_acquire_fails(self, db):
-        assert db.acquire_reorganize_lock() is True
-        assert db.acquire_reorganize_lock() is False
-
-    def test_acquire_after_release(self, db):
-        assert db.acquire_reorganize_lock() is True
-        db.release_reorganize_lock()
-        assert db.acquire_reorganize_lock() is True
-
-
-class TestBatchOperations:
-    def test_reset_book(self, book):
-        pdb, h = book
-        pdb.reset_book(h)
-        assert pdb.read(h) is None
-
-    def test_list_books(self, db):
-        db.create("h1", "/a", PipelineMode.CONVERT)
-        db.create("h2", "/b", PipelineMode.ORGANIZE)
-        all_books = db.list_books()
-        assert len(all_books) == 2
-
-    def test_list_books_filtered(self, db):
-        db.create("h1", "/a", PipelineMode.CONVERT)
-        db.create("h2", "/b", PipelineMode.ORGANIZE)
-        result = db.list_books(mode="organize")
-        assert len(result) == 1
-        assert result[0]["book_hash"] == "h2"
-
-
-class TestThreadSafety:
-    def test_concurrent_creates(self, tmp_path):
-        """Multiple threads can create books without corruption."""
-        pdb = PipelineDB(tmp_path / "thread_test.db")
-        errors = []
-
-        def worker(i):
-            try:
-                pdb.create(f"hash_{i}", f"/src/{i}", PipelineMode.CONVERT)
-            except Exception as e:
-                errors.append(e)
-
-        threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        assert len(errors) == 0
-        books = pdb.list_books()
-        assert len(books) == 20
-        pdb.close()
-
-    def test_concurrent_stage_updates(self, tmp_path):
-        """Multiple threads updating different stages simultaneously."""
-        pdb = PipelineDB(tmp_path / "stage_test.db")
-        pdb.create("book1", "/src", PipelineMode.CONVERT)
-        errors = []
-
-        stages = list(Stage)
-
-        def worker(stage):
-            try:
-                pdb.set_stage("book1", stage, StageStatus.COMPLETED)
-            except Exception as e:
-                errors.append(e)
-
-        threads = [threading.Thread(target=worker, args=(s,)) for s in stages]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        assert len(errors) == 0
-        data = pdb.read("book1")
-        for stage in stages:
-            assert data["stages"][stage.value]["status"] == "completed"
-        pdb.close()
+def db(tmp_path: Path) -> Iterator[sqlite3.Connection]:
+    with connect(tmp_path / "pipeline.db") as conn:
+        yield conn
+
+
+def _book(book_hash: str = "book-1", **changes: object) -> BookRow:
+    values: dict[str, object] = {
+        "book_hash": book_hash,
+        "source_path": f"/source/{book_hash}",
+        "mode": PipelineMode.CONVERT.value,
+    }
+    values.update(changes)
+    return BookRow.model_validate(values)
+
+
+def test_typed_book_create_read_update_list_and_delete(
+    db: sqlite3.Connection,
+) -> None:
+    upsert_book(db, _book("a"))
+    upsert_book(db, _book("b", mode=PipelineMode.ORGANIZE.value))
+    first = get_book(db, "a")
+    assert first is not None
+    assert first.status == "pending"
+    assert first.retry_count == 0
+
+    update_book(db, first.model_copy(update={"status": "processing"}))
+    assert get_book(db, "a").status == "processing"  # type: ignore[union-attr]
+    assert [row.book_hash for row in list_books(db, mode="organize")] == ["b"]
+
+    delete_book(db, "a")
+    assert get_book(db, "a") is None
+
+
+def test_upsert_updates_book_without_erasing_stage_progress(
+    db: sqlite3.Connection,
+) -> None:
+    upsert_book(db, _book())
+    set_stage(
+        db,
+        StageRow(book_hash="book-1", stage="convert", status="completed"),
+    )
+    upsert_book(db, _book(status="running", parsed_title="Corrected"))
+
+    assert completed_stages(db, "book-1") == {"convert"}
+    assert get_book(db, "book-1").parsed_title == "Corrected"  # type: ignore[union-attr]
+
+
+def test_stage_result_replaces_previous_state_and_keeps_handoff(
+    db: sqlite3.Connection,
+) -> None:
+    upsert_book(db, _book())
+    set_stage(db, StageRow(book_hash="book-1", stage="convert", status="running"))
+    set_stage(
+        db,
+        StageRow(
+            book_hash="book-1",
+            stage="convert",
+            status=StageStatus.COMPLETED.value,
+            completed_at=utc_now(),
+            output_file="/output/book.m4b",
+        ),
+    )
+
+    rows = get_stages(db, "book-1")
+    assert len(rows) == 1
+    assert rows[0].completed_at is not None
+    assert rows[0].output_file == "/output/book.m4b"
+
+
+def test_deleting_book_cascades_to_stage_rows(db: sqlite3.Connection) -> None:
+    upsert_book(db, _book())
+    set_stage(db, StageRow(book_hash="book-1", stage="validate"))
+    delete_book(db, "book-1")
+    assert get_stages(db, "book-1") == []
+
+
+def test_mode_planning_preserves_precompleted_and_next_stage_semantics() -> None:
+    assert PRE_COMPLETED_STAGES[PipelineMode.ENRICH] == (
+        Stage.VALIDATE,
+        Stage.CONCAT,
+        Stage.CONVERT,
+    )
+    assert stages_for(PipelineMode.ENRICH, PipelineLevel.NORMAL)[0] is Stage.ASIN
+    assert stages_for(PipelineMode.ORGANIZE, PipelineLevel.NORMAL) == (Stage.ORGANIZE,)
+
+
+def test_retry_and_error_fields_round_trip(db: sqlite3.Connection) -> None:
+    upsert_book(db, _book())
+    assert increment_retry(db, "book-1") == 1
+    current = get_book(db, "book-1")
+    assert current is not None
+    failed = current.model_copy(
+        update={
+            "error_timestamp": utc_now(),
+            "error_stage": "validate",
+            "error_exit_code": 2,
+            "error_category": ErrorCategory.PERMANENT.value,
+            "error_message": "bad input",
+        }
+    )
+    update_book(db, failed)
+
+    actual = get_book(db, "book-1")
+    assert actual is not None
+    assert (
+        actual.error_stage,
+        actual.error_exit_code,
+        actual.error_category,
+        actual.error_message,
+    ) == ("validate", 2, "permanent", "bad input")
+
+
+def test_cover_bytes_and_size_round_trip(db: sqlite3.Connection) -> None:
+    upsert_book(db, _book())
+    image = b"\x89PNG" + b"\x00" * 20
+    store_cover(db, "book-1", image)
+    assert get_cover(db, "book-1") == image
+    assert get_book(db, "book-1").cover_art_size == len(image)  # type: ignore[union-attr]
+
+
+def test_alias_identity_upsert_and_reverse_lookup(db: sqlite3.Connection) -> None:
+    save_alias(db, "Same", "Same")
+    assert get_alias(db, "Same") is None
+    save_alias(db, "variant", "canonical-1")
+    save_alias(db, "variant", "canonical-2")
+    save_alias(db, "other", "canonical-2")
+    assert get_alias(db, "variant") == "canonical-2"
+    assert get_variants(db, "canonical-2") == ["other", "variant"]
+
+
+def test_lock_is_exclusive_and_reusable(db: sqlite3.Connection) -> None:
+    assert acquire_lock(db) is True
+    assert acquire_lock(db) is False
+    release_lock(db)
+    assert acquire_lock(db) is True
+
+
+def test_independent_thread_connections_do_not_corrupt_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "threads.db"
+    with connect(db_path):
+        pass
+
+    def write(index: int) -> None:
+        with connect(db_path) as conn:
+            upsert_book(conn, _book(f"book-{index}"))
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(write, index) for index in range(10)]
+        for future in futures:
+            future.result()
+
+    with connect(db_path) as conn:
+        assert len(list_books(conn)) == 10
+
+
+def test_update_of_missing_book_is_rejected(db: sqlite3.Connection) -> None:
+    with pytest.raises(ManifestError) as caught:
+        update_book(db, _book("missing"))
+    assert caught.value.message == "Cannot update book: book 'missing' was not found"
+
+
+def test_retry_of_missing_book_is_rejected(db: sqlite3.Connection) -> None:
+    with pytest.raises(ManifestError) as caught:
+        increment_retry(db, "missing")
+    assert (
+        caught.value.message
+        == "Cannot increment retry count: book 'missing' was not found"
+    )
+
+
+def test_cover_for_missing_book_is_rejected(db: sqlite3.Connection) -> None:
+    with pytest.raises(ManifestError) as caught:
+        store_cover(db, "missing", b"image")
+    assert (
+        caught.value.message == "Cannot store cover art: book 'missing' was not found"
+    )

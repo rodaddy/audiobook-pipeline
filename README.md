@@ -1,565 +1,182 @@
 # audiobook-pipeline
 
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/rodaddy)
+Convert directories of audio into chaptered M4B audiobooks, enrich their
+metadata from the Audible catalogue, and place completed books in a library.
 
-Convert audio files to chaptered M4B audiobooks with rich metadata from the Audible catalog.
+A folder of loose MP3s goes in:
 
-## Features
-
-- **Multi-format input** -- MP3, FLAC, OGG, M4A, WMA
-- **Chaptered M4B output** -- one file per book with chapter markers from source files
-- **Dual metadata sources** -- Audible catalog API (primary) with Audnexus fallback
-- **Rich metadata** -- cover art (up to 2400px), author/narrator, series info, subtitle, copyright, publisher, rating, genre taxonomy, ISBN
-- **Accurate chapters** -- Audible API provides official chapter markers with exact timestamps
-- **Plex-ready organization** -- `Author/Book (Year)/Book.m4b` folder structure
-- **M4B enrichment** -- fix metadata and organize existing M4B files (skip conversion)
-- **Idempotent processing** -- SQLite-based state tracking with automatic resume
-- **Automation ready** -- Readarr webhook, cron scanner, batch processing with `--no-lock`
-- **Error recovery** -- categorized failures, automatic retries, failed/ directory quarantine
-- **Hardware-accelerated encoding** -- AudioToolbox (macOS) when available, software AAC fallback
-
-## Quick Start
-
-```bash
-# Clone and configure
-git clone https://github.com/rodaddy/audiobook-pipeline.git
-cd audiobook-pipeline
-cp config.env.example config.env
-# Edit config.env -- set your paths
-
-# Install dependencies (see Installation section)
-
-# Convert a directory of MP3s to M4B
-uv run audiobook-convert /path/to/audiobook-mp3s/
-
-# Batch convert multiple books (CPU-aware parallel processing)
-uv run audiobook-convert --mode convert /path/to/incoming/
+```
+Promise of Blood/
+  01 - Chapter One.mp3
+  02 - Chapter Two.mp3
+  ...
 ```
 
-## Pipeline Levels
+One tagged, chaptered M4B comes out, filed where Plex and Audiobookshelf
+expect it:
 
-The pipeline supports four intelligence tiers, configured via `PIPELINE_LEVEL` in `.env` or `--level` on the CLI:
-
-| Level | Convert | Metadata | Organize | AI | Use case |
-|-------|---------|----------|----------|----|----------|
-| `simple` | Yes | Audible/Audnexus API | No -- m4b stays in source dir | None | "Just give me a tagged m4b" |
-| `normal` | Yes | Audible/Audnexus API | Best-effort, fallback `_unsorted/` | None | "Try to file it, don't overthink" |
-| `ai` | Yes | API + LLM disambiguation | Full library placement | LLM resolves conflicts | Current `--ai-all` behavior |
-| `full` | Yes | API + LLM | Interactive agent-guided | Agent walks user through issues | See `docs/install.md` |
-
-```bash
-# Set in .env
-PIPELINE_LEVEL=normal
-
-# Or override per-run
-uv run audiobook-convert --level simple /path/to/book/
+```
+Brian McClellan/Powder Mage/Book 1 - Promise of Blood/
+  Book 1 - Promise of Blood.m4b
 ```
 
-Notes:
-- `--reorganize` and `--ai-all` force level to `ai` minimum (with a warning if lower)
-- `simple` and `normal` levels never call the LLM, even if `PIPELINE_LLM_BASE_URL` is configured
-- `full` level behaves identically to `ai` in the pipeline -- the difference is the interactive agent guide (`.claude/agents/audiobook-guide.md`)
+Chapter marks are carried over from the source where they exist. Title,
+author, narrator, series, cover art, and ASIN come from the Audible
+catalogue, matched by title and confirmed against the audio's real duration
+so a wrong edition cannot be adopted silently.
 
-## Installation
+## Requirements
 
-### Dependencies
-
-| Tool | Purpose | macOS Install | Linux Install |
-|------|---------|---------------|---------------|
-| `ffmpeg` | Audio concat + AAC encoding + metadata tagging | `brew install ffmpeg` | `apt install ffmpeg` |
-
-### Setup
+- **ffmpeg** — does the actual audio work. Install it first; nothing runs
+  without it.
+- **uv** — manages Python 3.13 and the locked dependencies. Do not use a
+  system Python.
 
 ```bash
-git clone https://github.com/rodaddy/audiobook-pipeline.git
-cd audiobook-pipeline
-cp config.env.example config.env
+# macOS
+brew install ffmpeg uv
+
+# Debian/Ubuntu
+sudo apt install ffmpeg && curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Edit `config.env` to configure paths for your system. At minimum:
-- `WORK_DIR` -- temporary processing space
-- `NFS_OUTPUT_DIR` -- your Plex/Audiobookshelf library root
+## First run
+
+From the repository root:
+
+```bash
+./scripts/run setup
+uv run audiobook-convert --dry-run /path/to/one-book
+```
+
+The dry run discovers books and prints the plan without converting anything,
+writing a database, or acquiring the batch lease. **Start with one book** and
+read what it found — discovery is where a wrong folder layout shows up, and
+it costs nothing to check. When it looks correct, remove `--dry-run`:
+
+```bash
+uv run audiobook-convert /path/to/one-book
+```
+
+Converted books land under `data/library/` unless you point
+`paths.library_dir` somewhere else.
+
+**The source directory is moved, not copied.** After a successful conversion
+the original folder is relocated to `data/archive/` so a re-run does not
+reprocess it. Nothing is deleted — but if you expect your source tree to stay
+where it was, point `paths.archive_dir` somewhere you are happy with. Setting
+`AUDIOBOOK_LEVEL=simple` also skips archiving, but it skips organizing too, so
+the M4B stays in the work directory rather than being filed into the library.
+
+See [docs/install.md](docs/install.md) for configuration, profile, audit, and
+watch details. See [docs/ai.md](docs/ai.md) before enabling AI resolution.
+
+## Commands
+
+```bash
+# Convert, enrich, metadata-only, or organize-only work.
+uv run audiobook-convert /path/to/books
+uv run audiobook-convert --mode enrich /path/to/books
+uv run audiobook-convert --mode metadata /path/to/books
+uv run audiobook-convert --mode organize /path/to/books
+
+# Keep the first real batch bounded.
+uv run audiobook-convert --limit 1 /path/to/books
+
+# Read-only library audit and source-to-library comparison.
+uv run audiobook-audit /path/to/library
+uv run audiobook-audit /path/to/source --diff /path/to/library
+
+# Continuously process stable candidates in the configured incoming directory.
+uv run audiobook-watch
+```
+
+Each command accepts `--profile NAME`, which loads `config/config.NAME.json`
+over the committed shared configuration. `sandbox` is the only profile committed
+to this repository. Create your own from one of the worked examples in
+[examples/config/](examples/config/) — there is one each for Plex,
+Audiobookshelf, a watch-folder daemon, and AI-assisted matching:
+
+```bash
+cp examples/config/plex.json config/config.plex.json
+# edit the paths, then
+uv run audiobook-convert --profile plex --dry-run /path/to/one-book
+```
+
+A `--profile` naming a file that does not exist is **not** an error — the
+command runs with the committed defaults under `data/`. Check the paths in a
+`--dry-run` before a real run.
+
+Library audits exit `1` when they find critical problems. Library diffs exit
+`1` while source books are missing from the target. Warnings and informational
+findings remain report-only.
 
 ## Configuration
 
-Copy `config.env.example` to `config.env` and customize for your environment.
-
-### Configuration Variables
-
-**Directories**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WORK_DIR` | `/var/lib/audiobook-pipeline/work` | Temporary processing workspace |
-| `OUTPUT_DIR` | `/var/lib/audiobook-pipeline/output` | Local output before NFS move |
-| `LOG_DIR` | `/var/log/audiobook-pipeline` | Pipeline logs |
-| `NFS_OUTPUT_DIR` | `/mnt/media/AudioBooks` | Library root for organized output (Plex/Audiobookshelf) |
-| `ARCHIVE_DIR` | `/var/lib/audiobook-pipeline/archive` | Archive original source files after processing |
-
-**Encoding**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MAX_BITRATE` | `128` | Cap output bitrate (kbps). Source bitrate matched up to this limit. |
-| `CHANNELS` | `1` | Audio channels: 1=mono (recommended for speech), 2=stereo |
-
-**Metadata**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `METADATA_SOURCE` | `audible` | Primary metadata source: `audible` or `audnexus` (see below) |
-| `AUDIBLE_REGION` | `com` | Audible API region (see Region Configuration below) |
-| `AUDNEXUS_REGION` | `us` | Audnexus fallback region: `us`, `uk`, `au`, `ca`, `de`, `fr`, `jp`, `in`, `it`, `es` |
-| `AUDNEXUS_CACHE_DIR` | `$WORK_DIR` | Metadata cache directory (defaults to work dir) |
-| `AUDNEXUS_CACHE_DAYS` | `30` | Cache metadata responses for N days |
-| `CHAPTER_DURATION_TOLERANCE` | `5` | Percent tolerance for chapter duration matching |
-| `METADATA_SKIP` | `false` | Set `true` to skip metadata enrichment entirely |
-| `FORCE_METADATA` | `false` | Set `true` to re-fetch metadata even if cached |
-
-**Automation**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `INCOMING_DIR` | `/mnt/media/AudioBooks/_incoming` | Cron scanner watches this directory for new books |
-| `QUEUE_DIR` | `/var/lib/audiobook-pipeline/queue` | Queue directory for automation webhooks |
-| `PROCESSING_DIR` | `/var/lib/audiobook-pipeline/processing` | Active processing marker directory |
-| `COMPLETED_DIR` | `/var/lib/audiobook-pipeline/completed` | Completed book tracking |
-| `FAILED_DIR` | `/var/lib/audiobook-pipeline/failed` | Quarantine directory for permanent failures |
-| `PIPELINE_BIN` | `/opt/audiobook-pipeline/bin/audiobook-convert` | Path to conversion script for automation |
-| `STABILITY_THRESHOLD` | `120` | Seconds -- cron scanner skips recently modified books |
-
-**Error Recovery**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MAX_RETRIES` | `3` | Retry attempts before quarantine to `failed/` |
-| `FAILURE_WEBHOOK_URL` | _(empty)_ | Slack/Discord webhook for failure notifications |
-
-**Permissions**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FILE_OWNER` | _(empty)_ | chown target for output files (e.g., `1000:1000`). Leave empty to skip. |
-| `FILE_MODE` | `644` | File permissions for output M4B files |
-| `DIR_MODE` | `755` | Directory permissions for organized folders |
-
-**Behavior**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DRY_RUN` | `false` | Preview mode -- show what would happen without making changes |
-| `FORCE` | `false` | Re-process even if already completed |
-| `VERBOSE` | `false` | Enable debug-level logging |
-| `CLEANUP_WORK_DIR` | `true` | Delete work directory after successful completion |
-| `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARN`, `ERROR` |
-
-### Metadata Source
-
-The pipeline supports two metadata sources with automatic fallback:
-
-#### `METADATA_SOURCE=audible` (default)
-
-Fetches metadata from the **Audible catalog API** and normalizes to Audnexus-compatible format. Provides richer metadata:
-
-- **Subtitle** -- book subtitle (not available in Audnexus)
-- **Copyright** -- copyright statement with year
-- **Publisher** -- publishing house name
-- **ISBN** -- 10-digit ISBN (when available)
-- **Rating** -- Audible customer rating (0.0-5.0)
-- **Genre path** -- full category taxonomy (e.g., "Fiction / Fantasy / Epic")
-- **Cover art** -- up to 2400x2400px (vs 500px from Audnexus)
-- **Official chapters** -- chapter markers with exact timestamps from Audible's production data
-
-Falls back to Audnexus if Audible API fails or returns no results.
-
-#### `METADATA_SOURCE=audnexus`
-
-Uses the **Audnexus API** directly (community-maintained Audible metadata mirror). Good for:
-
-- **Plex users** with the Audnexus metadata agent installed
-- **Rate limit avoidance** if processing large batches
-- **Older books** that may have been removed from active Audible catalog
-
-Falls back to Audible API if Audnexus returns no results.
-
-#### Inline Override
-
-Override metadata source for a single run without editing `config.env`:
+The application reads committed JSON configuration in `config/config.json`, an
+optional selected profile, and an optional gitignored `secrets/config.json`.
+Environment variables override all JSON layers. Their names start with
+`AUDIOBOOK_`, with `__` separating nested fields:
 
 ```bash
-METADATA_SOURCE=audnexus bin/audiobook-convert /path/to/book/
+AUDIOBOOK_PATHS__LIBRARY_DIR=/media/audiobooks \
+  uv run audiobook-convert --dry-run /path/to/one-book
 ```
 
-### Region Configuration
+Defaults keep pipeline data under `data/`; choose real paths through a profile
+or environment variables before a non-dry run. Do not put credentials in a
+committed configuration file.
 
-The `AUDIBLE_REGION` variable controls which Audible marketplace to query. Use the domain suffix for your region:
+## Modes and levels
 
-| Region | AUDIBLE_REGION | Audible URL |
-|--------|----------------|-------------|
-| United States | `com` | audible.com |
-| United Kingdom | `co.uk` | audible.co.uk |
-| Australia | `com.au` | audible.com.au |
-| Canada | `ca` | audible.ca |
-| Germany | `de` | audible.de |
-| France | `fr` | audible.fr |
-| Japan | `co.jp` | audible.co.jp |
-| India | `in` | audible.in |
-| Italy | `it` | audible.it |
-| Spain | `es` | audible.es |
+`--mode` controls the pipeline operation: `convert`, `enrich`, `metadata`, or
+`organize`. `AUDIOBOOK_LEVEL` controls policy independently:
 
-**Important:** The ASIN must exist in the target region's catalog. A book sold on audible.com may not be available on audible.co.uk with the same ASIN.
+| Level | Behavior |
+| --- | --- |
+| `simple` | Omits organization and archive stages. |
+| `normal` | Default level; runs the normal stage sequence without AI resolution. |
+| `ai` | Enables OpenAI-compatible candidate resolution when configured. |
+| `full` | Uses the same configured AI resolver as `ai`. |
 
-### Metadata Fields
+AI levels require `AUDIOBOOK_AI__BASE_URL`; [docs/ai.md](docs/ai.md) shows the
+complete opt-in configuration.
 
-The pipeline writes the following metadata tags to M4B files using `ffmpeg`:
+## Author override marker
 
-| M4B Tag | ffmpeg key | Source |
-|---------|------------|--------|
-| Title | `title` | Audible/Audnexus |
-| Artist | `artist` | Author + Narrator |
-| Album Artist | `album_artist` | Author |
-| Album | `album` | Book title |
-| Composer | `composer` | Narrator |
-| Genre | `genre` | Audible categories |
-| Date | `date` | Release year |
-| Description | `description` | Publisher summary |
-| Comment | `comment` | Publisher summary |
-| Sort Album | `sort_album` | Series sort key |
-| Copyright | `copyright` | From Audible |
-| Publisher | `publisher` | From Audible |
-| Show | `show` | Series name |
-| Grouping | `grouping` | Series + Book # |
-| ASIN | `ASIN` | Audible ASIN |
-| Media Type | `media_type` | `2` (audiobook) |
-| Cover Art | embedded | Up to 2400x2400px |
+Place an empty `.author-override` file in a franchise directory to force every
+organized book below it into that directory's author folder. For example,
+`Dragonlance/.author-override` files the subtree under author `Dragonlance`,
+even when Audible credits different writers. The search is bounded by the
+source passed to `audiobook-convert`, and it changes placement only; embedded
+author tags retain the credited author.
 
-**Custom fields** (stored but not displayed by most players):
+## When something goes wrong
 
-| Field Name | Source |
-|------------|--------|
-| `AUDIBLE_ASIN` | ASIN for future re-runs |
-| `AUDIBLE_URL` | Direct link to Audible product page |
-
-## Usage
-
-Entry point: `uv run audiobook-convert`
-
-### Convert a directory of audio files
+Every run writes a DEBUG-level log to `data/logs/pipeline.log` regardless of
+what the console shows, so the detail is there after the fact. Start with:
 
 ```bash
-# Auto-detects directory input -> convert mode
-uv run audiobook-convert /mnt/downloads/MyBook/
-
-# Batch convert with CPU-aware parallel processing
-uv run audiobook-convert --mode convert /mnt/downloads/incoming/
-
-# With options
-uv run audiobook-convert --verbose --force /mnt/downloads/MyBook/
+uv run audiobook-audit --status failed --failures
 ```
 
-Pipeline stages: `validate -> concat -> convert -> asin -> metadata -> organize -> archive -> cleanup`
-
-### Enrich an existing M4B
-
-```bash
-# Auto-detects .m4b input -> enrich mode
-uv run audiobook-convert /mnt/media/untagged-book.m4b
-```
-
-Skips conversion stages. Fetches metadata from configured source and organizes into your library.
-
-### Metadata-only mode
-
-```bash
-uv run audiobook-convert --mode metadata /path/to/book.m4b
-```
-
-Fetches ASIN and applies metadata (cover art, author, narrator, series) without moving the file.
-
-### Organize-only mode
-
-```bash
-uv run audiobook-convert --mode organize /path/to/book.m4b
-```
-
-Moves the file into the `Author/Book (Year)/Book.m4b` folder structure without touching metadata.
-
-### Region-specific processing
-
-```bash
-# German audiobook
-AUDIBLE_REGION=de uv run audiobook-convert /path/to/german-book/
-
-# UK audiobook
-AUDIBLE_REGION=co.uk uv run audiobook-convert /path/to/uk-book/
-```
-
-### Override metadata source
-
-```bash
-# Use Audnexus instead of Audible for this run
-METADATA_SOURCE=audnexus uv run audiobook-convert /path/to/book.m4b
-
-# Use Audible API for UK marketplace
-AUDIBLE_REGION=co.uk METADATA_SOURCE=audible uv run audiobook-convert /path/to/book/
-```
-
-### Large library processing
-
-For large batches (hundreds or thousands of books), the pipeline builds an in-memory index of your library once at startup, replacing per-file directory scans with O(1) dict lookups.
-
-**Add new books to an existing library:**
-
-```bash
-# Organize a staging directory into your library
-uv run audiobook-convert /path/to/new/books --mode organize --dry-run
-
-# Verify the dry-run output, then run for real
-uv run audiobook-convert /path/to/new/books --mode organize
-```
-
-**Reorganize an existing library in-place:**
-
-```bash
-# Dry-run first -- see what would move
-uv run audiobook-convert /Volumes/media_files/AudioBooks --reorganize --dry-run
-
-# Verify moves look correct, then run
-uv run audiobook-convert /Volumes/media_files/AudioBooks --reorganize
-```
-
-The `--reorganize` flag:
-- Implies `--mode organize` and `--ai-all` (every book gets AI metadata verification)
-- Moves files instead of copying (avoids doubling library size)
-- Detects books already in the correct location and skips them
-- Cleans up empty directories left behind after moves
-- Deduplicates across source directories within a batch
-
-**Recommended workflow:**
-1. Always start with `--dry-run` to verify decisions
-2. Review the output for any unexpected moves
-3. Run without `--dry-run` when satisfied
-4. Test on a known subset before processing a full library
-
-### Batch processing
-
-```bash
-# Automatic CPU-aware parallel processing (recommended)
-uv run audiobook-convert --mode convert /mnt/downloads/batch/
-
-# Manual parallel processing (legacy)
-for dir in /mnt/downloads/*/; do
-  uv run audiobook-convert --no-lock "$dir" &
-done
-wait
-```
-
-### Dry-run mode
-
-```bash
-# Preview what would happen without making changes
-uv run audiobook-convert --dry-run --verbose /mnt/downloads/MyBook/
-```
-
-### CLI flags reference
-
-```
--m, --mode {convert,enrich,metadata,organize}  Pipeline mode (auto-detected if omitted)
---level {simple,normal,ai,full}                Override PIPELINE_LEVEL from config
---dry-run                                      Preview without making changes
---force                                        Re-process even if completed
--v, --verbose                                  Enable DEBUG logging
--c, --config PATH                              Path to .env file
---ai-all                                       Run AI validation on all books
---reorganize                                   Move misplaced books (implies --ai-all)
---verify                                       Run data quality checks after processing
---no-lock                                      Skip file locking (manual batch mode)
---asin TEXT                                    Override ASIN discovery
-```
-
-## Architecture
-
-```
-SOURCE_PATH (directory or .m4b file)
-    |
-    v
-┌─────────────────────────────────────────────────────────┐
-│ 01-validate  Find audio files, detect bitrate, check    │
-│              disk space, write sorted file list          │
-│                          |                               │
-│ 02-concat    Generate ffmpeg concat list + FFMETADATA1  │
-│              chapter file from per-file durations        │
-│                          |                               │
-│ 03-convert   Single-pass ffmpeg: concat + AAC encode +  │
-│              chapter inject + faststart                  │
-│                          |                               │
-│ 05-asin      Discover ASIN via folder name, Readarr     │  Stages 01-03
-│              API, or Audnexus/Audible search             │  skipped for
-│                          |                               │  M4B input
-│ 06-metadata  Fetch from Audible API (or Audnexus):      │  (enrich mode)
-│              cover art (2400px), author, narrator,       │
-│              series, subtitle, copyright, publisher,     │
-│              rating, genre path, official chapters       │
-│                          |                               │
-│ 07-organize  Create Author/Book (Year)/ structure,      │
-│              move M4B + companion files to library       │
-│                          |                               │
-│ 08-archive   Archive original source to archive/        │
-│                          |                               │
-│ 09-cleanup   Remove work directory, release locks        │
-└─────────────────────────────────────────────────────────┘
-    |
-    v
-NFS_OUTPUT_DIR/Author/Book (Year)/Book.m4b
-```
-
-### ASIN Discovery
-
-The pipeline tries multiple sources to find an Audible ASIN (in priority order):
-
-1. **Folder name pattern match** -- `{ASIN}` or `[ASIN]` in directory name
-2. **Readarr API lookup** -- if configured, queries Readarr for the book's ASIN
-3. **Audible/Audnexus search** -- searches by title/author extracted from folder name
-4. **Manual entry prompt** -- interactive mode asks user to provide ASIN
-
-**ASIN format:** Must be the **Audible ASIN** from the audible.com (or regional) URL, NOT the Amazon product ASIN. Example:
-
-- Audible URL: `https://www.audible.com/pd/B084QHXYFP` -> ASIN: `B084QHXYFP` ✅
-- Amazon URL: `https://www.amazon.com/dp/198009036X` -> Product ASIN: `198009036X` ❌
-
-## Automation
-
-### Readarr Webhook
-
-Triggered when Readarr imports a new audiobook. Queues the book for processing.
-
-```bash
-# Readarr custom script (Settings -> Connect -> Custom Script)
-/opt/audiobook-pipeline/bin/readarr-hook.sh
-```
-
-### Cron Scanner
-
-Watches `INCOMING_DIR` for new audiobook directories. Skips recently modified books (based on `STABILITY_THRESHOLD`).
-
-```bash
-# Crontab example: run every 5 minutes
-*/5 * * * * /opt/audiobook-pipeline/bin/cron-scanner.sh
-```
-
-### Queue Processor
-
-Processes queued books sequentially (one at a time). Run as a systemd service or cron job.
-
-```bash
-# Systemd service (recommended)
-# /etc/systemd/system/audiobook-queue.service
-[Unit]
-Description=Audiobook Pipeline Queue Processor
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/opt/audiobook-pipeline/bin/queue-processor.sh
-Restart=always
-User=audiobook
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Troubleshooting
-
-### No metadata found
-
-**Symptoms:** Pipeline logs `"No metadata found for ASIN XXX"` or `"Audible API returned invalid or empty response"`
-
-**Causes:**
-1. Wrong ASIN format -- used Amazon product ASIN instead of Audible ASIN
-2. Book not available in the configured region
-3. ASIN is invalid or has been removed from Audible catalog
-
-**Solutions:**
-- Verify ASIN is from the Audible URL (not Amazon). Check the URL: `https://www.audible.com/pd/[ASIN]`
-- Check if the book exists in your configured `AUDIBLE_REGION` marketplace
-- Try switching metadata source: `METADATA_SOURCE=audnexus bin/audiobook-convert ...`
-- Try a different region if the book was purchased from a different marketplace: `AUDIBLE_REGION=co.uk bin/audiobook-convert ...`
-
-### Cover art download failed
-
-**Symptoms:** `"Failed to download cover art from Audible"` or `"Downloaded cover art is not a valid JPEG"`
-
-**Causes:**
-1. Audible API rate limiting
-2. Network timeout or connection issue
-3. Invalid or missing image URL in API response
-
-**Solutions:**
-- Pipeline automatically falls back to Audnexus for cover art if Audible fails
-- Check network connectivity: `curl -I https://api.audible.com`
-- Wait a few minutes and retry -- rate limits are usually temporary
-- Verify the ASIN is correct and the book has cover art on audible.com
-
-### Chapter duration mismatch
-
-**Symptoms:** `"Chapter duration mismatch: expected XXXms, got YYYms"`
-
-**Causes:**
-1. Audible's official chapter markers don't match actual file duration (intro/outro credits, regional differences)
-2. Source files were trimmed or edited
-
-**Solutions:**
-- Adjust `CHAPTER_DURATION_TOLERANCE` in `config.env` (default: 5%). Try `10` or `15` for books with significant intro/outro content
-- Check source file integrity -- re-download if files were corrupted
-- Use `--verbose` to see detailed chapter timestamp comparison
-- If Audible chapters are consistently wrong for a book, fallback to file-based chapters by skipping the metadata stage: `bin/audiobook-convert --mode organize /path/to/book.m4b`
-
-### Region mismatch
-
-**Symptoms:** Metadata is incorrect, wrong narrator, or cover art doesn't match
-
-**Causes:**
-1. Book was purchased from a different regional Audible marketplace
-2. Different editions exist across regions (US vs UK narrators, abridged vs unabridged)
-
-**Solutions:**
-- Check which Audible marketplace the book was purchased from
-- Set `AUDIBLE_REGION` to match the purchase region: `AUDIBLE_REGION=co.uk bin/audiobook-convert ...`
-- Search the book on multiple regional Audible sites to find the matching ASIN
-- For UK books, use: `AUDIBLE_REGION=co.uk`
-- For German books, use: `AUDIBLE_REGION=de`
-
-### Pipeline stalls or hangs
-
-**Symptoms:** Pipeline stops responding during processing, no log output
-
-**Causes:**
-1. ffmpeg encoding stalled (rare, usually hardware codec issue)
-2. NFS mount is unresponsive
-3. Disk full
-
-**Solutions:**
-- Check disk space: `df -h $WORK_DIR $NFS_OUTPUT_DIR`
-- Verify NFS mount is accessible: `ls -la $NFS_OUTPUT_DIR`
-- Kill hung ffmpeg processes: `pkill -9 ffmpeg`
-- Check work directory for partial files: `ls -lah $WORK_DIR`
-- Enable verbose logging and retry: `uv run audiobook-convert --verbose --force /path/to/book/`
-
-### Permission denied errors
-
-**Symptoms:** `"Permission denied"` when writing to output directory or setting file ownership
-
-**Causes:**
-1. Pipeline user doesn't have write access to `NFS_OUTPUT_DIR`
-2. `FILE_OWNER` is set but pipeline user can't chown files
-
-**Solutions:**
-- Verify write permissions: `touch $NFS_OUTPUT_DIR/test.txt && rm $NFS_OUTPUT_DIR/test.txt`
-- If using NFS, check export options (no_root_squash, user mapping)
-- If `FILE_OWNER` is set, ensure pipeline runs as root or the target user
-- For non-root setups, set `FILE_OWNER=""` in `config.env` to skip chown
-
-## License
-
-MIT -- see [LICENSE](LICENSE).
+That prints the recorded error for every book that failed.
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `discovered 0 book(s)` | The path holds no readable audio, or the audio is one level deeper than you pointed. Point at the folder that directly contains the files, and check the WARNING lines naming each skipped file. |
+| `ffprobe failed` | ffmpeg is missing, or the file is corrupt or zero-length. Run `ffmpeg -version`, then try `ffprobe` on the named file directly. |
+| Book filed under `Unknown Author` | The catalogue could not identify it and the folder layout named no author. Rename to `Author/Book Title/` or add a `.author-override` marker. |
+| Wrong book matched from Audible | The duration guard rejects wrong editions, but a same-length edition can slip through. Use `--mode metadata` to redo identity work without re-encoding. |
+| `requires ai.base_url, which is empty` | `AUDIOBOOK_LEVEL` is `ai` or `full` with no resolver configured. Set `AUDIOBOOK_AI__BASE_URL`, or use `normal`, which never calls an LLM. |
+| Second run reprocesses the same book | The first run did not reach the archive stage, so the source is still in place. Check the failure with the audit command above. |
+
+The pipeline is resumable. Stages already completed are recorded in
+`data/work/pipeline.db` and skipped on a re-run, so fixing a configuration
+problem and running the same command again picks up where it stopped rather
+than re-encoding from scratch.
+
+## Credits
+
+[CREDITS.md](CREDITS.md) records the direct dependencies and external catalogue
+services evidenced by the current source.

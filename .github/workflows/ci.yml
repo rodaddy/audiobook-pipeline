@@ -6,13 +6,79 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Full history, not just the tip. A secret committed and then removed
+      # is still in the pack and still public; scanning HEAD alone would
+      # report clean on a repo that leaks.
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      # The same scanner the local pre-commit hook runs, so a contributor
+      # without hooks installed is held to the identical standard. The hook
+      # only ever sees STAGED content on one machine; this sees the history.
+      #
+      # Installed from a pinned release rather than via gitleaks-action: a
+      # third-party action runs arbitrary code in a job that exists to
+      # protect the repository, and this needs no more than one binary.
+      - name: Install gitleaks
+        env:
+          # Matches the version the local pre-commit hook runs, so CI and a
+          # developer's machine cannot disagree about what counts as a leak.
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # --redact so a finding names the file and rule without reprinting the
+      # secret into a public build log.
+      - name: Scan history for secrets
+        run: gitleaks git --redact=100 --no-banner .
+
+  python:
+    name: Python 3.13 standards
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install locked project
+        run: uv sync --extra dev --frozen --python 3.13
+
+      - name: Python standards (working checkout)
+        run: bash _githooks/pre-commit --working
+
+      - name: Configuration compliance
+        run: uv run python _githooks/check_config_compliance.py --check
+
+      - name: Tests
+        run: uv run pytest -q
+
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install ShellCheck
         run: sudo apt-get install -y shellcheck

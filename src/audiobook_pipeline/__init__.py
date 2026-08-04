@@ -1,112 +1,58 @@
-"""Audiobook Pipeline -- convert, enrich, and organize audiobooks into tagged M4B files.
+"""Convert loose audio files into chaptered, tagged M4B audiobooks.
 
-All modules use loguru for structured debug logging (stage-tagged via logger.bind).
-Run with -v / --verbose for full DEBUG output tracing every function call.
+Purpose:
+    Takes a directory of audio in whatever shape it arrived -- a folder of
+    MP3s, a set of FLAC discs, a single unchaptered M4B, a pile of files whose
+    names encode a series position nobody agreed on -- and produces one M4B per
+    book: correctly chaptered, tagged from Audible, and filed as
+    ``Author/Series/Title`` where Plex and Audiobookshelf can find it.
 
-Usage:
-    # Convert directory of MP3s to M4B (auto-detects convert mode)
-    uv run audiobook-convert /path/to/audiobook-mp3s/
+    The hard part is not the transcode. It is working out what the files
+    actually ARE when the folder name is wrong, the tags are missing, and the
+    only clue that two files are one book is that their durations sum to a
+    plausible runtime.
 
-    # Batch convert multiple books with CPU-aware parallelism
-    uv run audiobook-convert --mode convert /path/to/incoming/
+Key Components:
+    - config: THE keystone. Reads config, validates, sets up logging, passes
+      everything down. The only module that reads the environment.
+    - models: Pydantic shapes for every value crossing a boundary.
+    - utils: the shared floor -- logging, ffmpeg, http, paths.
+    - db: SQLite state via stdlib sqlite3 and a Pydantic row factory. No ORM.
+    - services: one concern per module -- discover, concat, convert, identify,
+      tag, organize, diff.
+    - apps: entry points. Parse args, build config, run.
 
-    # Enrich existing M4B with metadata (auto-detects enrich mode)
-    uv run audiobook-convert /path/to/book.m4b
+Architecture:
+    Configuration flows one way. ``load_settings()`` runs once at startup and
+    hands each service the section it needs through its constructor; nothing
+    reaches back for a global. That is what makes a service testable with a
+    fake instead of a mutated environment.
 
-    # Organize library in-place (move misplaced books)
-    uv run audiobook-convert --reorganize /Volumes/AudioBooks/
+    Values crossing a module boundary are Pydantic models, never bare dicts.
+    The pre-rewrite code passed 68 ``dict[str, Any]`` between layers, so a
+    layer receiving one knew only what the code that built it happened to put
+    there -- and a malformed API payload surfaced as a ``KeyError`` three
+    frames from the cause.
 
-    # Preview changes without executing
-    uv run audiobook-convert --dry-run --verbose /path/to/book/
+Pattern/Convention:
+    Import concrete names from the submodule, never through this package::
 
-    # Force re-processing
-    uv run audiobook-convert --force /path/to/book/
+        from audiobook_pipeline.models.chapter import Chapter
 
-    # Specify config file
-    uv run audiobook-convert -c /path/to/custom.env /path/to/book/
+    Re-exporting here would make every import pull in every submodule, which is
+    how an import cycle gets built by accident.
 
-Pipeline levels (PIPELINE_LEVEL env var or --level flag):
-    simple  -- Convert + tag only, output stays in source dir. No AI, no organize.
-    normal  -- Convert + tag + best-effort organize (fallback _unsorted/). No AI.
-    ai      -- Full pipeline with LLM-assisted metadata disambiguation.
-    full    -- Same as ai, plus interactive agent guidance (see docs/install.md).
+Example:
+    >>> from audiobook_pipeline.config import load_settings
+    >>> settings = load_settings(configure_logging=False)
+    >>> settings.encoding.codec
+    'aac'
 
-CLI flags:
-    -m, --mode {convert,enrich,metadata,organize}  Pipeline mode (auto-detected if omitted)
-    --level {simple,normal,ai,full}                Override PIPELINE_LEVEL from config
-    --dry-run                                      Preview without making changes
-    --force                                        Re-process even if completed
-    -v, --verbose                                  Enable DEBUG logging
-    -c, --config PATH                              Path to .env file
-    --ai-all                                       Run AI validation on all books
-    --reorganize                                   Move misplaced books (implies --ai-all)
-    --verify                                       Run data quality checks after processing
-    --no-lock                                      Skip file locking (batch mode)
-    --asin TEXT                                    Override ASIN discovery
-
-Modes:
-    convert   -- Directory input: MP3/FLAC/etc -> M4B (validate -> concat -> convert ->
-                 asin -> metadata -> organize -> cleanup)
-    enrich    -- M4B input: resolve ASIN, tag metadata, organize (asin -> metadata ->
-                 organize -> cleanup)
-    metadata  -- Resolve and apply metadata only, no file move (asin -> metadata -> cleanup)
-    organize  -- Resolve ASIN, tag metadata, then move into library structure
-                 (asin -> metadata -> organize)
-
-Core modules:
-    config              -- Pipeline configuration via pydantic-settings (PIPELINE_LLM_* env vars).
-                           Includes pipeline_level field with PipelineLevel property for
-                           tiered intelligence (simple/normal/ai/full). Level controls AI
-                           availability and stage filtering. Includes parallel conversion
-                           settings (max_parallel_converts, cpu_ceiling).
-    cli                 -- Click CLI entry point with auto mode detection, --reorganize flag.
-                           CLI flags passed as kwargs to PipelineConfig (no env pollution).
-                           Logs mode detection, env loading, and flag resolution.
-    runner              -- Pipeline orchestration, stage execution, batch progress bar.
-                           Dispatches to ConvertOrchestrator for convert-mode batch runs.
-                           Builds LibraryIndex once for batch organize mode. Logs stage
-                           transitions, manifest skip reasons, and subprocess commands.
-    convert_orchestrator -- CPU-aware parallel batch processor for audiobook conversion.
-                           Manages ThreadPoolExecutor with dynamic thread allocation,
-                           CPU load monitoring via psutil.cpu_percent(), and per-book
-                           stage sequencing (validate -> concat -> convert -> asin ->
-                           metadata -> organize -> cleanup). Cleans work dirs on
-                           retag-in-place early exit and in dry-run mode. Returns
-                           BatchResult summary.
-    library_index       -- In-memory library index for O(1) folder/file lookups in batch mode.
-                           Replaces per-call iterdir() with dict-based scans via os.walk().
-                           Supports cross-source dedup, dynamic registration, reorganize detection.
-                           Author alias canonicalization via PipelineDB (SQLite).
-    ai                  -- AI-assisted metadata resolution via any OpenAI-compatible endpoint
-                           (LiteLLM, OpenAI, Ollama). Includes cache-busting for semantic caches,
-                           conflict resolution, and Audible disambiguation. Logs evidence sources,
-                           resolution decisions, and parse failures.
-    pipeline_db         -- SQLite-backed pipeline state (WAL mode). Replaces JSON manifests
-                           with a single database for book records, per-stage progress,
-                           cover art blobs, author aliases, and concurrency locks.
-                           Thread-safe via per-thread connections.
-    ffprobe             -- Audio file inspection via ffprobe subprocess. Includes get_format_name()
-                           for container format validation. Logs every subprocess call, tag
-                           extraction, and parse result. Numeric functions raise ValueError on
-                           empty ffprobe output (corrupt files, missing binary).
-    sanitize            -- Filename sanitization and book hash generation. Logs truncation
-                           events and hash results.
-    concurrency         -- File locking and disk space checks. Logs lock acquisition and
-                           space validation.
-
-Subpackages:
-    api        -- External API clients (Audible catalog search with query/result logging,
-                  fuzzy scoring with match details)
-    stages     -- Pipeline stages (validate, concat, convert for MP3-to-M4B conversion;
-                  asin for Audible resolution, AI disambiguation, and cover URL capture;
-                  metadata tagging via ffmpeg -c copy with chapter preservation and
-                  cover art embedding; organize as pure file-mover with index-aware
-                  early-skip and reorganize mode; cleanup with work directory removal.
-                  See stages/__init__.py for full stage docs.)
-    ops        -- File operations (path parsing with pattern match logging and
-                  author-only directory fallback, Plex library building, dedup detection,
-                  move_in_library for reorganize mode with empty-dir cleanup, author
-                  heuristic rejection reasons, filename renaming with year stripping
-                  and series position prefix)
-    automation -- Cron scanner and queue processor (planned)
+See Also:
+    - _plans/python-rewrite-sequence.md: what is built in what order, and why
+    - _DOCS/STANDARDS-python.md: the standard this implements
 """
+
+from __future__ import annotations
+
+__version__ = "1.0.0"

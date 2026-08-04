@@ -1,0 +1,165 @@
+#!/opt/homebrew/bin/bash
+# pre-commit -- enforce Python standards against staged, indexed, or working content.
+
+set -uo pipefail
+
+mode="staged"
+case "${1:-}" in
+  "") ;;
+  --all) mode="all" ;;
+  --working) mode="working" ;;
+  *) printf '[pre-commit] usage: %s [--all|--working]\n' "$0"; exit 2 ;;
+esac
+
+repo_root="$(git rev-parse --show-toplevel)"
+python="$repo_root/.venv/bin/python"
+ruff="$repo_root/.venv/bin/ruff"
+mypy="$repo_root/.venv/bin/mypy"
+for tool in "$python" "$ruff" "$mypy"; do
+  [[ -x "$tool" ]] || { printf '[pre-commit] missing tool: %s; run uv sync --extra dev\n' "$tool"; exit 1; }
+done
+
+fail=0
+step() { printf '\n[pre-commit] %s\n' "$*"; }
+run_gate() {
+  local label="$1"
+  shift
+  step "$label"
+  if ! "$@" 2>&1 | sed 's/^/  /'; then
+    fail=1
+  fi
+}
+
+scope_root="$repo_root"
+scratch=""
+if [[ "$mode" != "working" ]]; then
+  if [[ -d /Volumes/ThunderBolt/_tmp && -w /Volumes/ThunderBolt/_tmp ]]; then
+    scratch_base="/Volumes/ThunderBolt/_tmp/audiobook-pipeline/_scratch/pre-commit"
+  elif [[ -d /mnt/collab/tmp_space && -w /mnt/collab/tmp_space ]]; then
+    scratch_base="/mnt/collab/tmp_space/audiobook-pipeline/_scratch/pre-commit"
+  else
+    # CI has no shared ThunderBolt/collab mount. Keep the transient snapshot
+    # inside Git's own administrative area instead of inventing a root folder.
+    scratch_base="$(git rev-parse --path-format=absolute --git-path standards-snapshots)"
+  fi
+  mkdir -p "$scratch_base" "$scratch_base/_archive"
+  for attempt in {1..20}; do
+    candidate="$scratch_base/index.$$.${RANDOM}.${attempt}"
+    if mkdir "$candidate"; then
+      scratch="$candidate"
+      break
+    fi
+  done
+  [[ -n "$scratch" ]] || { printf '[pre-commit] unable to allocate index snapshot\n'; exit 1; }
+  cleanup() {
+    [[ -d "$scratch" ]] || return
+    mv "$scratch" "$scratch_base/_archive/$(basename "$scratch").done"
+  }
+  trap cleanup EXIT
+  git checkout-index --prefix="$scratch/" -af
+  scope_root="$scratch"
+fi
+
+if [[ "$mode" == "staged" ]]; then
+  mapfile -t logical_paths < <(git diff --cached --name-only --diff-filter=ACMR -- '*.py')
+elif [[ "$mode" == "all" ]]; then
+  mapfile -t logical_paths < <(git ls-files '*.py')
+else
+  mapfile -t logical_paths < <(
+    {
+      git ls-files '*.py'
+      git ls-files --others --exclude-standard '*.py'
+    } | sort -u
+  )
+fi
+
+# A mode changes WHERE content comes from, never WHAT belongs to the maintained
+# Python surface. Reference backups under _DOCS/ are intentionally outside the
+# standard; passing them explicitly to Ruff would bypass its extend-exclude.
+maintained=()
+for path in "${logical_paths[@]}"; do
+  case "$path" in
+    src/*.py|tests/*.py|scripts/*.py|_githooks/*.py)
+      maintained+=("$path")
+      ;;
+  esac
+done
+
+existing=()
+for path in "${maintained[@]}"; do
+  [[ -f "$scope_root/$path" ]] && existing+=("$path")
+done
+if [[ ${#existing[@]} -eq 0 && "$mode" == "staged" ]]; then
+  step "no staged Python files -- nothing to check"
+  exit 0
+fi
+
+# Default hook mode derives docs inside the INDEX snapshot and writes the
+# generated blob directly to the index. Dirty/untracked working README content
+# is never overwritten; a clean or genuinely absent file is synchronized so a
+# successful commit does not leave a false working-tree modification behind.
+if [[ "$mode" == "staged" ]]; then
+  staged_inits=()
+  for path in "${existing[@]}"; do
+    [[ "$path" == src/audiobook_pipeline/__init__.py || "$path" == src/audiobook_pipeline/**/__init__.py ]] && staged_inits+=("$path")
+  done
+  if [[ ${#staged_inits[@]} -gt 0 ]]; then
+    run_gate "package docs from staged initializers" \
+      "$python" "$scope_root/_githooks/generate_folder_docs.py" --root "$scope_root"
+    if [[ $fail -eq 0 ]]; then
+      for init_path in "${staged_inits[@]}"; do
+        readme_path="${init_path%/__init__.py}/README.md"
+        preserve_working=0
+        tracked_path="$(git ls-files -- "$readme_path")"
+        if [[ "$tracked_path" == "$readme_path" ]]; then
+          git diff --quiet -- "$readme_path" || preserve_working=1
+        elif [[ -e "$repo_root/$readme_path" || -L "$repo_root/$readme_path" ]]; then
+          preserve_working=1
+        fi
+        blob="$(git hash-object -w "$scope_root/$readme_path")"
+        git update-index --add --cacheinfo "100644,$blob,$readme_path"
+        if [[ $preserve_working -eq 0 ]]; then
+          mkdir -p "$repo_root/${readme_path%/*}"
+          cp "$scope_root/$readme_path" "$repo_root/$readme_path"
+        fi
+      done
+    fi
+  fi
+else
+  run_gate "package docs ($mode content)" \
+    "$python" "$scope_root/_githooks/generate_folder_docs.py" --root "$scope_root" --check
+fi
+
+if [[ ${#existing[@]} -gt 0 ]]; then
+  cd "$scope_root" || exit 1
+  run_gate "ruff format --check ($mode content)" \
+    "$ruff" format --config "$repo_root/pyproject.toml" --check "${existing[@]}"
+  run_gate "ruff check ($mode content)" \
+    "$ruff" check --config "$repo_root/pyproject.toml" \
+    --ignore C901,PLR0912,PLR0913,PLR0915,PLR1702 "${existing[@]}"
+  run_gate "absolute imports ($mode content)" \
+    "$python" "$scope_root/_githooks/check_absolute_imports.py" \
+    --root "$scope_root" "${existing[@]}"
+  run_gate "exception handling observability ($mode content)" \
+    "$python" "$scope_root/_githooks/check_exception_handling.py" \
+    --root "$scope_root" "${existing[@]}"
+  cd "$repo_root" || exit 1
+fi
+
+run_gate "shape and size ratchet ($mode content)" \
+  "$python" "$scope_root/_githooks/check_baseline.py" \
+  --root "$scope_root" --baseline "$repo_root/_githooks/baseline.json"
+
+step "mypy (whole $mode snapshot)"
+if ! (
+  cd "$scope_root" &&
+  MYPYPATH="$scope_root/src" "$mypy" --config-file "$repo_root/pyproject.toml"
+) 2>&1 | sed 's/^/  /'; then
+  fail=1
+fi
+
+if [[ $fail -ne 0 ]]; then
+  printf '\n[pre-commit] BLOCKED. Fix the failures above.\n'
+  exit 1
+fi
+printf '\n[pre-commit] all %s checks passed\n' "$mode"

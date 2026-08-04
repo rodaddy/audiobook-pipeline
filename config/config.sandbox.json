@@ -1,0 +1,11 @@
+{
+  "paths": {
+    "data_dir": "~/audiobook-pipeline/sandbox",
+    "work_dir": "~/audiobook-pipeline/sandbox/work",
+    "log_dir": "~/audiobook-pipeline/sandbox/logs",
+    "archive_dir": "~/audiobook-pipeline/sandbox/archive",
+    "lock_dir": "~/audiobook-pipeline/sandbox/locks",
+    "output_dir": "~/audiobook-pipeline/sandbox/output",
+    "library_dir": "~/audiobook-pipeline/sandbox/library"
+  }
+}

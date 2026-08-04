@@ -1,268 +1,269 @@
-"""Tests for api/audible.py -- Audible catalog search with mocked HTTP."""
+"""Typed Audible catalogue boundary tests with mocked HTTP transport."""
 
-from unittest.mock import MagicMock, patch
+from __future__ import annotations
 
-import pytest
+from typing import Any
 
-from audiobook_pipeline.api.audible import _extract_genre, _strip_html, search
+import httpx
+
+from audiobook_pipeline.services.audible import search
+
+
+def client_returning(
+    payload: dict[str, Any],
+    requests: list[httpx.Request],
+    *,
+    status: int = 200,
+    timeout: float = 5.0,
+) -> httpx.Client:
+    """Return an HTTP client serving one catalogue payload and retaining requests."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(status, json=payload, request=request)
+
+    return httpx.Client(transport=httpx.MockTransport(handler), timeout=timeout)
+
+
+def product(**overrides: Any) -> dict[str, Any]:
+    """Build one minimally valid Audible product with selective overrides."""
+    result: dict[str, Any] = {
+        "asin": "B001ABC",
+        "title": "The Great Book",
+        "authors": [{"name": "John Smith"}],
+    }
+    result.update(overrides)
+    return result
 
 
 class TestSearch:
-    """Test Audible API search with mocked httpx calls."""
+    """Audible search maps external JSON to validated book metadata."""
 
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_successful_search_returns_results(self, mock_get):
-        # Mock successful API response with expanded fields
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
+    def test_successful_search_returns_typed_metadata(self) -> None:
+        payload = {
             "products": [
-                {
-                    "asin": "B001ABC",
-                    "title": "The Great Book",
-                    "subtitle": "A Subtitle",
-                    "authors": [
-                        {"name": "John Smith"},
-                        {"name": "Jane Doe"},
-                    ],
-                    "series": [
-                        {
-                            "title": "Great Series",
-                            "sequence": "1",
-                        },
-                    ],
-                    "publisher_summary": "<p>A great book.</p>",
-                    "publisher_name": "Acme Publishing",
-                    "copyright": "(c) 2024 John Smith",
-                    "language": "english",
-                    "category_ladders": [
+                product(
+                    subtitle="A Subtitle",
+                    authors=[{"name": "John Smith"}, {"name": "Jane Doe"}],
+                    narrators=[{"name": "Narrator"}],
+                    series=[{"title": "Great Series", "sequence": "1"}],
+                    publisher_summary="<p>A great book.</p>",
+                    publisher_name="Acme Publishing",
+                    copyright="(c) 2024 John Smith",
+                    category_ladders=[
                         {
                             "ladder": [
                                 {"name": "Science Fiction"},
                                 {"name": "Space Opera"},
-                            ],
-                        },
+                            ]
+                        }
                     ],
-                },
-                {
-                    "asin": "B002DEF",
-                    "title": "Another Book",
-                    "authors": [{"name": "Bob Jones"}],
-                    "series": None,
-                },
-            ],
+                    product_images={"1024": "https://covers.test/large.jpg"},
+                ),
+                product(asin="B002DEF", title="Another Book", authors=[], series=None),
+            ]
         }
-        mock_get.return_value = mock_response
+        requests: list[httpx.Request] = []
 
-        results = search("test query")
+        with client_returning(payload, requests) as client:
+            results = search(client, "test query")
 
-        assert len(results) == 2
-        assert results[0]["asin"] == "B001ABC"
-        assert results[0]["title"] == "The Great Book"
-        assert results[0]["subtitle"] == "A Subtitle"
-        assert results[0]["authors"] == ["John Smith", "Jane Doe"]
-        assert results[0]["author_str"] == "John Smith, Jane Doe"
-        assert results[0]["series"] == "Great Series"
-        assert results[0]["position"] == "1"
-        assert results[0]["publisher_summary"] == "A great book."
-        assert results[0]["publisher_name"] == "Acme Publishing"
-        assert results[0]["copyright"] == "(c) 2024 John Smith"
-        assert results[0]["language"] == "english"
-        assert results[0]["genre"] == "Science Fiction/Space Opera"
-
-        assert results[1]["asin"] == "B002DEF"
-        assert results[1]["series"] == ""
-        assert results[1]["position"] == ""
-        assert results[1]["publisher_summary"] == ""
-        assert results[1]["genre"] == ""
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_uses_correct_api_endpoint(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"products": []}
-        mock_get.return_value = mock_response
-
-        search("test query", region="com")
-
-        # Verify the correct API URL was called
-        call_args = mock_get.call_args
-        assert "api.audible.com/1.0/catalog/products" in call_args[0][0]
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_uses_custom_region(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"products": []}
-        mock_get.return_value = mock_response
-
-        search("test query", region="uk")
-
-        call_args = mock_get.call_args
-        assert "api.audible.uk/1.0/catalog/products" in call_args[0][0]
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_includes_correct_query_params(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"products": []}
-        mock_get.return_value = mock_response
-
-        search("fantasy books")
-
-        call_kwargs = mock_get.call_args[1]
-        params = call_kwargs["params"]
-        assert params["keywords"] == "fantasy books"
-        assert params["num_results"] == "10"
-        assert params["products_sort_by"] == "Relevance"
-        rg = params["response_groups"]
-        assert "contributors" in rg
-        assert "series" in rg
-        assert "category_ladders" in rg
-        assert "product_extended_attrs" in rg
-        assert "rating" in rg
-        assert "product_details" in rg
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_http_error_returns_empty_list(self, mock_get):
-        # Simulate HTTP error
-        import httpx
-
-        mock_get.side_effect = httpx.HTTPError("Network error")
-
-        results = search("test query")
-
-        assert results == []
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_http_status_error_returns_empty_list(self, mock_get):
-        # Simulate 404 or other HTTP status error
-        import httpx
-
-        mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "404 Not Found", request=MagicMock(), response=MagicMock()
-        )
-        mock_get.return_value = mock_response
-
-        results = search("test query")
-
-        assert results == []
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_empty_products_array(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"products": []}
-        mock_get.return_value = mock_response
-
-        results = search("nonexistent book")
-
-        assert results == []
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_missing_authors_handled_gracefully(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "products": [
-                {
-                    "asin": "B001",
-                    "title": "Book Without Authors",
-                    "authors": None,
-                    "series": None,
-                },
-            ],
-        }
-        mock_get.return_value = mock_response
-
-        results = search("test")
-
-        assert len(results) == 1
-        assert results[0]["authors"] == []
-        assert results[0]["author_str"] == ""
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_empty_series_array_handled(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "products": [
-                {
-                    "asin": "B001",
-                    "title": "Standalone Book",
-                    "authors": [{"name": "Author"}],
-                    "series": [],
-                },
-            ],
-        }
-        mock_get.return_value = mock_response
-
-        results = search("test")
-
-        assert results[0]["series"] == ""
-        assert results[0]["position"] == ""
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_missing_fields_use_empty_defaults(self, mock_get):
-        # Test defensive parsing when fields are missing entirely
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "products": [
-                {
-                    # Minimal product, missing optional fields
-                },
-            ],
-        }
-        mock_get.return_value = mock_response
-
-        results = search("test")
-
-        assert len(results) == 1
-        assert results[0]["asin"] == ""
-        assert results[0]["title"] == ""
-        assert results[0]["authors"] == []
-        assert results[0]["series"] == ""
-        assert results[0]["position"] == ""
-
-    @patch("audiobook_pipeline.api.audible.httpx.get")
-    def test_timeout_set_correctly(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"products": []}
-        mock_get.return_value = mock_response
-
-        search("test")
-
-        call_kwargs = mock_get.call_args[1]
-        assert call_kwargs["timeout"] == 30.0
-
-
-class TestExtractGenre:
-    """Test genre extraction from Audible category_ladders."""
-
-    def test_single_ladder(self):
-        ladders = [{"ladder": [{"name": "Fiction"}, {"name": "Thriller"}]}]
-        assert _extract_genre(ladders) == "Fiction/Thriller"
-
-    def test_empty_ladders(self):
-        assert _extract_genre([]) == ""
-
-    def test_empty_ladder_steps(self):
-        assert _extract_genre([{"ladder": []}]) == ""
-
-    def test_single_category(self):
-        ladders = [{"ladder": [{"name": "Nonfiction"}]}]
-        assert _extract_genre(ladders) == "Nonfiction"
-
-    def test_uses_first_ladder_only(self):
-        ladders = [
-            {"ladder": [{"name": "Fiction"}]},
-            {"ladder": [{"name": "Science"}]},
+        assert [(book.asin, book.title) for book in results] == [
+            ("B001ABC", "The Great Book"),
+            ("B002DEF", "Another Book"),
         ]
-        assert _extract_genre(ladders) == "Fiction"
+        first, second = results
+        assert first.author == "John Smith, Jane Doe" and first.narrator == "Narrator"
+        assert first.series == "Great Series" and first.series_position == "1"
+        assert first.summary == "A great book." and first.publisher == "Acme Publishing"
+        assert first.genres == ("Science Fiction", "Space Opera")
+        assert first.cover_url == "https://covers.test/large.jpg"
+        assert second.series == second.series_position == second.summary == ""
+
+    def test_uses_the_catalogue_endpoint_and_default_region(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning({"products": []}, requests) as client:
+            search(client, "test query")
+
+        assert str(requests[0].url).startswith(
+            "https://api.audible.com/1.0/catalog/products"
+        )
+
+    def test_uses_the_requested_catalogue_region(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning({"products": []}, requests) as client:
+            search(client, "test query", region="uk")
+
+        assert str(requests[0].url).startswith(
+            "https://api.audible.uk/1.0/catalog/products"
+        )
+
+    def test_sends_the_search_contract_parameters(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning({"products": []}, requests) as client:
+            search(client, "fantasy books")
+
+        params = requests[0].url.params
+        assert params["keywords"] == "fantasy books" and params["num_results"] == "10"
+        assert params["products_sort_by"] == "Relevance"
+        assert set(params["response_groups"].split(",")) >= {
+            "category_ladders",
+            "contributors",
+            "series",
+            "product_extended_attrs",
+            "rating",
+            "product_details",
+        }
+
+    def test_http_error_returns_no_candidates(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("network error", request=request)
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            assert search(client, "test query") == []
+
+    def test_http_status_error_returns_no_candidates(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning({"error": "not found"}, requests, status=404) as client:
+            assert search(client, "test query") == []
+
+    def test_empty_products_array_returns_no_candidates(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning({"products": []}, requests) as client:
+            assert search(client, "nonexistent book") == []
+
+    def test_missing_authors_map_to_an_empty_author(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning(
+            {"products": [product(authors=None, series=None)]}, requests
+        ) as client:
+            results = search(client, "test")
+
+        assert results[0].author == "" and results[0].series == ""
+
+    def test_empty_series_maps_to_empty_series_fields(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning({"products": [product(series=[])]}, requests) as client:
+            result = search(client, "test")[0]
+
+        assert result.series == result.series_position == ""
+
+    def test_product_without_a_required_title_is_dropped(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning({"products": [{}, product()]}, requests) as client:
+            results = search(client, "test")
+
+        assert [result.asin for result in results] == ["B001ABC"]
+
+    def test_caller_owned_timeout_can_execute_the_search(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning({"products": []}, requests, timeout=30.0) as client:
+            assert search(client, "test") == []
 
 
-class TestStripHtml:
-    """Test HTML tag stripping."""
+class TestGenreMapping:
+    """Genre ladders remain catalogue metadata rather than an implementation detail."""
 
-    def test_strips_tags(self):
-        assert _strip_html("<p>Hello <b>world</b></p>") == "Hello world"
+    def test_single_ladder_maps_all_names(self) -> None:
+        requests: list[httpx.Request] = []
 
-    def test_plain_text_unchanged(self):
-        assert _strip_html("No tags here") == "No tags here"
+        with client_returning(
+            {
+                "products": [
+                    product(
+                        category_ladders=[
+                            {"ladder": [{"name": "Fiction"}, {"name": "Thriller"}]}
+                        ]
+                    )
+                ]
+            },
+            requests,
+        ) as client:
+            result = search(client, "test")[0]
 
-    def test_empty_string(self):
-        assert _strip_html("") == ""
+        assert result.genres == ("Fiction", "Thriller")
+
+    def test_empty_ladders_map_to_no_genres(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning(
+            {"products": [product(category_ladders=[])]}, requests
+        ) as client:
+            assert search(client, "test")[0].genres == ()
+
+    def test_empty_ladder_steps_map_to_no_genres(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning(
+            {"products": [product(category_ladders=[{"ladder": []}])]}, requests
+        ) as client:
+            assert search(client, "test")[0].genres == ()
+
+    def test_single_category_maps_to_one_genre(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning(
+            {
+                "products": [
+                    product(category_ladders=[{"ladder": [{"name": "Nonfiction"}]}])
+                ]
+            },
+            requests,
+        ) as client:
+            assert search(client, "test")[0].genres == ("Nonfiction",)
+
+    def test_multiple_ladders_preserve_unique_genres_in_order(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning(
+            {
+                "products": [
+                    product(
+                        category_ladders=[
+                            {"ladder": [{"name": "Fiction"}]},
+                            {"ladder": [{"name": "Science"}]},
+                        ]
+                    )
+                ]
+            },
+            requests,
+        ) as client:
+            assert search(client, "test")[0].genres == ("Fiction", "Science")
+
+
+class TestSummaryMapping:
+    """HTML cleanup is observable through the typed catalogue response."""
+
+    def test_strips_tags(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning(
+            {"products": [product(publisher_summary="<p>Hello <b>world</b></p>")]},
+            requests,
+        ) as client:
+            assert search(client, "test")[0].summary == "Hello world"
+
+    def test_plain_text_is_unchanged(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning(
+            {"products": [product(publisher_summary="No tags here")]}, requests
+        ) as client:
+            assert search(client, "test")[0].summary == "No tags here"
+
+    def test_empty_summary_maps_to_empty_text(self) -> None:
+        requests: list[httpx.Request] = []
+
+        with client_returning(
+            {"products": [product(publisher_summary="")]}, requests
+        ) as client:
+            assert search(client, "test")[0].summary == ""

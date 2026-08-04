@@ -1,582 +1,265 @@
-"""Tests for metadata stage."""
+"""Legacy metadata-stage guards mapped to the typed rewrite boundaries."""
 
-import subprocess
+from __future__ import annotations
+
+import os
+from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from typing import Any
 
+import httpx
 import pytest
+from mutagen import MutagenError
+from mutagen.mp4 import MP4Cover
 
-from audiobook_pipeline.config import PipelineConfig
-from audiobook_pipeline.errors import ManifestError
-from audiobook_pipeline.pipeline_db import PipelineDB
-from audiobook_pipeline.models import PipelineMode
-from audiobook_pipeline.stages.metadata import run, _build_album, _write_tags
+from audiobook_pipeline.config import Settings
+from audiobook_pipeline.db import queries
+from audiobook_pipeline.db.connection import connect
+from audiobook_pipeline.db.rows import BookRow
+from audiobook_pipeline.models.book import AudioFile, BookDirectory
+from audiobook_pipeline.models.chapter import ChapterSet
+from audiobook_pipeline.models.metadata import BookMetadata, CoverArt
+from audiobook_pipeline.models.stage import (
+    PipelineLevel,
+    PipelineMode,
+    Stage,
+    StageStatus,
+    stages_for,
+)
+from audiobook_pipeline.services import metadata_stage
+from audiobook_pipeline.services.pipeline import RunContext, book_hash, process_book
+from audiobook_pipeline.utils import tagging
+
+JPEG = b"\xff\xd8\xffcover"
+PNG = b"\x89PNG\r\n\x1a\ncover"
 
 
-class TestBuildAlbum:
-    def test_series_and_position(self):
-        assert _build_album("Title", "The Expanse", "3") == "The Expanse, Book 3"
+class FakeMP4:
+    """In-memory MP4 boundary exposing tags written by the public tag service."""
 
-    def test_series_no_position(self):
-        assert _build_album("Title", "The Expanse", "") == "The Expanse"
+    def __init__(self) -> None:
+        """Initialize an empty writable tag block."""
+        self.tags: dict[str, Any] | None = {}
+        self.saved = False
 
-    def test_no_series(self):
-        assert _build_album("My Book Title", "", "") == "My Book Title"
+    def add_tags(self) -> None:
+        """Create a tag block when the writer needs one."""
+        self.tags = {}
 
-    def test_no_series_with_position(self):
-        assert _build_album("My Book Title", "", "5") == "My Book Title"
+    def save(self) -> None:
+        """Record the durable write boundary."""
+        self.saved = True
 
 
-class TestMetadataStage:
-    def _make_config(self, tmp_path):
-        return PipelineConfig(
-            _env_file=None,
-            work_dir=tmp_path / "work",
-            nfs_output_dir=tmp_path / "library",
+@pytest.fixture
+def context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[RunContext]:
+    """Return an isolated current pipeline context and caller-owned client."""
+    for key in list(os.environ):
+        if key.startswith("AUDIOBOOK_"):
+            monkeypatch.delenv(key, raising=False)
+    settings = Settings()
+    settings.paths.work_dir = tmp_path / "work"
+    settings.paths.library_dir = tmp_path / "library"
+    with connect(tmp_path / "pipeline.db") as conn:
+        client = httpx.Client(
+            transport=httpx.MockTransport(lambda _: httpx.Response(404, json={}))
         )
+        yield RunContext(config=settings, conn=conn, client=client)
+        client.close()
 
-    def _create_manifest_with_asin(
-        self,
-        tmp_path,
-        config,
-        book_hash,
-        output_file,
-        author="Author Name",
-        title="Book Title",
-        series="",
-        position="",
-        asin="B001234567",
-        narrator="",
-        year="",
-        cover_url="",
-    ):
-        """Create manifest with ASIN-resolved metadata and convert output."""
-        manifest = PipelineDB(tmp_path / "test.db")
-        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
-        data = manifest.read(book_hash)
-        data["stages"]["convert"] = {
-            "status": "completed",
-            "output_file": str(output_file),
-        }
-        data["metadata"].update(
-            {
-                "parsed_author": author,
-                "parsed_title": title,
-                "parsed_series": series,
-                "parsed_position": position,
-                "parsed_asin": asin,
-                "parsed_narrator": narrator,
-                "parsed_year": year,
-                "cover_url": cover_url,
-            }
-        )
-        manifest.update(book_hash, data)
-        return manifest
 
-    @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_correct_ffmpeg_args(self, mock_run, tmp_path):
-        config = self._make_config(tmp_path)
+def source_book(tmp_path: Path) -> BookDirectory:
+    """Create one source book with the typed duration required by the pipeline."""
+    source = tmp_path / "source" / "Book" / "book.mp3"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"audio")
+    return BookDirectory(
+        path=source.parent,
+        files=(AudioFile(path=source, duration_ms=60_000),),
+    )
 
-        # Output file is in work_dir (convert output), not library
-        output_file = tmp_path / "work" / "hash01" / "book.m4b"
-        output_file.parent.mkdir(parents=True)
-        output_file.write_text("fake m4b")
 
-        manifest = self._create_manifest_with_asin(
-            tmp_path,
-            config,
-            "meta01",
-            output_file,
-            author="James Corey",
+def tagged(
+    monkeypatch: pytest.MonkeyPatch,
+    metadata: BookMetadata,
+    cover: CoverArt | None = None,
+) -> FakeMP4:
+    """Write typed metadata through a fake MP4 and return its captured atoms."""
+    audio = FakeMP4()
+    monkeypatch.setattr(tagging, "MP4", lambda _: audio)
+    tagging.write_tags(Path("book.m4b"), metadata, cover=cover)
+    return audio
+
+
+def freeform(tags: dict[str, Any], name: str) -> str:
+    """Decode one iTunes freeform value captured from the tag boundary."""
+    return bytes(tags[tagging._freeform(name)][0]).decode("utf-8")
+
+
+def test_tags_preserve_series_asin_and_cover_art(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rewritten writer retains the established Plex/Apple tag contract."""
+    audio = tagged(
+        monkeypatch,
+        BookMetadata(
             title="Leviathan Wakes",
-            series="The Expanse",
-            position="1",
-            asin="B005LZHV6Q",
+            author="James Corey",
             narrator="Jefferson Mays",
-            year="2011",
+            asin="B005LZHV6Q",
+            series="The Expanse",
+            series_position="1",
+            release_year=2011,
+            publisher="Publisher",
+            summary="Summary",
+            copyright="Copyright",
+            genres=("Audiobook",),
+        ),
+        CoverArt(content_type="image/png", data=PNG),
+    )
+    assert audio.tags is not None and audio.saved
+    tags = audio.tags
+    assert tags["\xa9ART"] == ["James Corey, Jefferson Mays"]
+    assert tags["\xa9alb"] == ["The Expanse, Book 1"]
+    assert tags["\xa9grp"] == ["The Expanse, Book #1"]
+    assert tags["\xa9day"] == ["2011"]
+    assert tags["\xa9mvi"] == [1]
+    assert tags["stik"] == [2] and tags["pgap"] is True
+    assert freeform(tags, "ASIN") == "B005LZHV6Q"
+    assert freeform(tags, "PUBLISHER") == "Publisher"
+    embedded = tags["covr"][0]
+    assert isinstance(embedded, MP4Cover)
+    assert bytes(embedded) == PNG
+    assert embedded.imageformat == MP4Cover.FORMAT_PNG
+
+
+def test_tags_omit_absent_atoms_and_keep_fractional_series_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ASIN means no atom, and a decimal position is not coerced to int."""
+    standalone = tagged(monkeypatch, BookMetadata(title="Standalone"))
+    assert standalone.tags is not None
+    assert standalone.tags["\xa9alb"] == ["Standalone"]
+    assert tagging._freeform("ASIN") not in standalone.tags
+    fractional = tagged(
+        monkeypatch,
+        BookMetadata(title="Novella", series="Series", series_position="0.5"),
+    )
+    assert fractional.tags is not None
+    assert fractional.tags["\xa9alb"] == ["Series, Book 0.5"]
+    assert "\xa9mvi" not in fractional.tags
+
+
+def test_tag_writer_keeps_mutagen_failure_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed MP4 is a real tagging failure for the pipeline to record."""
+    monkeypatch.setattr(
+        tagging,
+        "MP4",
+        lambda _: (_ for _ in ()).throw(MutagenError("bad container")),
+    )
+    with pytest.raises(MutagenError, match="bad container"):
+        tagging.write_tags(Path("bad.m4b"), BookMetadata(title="Book"))
+
+
+def test_cover_download_is_cached_then_reused_without_a_second_request(
+    context: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Optional cover art is stored before tagging so a retry needs no network."""
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/jpeg"},
+            stream=httpx.ByteStream(JPEG),
         )
 
-        def ffmpeg_side_effect(cmd, **kwargs):
-            temp_path = Path(cmd[-1])
-            temp_path.write_text("tagged m4b")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
-
-        mock_run.side_effect = ffmpeg_side_effect
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="meta01",
-            config=config,
-            manifest=manifest,
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    row = BookRow(book_hash="cover", source_path="/source", mode="convert")
+    queries.upsert_book(context.conn, row)
+    metadata = BookMetadata(title="Book", cover_url="https://covers.example/art")
+    try:
+        first = metadata_stage.cover_for_metadata(
+            context.conn, client, row.book_hash, metadata
         )
-
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-
-        assert "-c" in cmd
-        assert "copy" in cmd
-        assert "-map_chapters" in cmd
-
-        metadata_pairs = []
-        for i, arg in enumerate(cmd):
-            if arg == "-metadata" and i + 1 < len(cmd):
-                metadata_pairs.append(cmd[i + 1])
-
-        assert "artist=James Corey, Jefferson Mays" in metadata_pairs
-        assert "album_artist=James Corey" in metadata_pairs
-        assert "album=The Expanse, Book 1" in metadata_pairs
-        assert "title=Leviathan Wakes" in metadata_pairs
-        assert "genre=Audiobook" in metadata_pairs
-        assert "media_type=2" in metadata_pairs
-        assert "composer=Jefferson Mays" in metadata_pairs
-        assert "date=2011" in metadata_pairs
-        assert "show=The Expanse" in metadata_pairs
-        assert "grouping=The Expanse, Book #1" in metadata_pairs
-        assert "sort_album=The Expanse 1 - Leviathan Wakes" in metadata_pairs
-        assert "ASIN=B005LZHV6Q" in metadata_pairs
-        assert "SHOWMOVEMENT=1" in metadata_pairs
-        assert "MOVEMENTNAME=The Expanse" in metadata_pairs
-        assert "MOVEMENT=1" in metadata_pairs
-        assert "pgap=1" in metadata_pairs
-
-        data = manifest.read("meta01")
-        assert data["stages"]["metadata"]["status"] == "completed"
-        assert data["stages"]["metadata"]["output_file"] == str(output_file)
-
-    @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_chapters_preserved_via_map_chapters(self, mock_run, tmp_path):
-        config = self._make_config(tmp_path)
-
-        output_file = tmp_path / "work" / "hash02" / "book.m4b"
-        output_file.parent.mkdir(parents=True)
-        output_file.write_text("fake")
-
-        manifest = self._create_manifest_with_asin(
-            tmp_path,
-            config,
-            "meta02",
-            output_file,
+        second = metadata_stage.cover_for_metadata(
+            context.conn, client, row.book_hash, metadata
         )
+    finally:
+        client.close()
+    assert first == CoverArt(content_type="image/jpeg", data=JPEG)
+    assert second == first
+    assert queries.get_cover(context.conn, row.book_hash) == JPEG
+    assert calls == 1
 
-        def ffmpeg_side_effect(cmd, **kwargs):
-            Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
 
-        mock_run.side_effect = ffmpeg_side_effect
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="meta02",
-            config=config,
-            manifest=manifest,
+def test_invalid_cached_cover_refetches_and_optional_failure_is_nonfatal(
+    context: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bad cache bytes are replaced; a remote failure safely leaves cover absent."""
+    row = BookRow(book_hash="cover", source_path="/source", mode="convert")
+    queries.upsert_book(context.conn, row)
+    queries.store_cover(context.conn, row.book_hash, b"not-an-image")
+    art = CoverArt(content_type="image/jpeg", data=JPEG)
+    monkeypatch.setattr(metadata_stage, "fetch_cover", lambda *_: art)
+    metadata = BookMetadata(title="Book", cover_url="https://covers.example/art")
+    assert (
+        metadata_stage.cover_for_metadata(
+            context.conn, context.client, row.book_hash, metadata
         )
-
-        cmd = mock_run.call_args[0][0]
-        for i, arg in enumerate(cmd):
-            if arg == "-map_chapters":
-                assert cmd[i + 1] == "0"
-                break
-        else:
-            raise AssertionError("-map_chapters not found in ffmpeg command")
-
-    @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_album_without_series(self, mock_run, tmp_path):
-        config = self._make_config(tmp_path)
-
-        output_file = tmp_path / "work" / "hash03" / "book.m4b"
-        output_file.parent.mkdir(parents=True)
-        output_file.write_text("fake")
-
-        manifest = self._create_manifest_with_asin(
-            tmp_path,
-            config,
-            "meta03",
-            output_file,
-            author="Author",
-            title="Standalone Book",
-            series="",
-            position="",
+        == art
+    )
+    assert queries.get_cover(context.conn, row.book_hash) == JPEG
+    monkeypatch.setattr(metadata_stage, "fetch_cover", lambda *_: None)
+    assert (
+        metadata_stage.cover_for_metadata(
+            context.conn,
+            context.client,
+            "missing",
+            BookMetadata(title="Book", cover_url="https://covers.example/fail"),
         )
-
-        def ffmpeg_side_effect(cmd, **kwargs):
-            Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
-
-        mock_run.side_effect = ffmpeg_side_effect
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="meta03",
-            config=config,
-            manifest=manifest,
-        )
-
-        cmd = mock_run.call_args[0][0]
-        metadata_pairs = []
-        for i, arg in enumerate(cmd):
-            if arg == "-metadata" and i + 1 < len(cmd):
-                metadata_pairs.append(cmd[i + 1])
-
-        assert "album=Standalone Book" in metadata_pairs
-
-    def test_missing_manifest_sets_failed(self, tmp_path):
-        """Missing manifest does not raise, just sets stage to failed."""
-        config = self._make_config(tmp_path)
-
-        manifest = PipelineDB(tmp_path / "test.db")
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="meta04",
-            config=config,
-            manifest=manifest,
-        )
-
-        # Since book doesn't exist, read will return None
-        # But we can check that the stage tried to set failed status
-        # (though it may fail silently if book doesn't exist)
-
-    def test_missing_output_file_fails(self, tmp_path):
-        config = self._make_config(tmp_path)
-
-        nonexistent = tmp_path / "work" / "missing.m4b"
-        manifest = self._create_manifest_with_asin(
-            tmp_path,
-            config,
-            "meta05",
-            nonexistent,
-        )
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="meta05",
-            config=config,
-            manifest=manifest,
-        )
-
-        data = manifest.read("meta05")
-        assert data["stages"]["metadata"]["status"] == "failed"
-
-    def test_dry_run_skips_tagging(self, tmp_path):
-        config = self._make_config(tmp_path)
-
-        output_file = tmp_path / "work" / "hash06" / "book.m4b"
-        output_file.parent.mkdir(parents=True)
-        output_file.write_text("fake")
-
-        manifest = self._create_manifest_with_asin(
-            tmp_path,
-            config,
-            "meta06",
-            output_file,
-        )
-
-        with patch("audiobook_pipeline.stages.metadata.subprocess.run") as mock_run:
-            run(
-                source_path=Path("/src/book"),
-                book_hash="meta06",
-                config=config,
-                manifest=manifest,
-                dry_run=True,
-            )
-
-            mock_run.assert_not_called()
-
-        data = manifest.read("meta06")
-        assert data["stages"]["metadata"]["status"] == "completed"
-
-    @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_ffmpeg_failure_sets_failed(self, mock_run, tmp_path):
-        config = self._make_config(tmp_path)
-
-        output_file = tmp_path / "work" / "hash07" / "book.m4b"
-        output_file.parent.mkdir(parents=True)
-        output_file.write_text("fake")
-
-        manifest = self._create_manifest_with_asin(
-            tmp_path,
-            config,
-            "meta07",
-            output_file,
-        )
-
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="Error: bad input"
-        )
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="meta07",
-            config=config,
-            manifest=manifest,
-        )
-
-        data = manifest.read("meta07")
-        assert data["stages"]["metadata"]["status"] == "failed"
-
-    @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_no_asin_omits_asin_tag(self, mock_run, tmp_path):
-        config = self._make_config(tmp_path)
-
-        output_file = tmp_path / "work" / "hash08" / "book.m4b"
-        output_file.parent.mkdir(parents=True)
-        output_file.write_text("fake")
-
-        manifest = self._create_manifest_with_asin(
-            tmp_path,
-            config,
-            "meta08",
-            output_file,
-            asin="",
-        )
-
-        def ffmpeg_side_effect(cmd, **kwargs):
-            Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
-
-        mock_run.side_effect = ffmpeg_side_effect
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="meta08",
-            config=config,
-            manifest=manifest,
-        )
-
-        cmd = mock_run.call_args[0][0]
-        metadata_pairs = []
-        for i, arg in enumerate(cmd):
-            if arg == "-metadata" and i + 1 < len(cmd):
-                metadata_pairs.append(cmd[i + 1])
-
-        assert not any(p.startswith("ASIN=") for p in metadata_pairs)
-
-
-class TestCoverArt:
-    """Test cover art download and embedding."""
-
-    def _make_config(self, tmp_path):
-        return PipelineConfig(
-            _env_file=None,
-            work_dir=tmp_path / "work",
-            nfs_output_dir=tmp_path / "library",
-        )
-
-    def _create_manifest_with_cover(
-        self, tmp_path, config, book_hash, output_file, cover_url
-    ):
-        manifest = PipelineDB(tmp_path / "test.db")
-        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
-        data = manifest.read(book_hash)
-        data["stages"]["convert"] = {
-            "status": "completed",
-            "output_file": str(output_file),
-        }
-        data["metadata"].update(
-            {
-                "parsed_author": "Author",
-                "parsed_title": "Title",
-                "parsed_series": "",
-                "parsed_position": "",
-                "parsed_asin": "B001",
-                "cover_url": cover_url,
-            }
-        )
-        manifest.update(book_hash, data)
-        return manifest
-
-    @patch("audiobook_pipeline.stages.metadata._download_cover")
-    @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_cover_art_embedded_in_ffmpeg(self, mock_run, mock_download, tmp_path):
-        """When cover is available, ffmpeg command includes cover input and disposition."""
-        config = self._make_config(tmp_path)
-
-        output_file = tmp_path / "work" / "hash09" / "book.m4b"
-        output_file.parent.mkdir(parents=True)
-        output_file.write_text("fake m4b")
-
-        cover_file = tmp_path / "work" / "hash09" / "_cover.jpg"
-        cover_file.write_text("fake jpg")
-        mock_download.return_value = cover_file
-
-        manifest = self._create_manifest_with_cover(
-            tmp_path,
-            config,
-            "cover01",
-            output_file,
-            cover_url="https://example.com/cover.jpg",
-        )
-
-        def ffmpeg_side_effect(cmd, **kwargs):
-            Path(cmd[-1]).write_text("tagged with cover")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
-
-        mock_run.side_effect = ffmpeg_side_effect
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="cover01",
-            config=config,
-            manifest=manifest,
-        )
-
-        cmd = mock_run.call_args[0][0]
-        # Should have two -i inputs
-        i_indices = [i for i, a in enumerate(cmd) if a == "-i"]
-        assert len(i_indices) == 2
-        # Second input should be the cover file
-        assert cmd[i_indices[1] + 1] == str(cover_file)
-        # Should have -disposition:v:0 attached_pic
-        assert "-disposition:v:0" in cmd
-        assert "attached_pic" in cmd
-
-        data = manifest.read("cover01")
-        assert data["stages"]["metadata"]["status"] == "completed"
-
-    @patch("audiobook_pipeline.stages.metadata._download_cover")
-    @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_cover_download_failure_tags_without_cover(
-        self, mock_run, mock_download, tmp_path
-    ):
-        """Cover download failure is non-fatal -- file gets tagged without cover."""
-        config = self._make_config(tmp_path)
-
-        output_file = tmp_path / "work" / "hash10" / "book.m4b"
-        output_file.parent.mkdir(parents=True)
-        output_file.write_text("fake m4b")
-
-        mock_download.return_value = None  # Download failed
-
-        manifest = self._create_manifest_with_cover(
-            tmp_path,
-            config,
-            "cover02",
-            output_file,
-            cover_url="https://example.com/broken.jpg",
-        )
-
-        def ffmpeg_side_effect(cmd, **kwargs):
-            Path(cmd[-1]).write_text("tagged no cover")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
-
-        mock_run.side_effect = ffmpeg_side_effect
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="cover02",
-            config=config,
-            manifest=manifest,
-        )
-
-        cmd = mock_run.call_args[0][0]
-        # Should have only one -i (no cover input)
-        i_indices = [i for i, a in enumerate(cmd) if a == "-i"]
-        assert len(i_indices) == 1
-        assert "-disposition:v:0" not in cmd
-
-        data = manifest.read("cover02")
-        assert data["stages"]["metadata"]["status"] == "completed"
-
-    @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_no_cover_url_skips_download(self, mock_run, tmp_path):
-        """When cover_url is empty, no download is attempted."""
-        config = self._make_config(tmp_path)
-
-        output_file = tmp_path / "work" / "hash11" / "book.m4b"
-        output_file.parent.mkdir(parents=True)
-        output_file.write_text("fake m4b")
-
-        manifest = self._create_manifest_with_cover(
-            tmp_path,
-            config,
-            "cover03",
-            output_file,
-            cover_url="",
-        )
-
-        def ffmpeg_side_effect(cmd, **kwargs):
-            Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
-
-        mock_run.side_effect = ffmpeg_side_effect
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="cover03",
-            config=config,
-            manifest=manifest,
-        )
-
-        cmd = mock_run.call_args[0][0]
-        i_indices = [i for i, a in enumerate(cmd) if a == "-i"]
-        assert len(i_indices) == 1
-
-
-class TestMetadataEnrichMode:
-    """Test metadata stage with source_path as M4B file (enrich mode)."""
-
-    def _make_config(self, tmp_path):
-        return PipelineConfig(
-            _env_file=None,
-            work_dir=tmp_path / "work",
-            nfs_output_dir=tmp_path / "library",
-        )
-
-    @patch("audiobook_pipeline.stages.metadata.subprocess.run")
-    def test_enrich_mode_uses_source_file(self, mock_run, tmp_path):
-        """In enrich mode, tags the source M4B directly (no convert output)."""
-        config = self._make_config(tmp_path)
-
-        source_file = tmp_path / "book.m4b"
-        source_file.write_text("fake m4b")
-
-        manifest = PipelineDB(tmp_path / "test.db")
-        manifest.create("enrich01", str(source_file), PipelineMode.ENRICH)
-        data = manifest.read("enrich01")
-        data["metadata"].update(
-            {
-                "parsed_author": "Author",
-                "parsed_title": "Title",
-                "parsed_series": "",
-                "parsed_position": "",
-                "parsed_asin": "",
-                "cover_url": "",
-            }
-        )
-        manifest.update("enrich01", data)
-
-        def ffmpeg_side_effect(cmd, **kwargs):
-            Path(cmd[-1]).write_text("tagged")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
-
-        mock_run.side_effect = ffmpeg_side_effect
-
-        run(
-            source_path=source_file,
-            book_hash="enrich01",
-            config=config,
-            manifest=manifest,
-        )
-
-        # Should tag the source file directly
-        cmd = mock_run.call_args[0][0]
-        assert str(source_file) in cmd
-
-        data = manifest.read("enrich01")
-        assert data["stages"]["metadata"]["status"] == "completed"
+        is None
+    )
+
+
+def test_metadata_resume_round_trip_preserves_tag_and_cover_values() -> None:
+    """A retry reconstructs all values the tag boundary needs from its row."""
+    metadata = BookMetadata(
+        title="Title",
+        author="Author",
+        narrator="Narrator",
+        asin="ASIN",
+        series="Series",
+        series_position="2",
+        release_year=2024,
+        publisher="Publisher",
+        summary="Summary",
+        copyright="Copyright",
+        genres=("Fiction", "Space Opera"),
+        cover_url="https://covers.example/art",
+    )
+    row = BookRow(book_hash="hash", source_path="/source", mode="convert")
+    completed = metadata_stage.completed_row(row, metadata, ChapterSet())
+    assert metadata_stage.metadata_from_row(completed) == metadata
+
+
+def test_direct_dry_run_skips_database_network_and_tagging(
+    tmp_path: Path, context: RunContext
+) -> None:
+    """The direct current API has no metadata side effects in dry-run mode."""
+    context.config.dry_run = True
+    book = source_book(tmp_path)
+    row = process_book(book, context)
+    assert row.status == StageStatus.SKIPPED.value
+    assert row.error_category is None
+    assert queries.get_book(context.conn, book_hash(book)) is None
+    assert not context.config.paths.work_dir.exists()
+
+
+def test_organize_is_placement_only_after_the_rewrite() -> None:
+    """Legacy organize no longer re-fetches metadata or rewrites tags."""
+    assert stages_for(PipelineMode.ORGANIZE, PipelineLevel.NORMAL) == (Stage.ORGANIZE,)

@@ -1,0 +1,26 @@
+{
+  "level": "normal",
+  "paths": {
+    "data_dir": "~/audiobook-pipeline",
+    "work_dir": "~/audiobook-pipeline/work",
+    "log_dir": "~/audiobook-pipeline/logs",
+    "archive_dir": "~/audiobook-pipeline/archive",
+    "library_dir": "/media/audiobooks",
+    "incoming_dir": "/media/incoming",
+    "failed_dir": "~/audiobook-pipeline/failed"
+  },
+  "automation": {
+    "stability_threshold": 120,
+    "poll_interval_seconds": 30,
+    "watch_mode": "convert",
+    "max_retries": 3,
+    "archive_retention_days": 90
+  },
+  "logging": {
+    "level": "INFO",
+    "file_sink": true,
+    "json_sink": true,
+    "rotation": "10 MB",
+    "retention": "30 days"
+  }
+}

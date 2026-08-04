@@ -1,394 +1,177 @@
-# Audiobook Pipeline Installation and Setup Guide
-
-Agent-readable setup guide for the audiobook conversion pipeline.
+# Installation and first conversion
 
 ## Prerequisites
 
-Install required dependencies:
+Install `ffmpeg` with your operating system package manager and install `uv`.
+The project requires Python 3.13; use the interpreter managed by `uv`, not a
+system Python installation.
 
 ```bash
-# macOS (via Homebrew)
-brew install ffmpeg python@3.11
+# macOS
+brew install ffmpeg uv
 
-# Install uv (Python package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Verify installations
+# Verify the tools used by the application.
 ffmpeg -version
-python3 --version  # Must be 3.11+
 uv --version
 ```
 
-**Required tools:**
-- `ffmpeg` - Audio processing and M4B encoding
-- `Python 3.11+` - Runtime environment
-- `uv` - Python package manager (replaces pip/poetry)
-
-## Configure Environment Variables
-
-Create a `.env` file in the project root:
+From a checkout, the setup helper installs Python 3.13 through `uv`, syncs the
+locked project dependencies, and prints the current command help:
 
 ```bash
-# Copy template if available, or create from scratch
-cp .env.example .env  # if it exists
+./scripts/run setup
 ```
 
-### Core Settings
+The same helper is available directly as `./scripts/setup/setup.sh`.
+
+## Configuration layers
+
+`load_settings` applies configuration in this order, where earlier entries win:
+
+1. Explicit application construction values (used by tests).
+2. Environment variables with the `AUDIOBOOK_` prefix and `__` nesting.
+3. Gitignored `secrets/config.json`.
+4. `config/config.PROFILE.json` selected by `--profile`.
+5. Committed `config/config.json`.
+6. Built-in defaults.
+
+The committed default keeps all paths under `data/`. The repository provides
+one committed profile, `sandbox`, which points at scratch paths:
 
 ```bash
-# Intelligence level: simple, normal, ai, full
-PIPELINE_LEVEL=full
-
-# Source library (where unconverted audiobooks live)
-SOURCE_LIBRARY=/Volumes/media_files/AudioBooks
-
-# Destination library (where converted M4B files go)
-DEST_LIBRARY=/Volumes/ThunderBolt/AudioBooks
-
-# Temp directory for processing (MUST have space for large audio files)
-# NEVER use /tmp -- audio files are huge
-TEMP_DIR=/Volumes/ThunderBolt/AudioBookStuff/test-scratch
+uv run audiobook-convert --profile sandbox --dry-run /path/to/one-book
 ```
 
-### NFS Mount Detection
-
-The pipeline auto-detects NFS mounts to avoid permission issues:
+Create your own profile by copying it and editing the paths:
 
 ```bash
-# Optional: Override auto-detection
-DETECT_NFS=true  # default: true
-
-# If source/dest are on NFS mounts, pipeline adjusts file operations
-# to work around permission quirks (chmod, chown, etc.)
+cp config/config.sandbox.json config/config.mylibrary.json
+uv run audiobook-convert --profile mylibrary --dry-run /path/to/one-book
 ```
 
-### Library Structure
+A `--profile` naming a file that does not exist is not an error. The command
+runs with the committed defaults instead, so confirm the paths in a `--dry-run`
+rather than assuming the profile took effect.
 
-The pipeline organizes audiobooks as:
-
-```
-Author/
-  Book Title (Year)/
-    Book Title.m4b
-```
-
-For series:
-
-```
-Author/
-  Series Name/
-    Book 1 - Title (Year)/
-      Book 1 - Title.m4b
-    Book 2 - Title (Year)/
-      Book 2 - Title.m4b
-```
-
-## LLM Setup (Optional)
-
-Required for `ai` and `full` intelligence levels. Skip if using `simple` or `normal`.
-
-### Option 1: LiteLLM Proxy (Recommended)
-
-Configure connection to a LiteLLM proxy server:
+For an uncommitted local override, export a nested environment variable for the
+one command. For example:
 
 ```bash
-# LiteLLM proxy endpoint
-PIPELINE_LLM_BASE_URL=http://10.71.20.53:4000
-
-# API key for proxy authentication
-PIPELINE_LLM_API_KEY=your-proxy-key
-
-# Model to use (check proxy config for available models)
-PIPELINE_LLM_MODEL=haiku  # or claude-haiku-4-5
+AUDIOBOOK_PATHS__LIBRARY_DIR=/media/audiobooks \
+  uv run audiobook-convert --dry-run /path/to/one-book
 ```
 
-**Why PIPELINE_LLM_* instead of OPENAI_*?**
+Keep credentials out of committed JSON. The optional `secrets/config.json` is
+the local JSON layer for credentials; shell environment values have higher
+precedence.
 
-The pipeline uses custom env var names to avoid collisions with global OpenAI keys. This lets you run the pipeline with a LiteLLM proxy while keeping your personal OpenAI key separate.
+## First conversion
 
-### Option 2: Direct API Key
-
-Use an OpenAI-compatible API directly:
+Start with one representative source directory. `audiobook-convert` accepts a
+directory, not an individual audio file.
 
 ```bash
-PIPELINE_LLM_BASE_URL=https://api.anthropic.com/v1
-PIPELINE_LLM_API_KEY=sk-ant-your-key-here
-PIPELINE_LLM_MODEL=claude-3-5-haiku-20241022
+uv run audiobook-convert --dry-run /path/to/one-book
 ```
 
-### LLM Features by Level
-
-| Level | Uses LLM For |
-|-------|-------------|
-| `simple` | Nothing (no LLM required) |
-| `normal` | Nothing (no LLM required) |
-| `ai` | Genre classification, series detection |
-| `full` | AI + metadata enrichment + author disambiguation |
-
-## First Run
-
-Test the pipeline on a single audiobook:
+Dry run reports discovery only. It does not convert, write a pipeline database,
+or acquire the global batch admission lease. If discovery looks right, perform
+the conversion:
 
 ```bash
-# Dry-run mode (no changes, just shows what would happen)
-uv run audiobook-convert --dry-run /Volumes/media_files/AudioBooks/SomeBook
-
-# Check the output for:
-# - Detected metadata (title, author, series)
-# - Planned output path
-# - Any warnings or errors
-
-# If dry-run looks good, run for real:
-uv run audiobook-convert /Volumes/media_files/AudioBooks/SomeBook
+uv run audiobook-convert /path/to/one-book
 ```
 
-### Test Book Selection
-
-Pick a book that:
-- Has clear metadata (title, author in folder/file name)
-- Is not too large (< 500MB for first test)
-- Has a known ASIN (if using `full` level)
-
-## Common Workflows
-
-### Single Book Conversion
-
-Convert one audiobook from source to destination:
+For a larger source, keep the first non-dry run bounded:
 
 ```bash
-uv run audiobook-convert /path/to/book/
-
-# Override intelligence level for this run
-uv run audiobook-convert --level ai /path/to/book/
-
-# Force ASIN lookup (if auto-detection fails)
-uv run audiobook-convert --asin B08F5ZQXYZ /path/to/book/
+uv run audiobook-convert --limit 1 /path/to/incoming
 ```
 
-### Batch Conversion
+### What the conversion does to your files
 
-Process multiple books at once:
+A successful conversion writes the M4B into `paths.library_dir` and then
+**moves** the original source directory into `paths.archive_dir`, so a
+subsequent run does not reprocess it. The source is relocated, not deleted.
+
+Both default under `data/`. Set `paths.archive_dir` deliberately before
+converting a source tree you need to stay where it is. `AUDIOBOOK_LEVEL=simple`
+skips archiving, but it also skips organization, leaving the M4B in the work
+directory instead of the library.
+
+## Conversion modes and levels
+
+Choose an operation with `--mode`:
 
 ```bash
-# Convert all books in a directory
-uv run audiobook-convert /Volumes/media_files/AudioBooks/
-
-# Dry-run batch to preview changes
-uv run audiobook-convert --dry-run /Volumes/media_files/AudioBooks/
+uv run audiobook-convert --mode convert /path/to/books
+uv run audiobook-convert --mode enrich /path/to/books
+uv run audiobook-convert --mode metadata /path/to/books
+uv run audiobook-convert --mode organize /path/to/books
 ```
 
-### Reorganize Existing Library
+`convert` runs the full conversion sequence. `enrich` begins with identity and
+metadata work, `metadata` applies identity and metadata work without
+organization, and `organize` runs organization only.
 
-Move and rename books to match the standard structure:
+Set `AUDIOBOOK_LEVEL` separately from the mode. `simple` omits organization and
+archive stages; `normal` is the default; `ai` and `full` enable the configured
+AI candidate resolver. See [ai.md](ai.md) for the required AI configuration.
+
+## Audit and library diff
+
+`audiobook-audit` is read-only. Pass a library directory to inspect it, or omit
+the path to see the configured library and pipeline database summary:
 
 ```bash
-# Reorganize mode: no conversion, just move/rename
-uv run audiobook-convert --reorganize /Volumes/ThunderBolt/AudioBooks/
-
-# This implies --mode organize --ai-all
-# and forces level to ai minimum (overrides PIPELINE_LEVEL)
+uv run audiobook-audit /path/to/library
+uv run audiobook-audit /path/to/library --check tags --check duplicates
+uv run audiobook-audit /path/to/library --json-output
+uv run audiobook-audit --status failed --failures
 ```
 
-Use this when:
-- Library structure changed
-- Books were manually added without pipeline
-- Fixing metadata for existing M4B files
+An audit exits `1` when critical findings exist and `0` for warnings or
+informational findings alone. The command audits a finished library layout;
+running all checks against a `simple`-level source directory will intentionally
+report its retained source audio and non-library placement.
 
-### Multi-Author Franchises
-
-Handle shared universes like Dragonlance or Forgotten Realms:
+To list books present in a source tree but missing from a finished library,
+compare them directly:
 
 ```bash
-# Create author override marker
-touch "/Volumes/ThunderBolt/AudioBooks/Dragonlance/.author-override"
-
-# All books under this folder will use "Dragonlance" as author
-# regardless of individual book authors (Weis & Hickman, etc.)
+uv run audiobook-audit /path/to/source --diff /path/to/library
 ```
 
-Without `.author-override`:
-```
-Margaret Weis/
-  Dragonlance - Chronicles 1 - Dragons of Autumn Twilight.m4b
-Tracy Hickman/
-  Dragonlance - Chronicles 1 - Dragons of Autumn Twilight.m4b  # duplicate!
-```
+The diff exits `1` while any source book is missing from the target and `0`
+when every source book matches.
 
-With `.author-override`:
-```
-Dragonlance/
-  Chronicles 1 - Dragons of Autumn Twilight.m4b
-  Chronicles 2 - Dragons of Winter Night.m4b
-  Legends 1 - Time of the Twins.m4b
-```
+## Watch folder
 
-## Troubleshooting
+`audiobook-watch` polls `paths.incoming_dir`. It waits until a candidate is
+stable, records durable claims in `paths.work_dir/watch.db`, retries according
+to `automation.max_retries`, and moves permanently failed candidates to
+`paths.failed_dir`.
 
-### ASIN Misidentification
-
-**Problem:** Pipeline pulls wrong metadata from Audible.
-
-**Solution:** Manually specify ASIN:
+Set those values through JSON or `AUDIOBOOK_PATHS__...` and
+`AUDIOBOOK_AUTOMATION__...` environment variables, then start the watcher:
 
 ```bash
-# Find correct ASIN from Audible URL
-# https://www.audible.com/pd/B08F5ZQXYZ
-uv run audiobook-convert --asin B08F5ZQXYZ /path/to/book/
+uv run audiobook-watch --profile sandbox
 ```
 
-### Cover Art Codec Issues
+Use `Ctrl-C` to stop the watcher cleanly. Watch processing uses the configured
+`automation.watch_mode`, which defaults to `convert`.
 
-**Problem:** Plex doesn't display cover art.
+## Author override marker
 
-**Solution:** Pipeline auto-strips mjpeg covers and re-encodes as PNG. If issues persist:
+Create an empty marker in a franchise directory when every organized book in
+that subtree should share the franchise author folder:
 
 ```bash
-# Check cover codec
-ffprobe book.m4b 2>&1 | grep -i "video.*mjpeg"
-
-# Manual fix (if pipeline didn't catch it)
-ffmpeg -i book.m4b -c copy -disposition:v:0 attached_pic \
-  -map 0 -map -0:v -vf "select=eq(n\,0)" -vsync vfr cover.png
-ffmpeg -i book.m4b -i cover.png -c copy -map 0 -map 1 \
-  -disposition:v:0 attached_pic fixed.m4b
+touch /path/to/source/Dragonlance/.author-override
+uv run audiobook-convert /path/to/source/Dragonlance
 ```
 
-### Chaptered M4B Detection
-
-**Problem:** Source directory has multiple `.m4b` files that are really chapters.
-
-**Detection:** Pipeline sees multiple `.m4b` files and assumes they need concatenation.
-
-**Solution:** Pipeline auto-detects and runs concat+encode workflow. If it fails:
-
-```bash
-# Check for multiple m4b files
-ls /path/to/book/*.m4b
-
-# Manual concat (if needed)
-ffmpeg -f concat -safe 0 -i <(printf "file '%s'\n" *.m4b) \
-  -c copy output.m4b
-```
-
-### NFS Permission Errors
-
-**Problem:** `chmod` or `chown` fails on NFS mounts.
-
-**Symptoms:**
-```
-PermissionError: [Errno 1] Operation not permitted: 'book.m4b'
-```
-
-**Solution:** Pipeline should auto-detect NFS mounts. If it doesn't:
-
-```bash
-# Check mount type
-mount | grep /Volumes/media_files
-# Look for "nfs" in output
-
-# Force NFS detection in .env
-DETECT_NFS=true
-
-# Or move library to local storage
-DEST_LIBRARY=/Volumes/ThunderBolt/AudioBooks  # local SSD
-```
-
-### Metadata Parsing Failures
-
-**Problem:** Pipeline can't extract title/author from filename.
-
-**Patterns supported:**
-- `Author - Title`
-- `Author - Series N - Title`
-- `Title (Author)`
-- `Author/Series/Title/`
-- Bracketed positions: `[01]`, `[1]`, `[001]`
-
-**Solution:** Rename source files to match a supported pattern before running pipeline.
-
-### Temp Directory Full
-
-**Problem:** Large audiobook fills temp directory during processing.
-
-**Solution:** Always use external volume for temp, never `/tmp`:
-
-```bash
-# In .env
-TEMP_DIR=/Volumes/ThunderBolt/AudioBookStuff/test-scratch
-
-# Verify free space before large batch
-df -h /Volumes/ThunderBolt
-```
-
-## Intelligence Level Reference
-
-| Level | Metadata Source | Series Detection | Genre | AI Enrichment |
-|-------|----------------|------------------|-------|---------------|
-| `simple` | Filename only | Regex patterns | "Audiobook" | None |
-| `normal` | Filename + FFprobe | Regex patterns | "Audiobook" | None |
-| `ai` | Filename + FFprobe | AI analysis | AI classification | None |
-| `full` | Audible API (ASIN) | Audible metadata | Audible categories | Full AI analysis |
-
-**Override per-run:**
-
-```bash
-uv run audiobook-convert --level full /path/to/book/
-# Overrides PIPELINE_LEVEL from .env for this run only
-```
-
-**When to use each level:**
-
-- `simple` - Fast batch processing, known-good filenames, no LLM access
-- `normal` - Default for most books, uses FFprobe metadata, no LLM needed
-- `ai` - Better series detection and genre classification, requires LLM
-- `full` - Maximum metadata quality, requires Audible access + LLM
-
-## Library Audit
-
-Check library health -- metadata tags, duplicates, structure, leftover sources, stale Plex entries:
-
-```bash
-# Full audit
-uv run audiobook-audit /path/to/library/
-
-# Specific checks only
-uv run audiobook-audit /path/to/library/ --check tags --check duplicates
-
-# Auto-fix safe issues (delete leftover sources, touch stale files)
-uv run audiobook-audit /path/to/library/ --fix
-uv run audiobook-audit /path/to/library/ --dry-run  # preview first
-
-# JSON output
-uv run audiobook-audit /path/to/library/ --json-output
-```
-
-### Compare Two Libraries (--diff)
-
-Find books in a source library that are missing from a target library:
-
-```bash
-uv run audiobook-audit /path/to/source --diff /path/to/target
-```
-
-Handles: multi-part M4B collapsing (Part N files and chapter-per-file), author name normalization (initials, &/and), franchise folder awareness (Dragonlance, Forgotten Realms), fuzzy title matching (85% threshold), ASIN/noise stripping, and source deduplication.
-
-Report saved to `.reports/library-diff.md`.
-
-## Next Steps
-
-After setup:
-
-1. Run dry-run on a test book
-2. Verify output path and metadata
-3. Run real conversion
-4. Check M4B in Plex
-5. Batch convert remaining library
-
-For ongoing use:
-
-- Add new books to SOURCE_LIBRARY
-- Run pipeline on new arrivals
-- Use `--reorganize` after manual library changes
-- Use `audiobook-audit` to check library health
-- Use `audiobook-audit --diff` to compare libraries
-- Check logs for errors: `~/.audiobook-pipeline/logs/`
+The marker directory name (`Dragonlance`) overrides the catalogue author for
+library placement. The search cannot climb above the source directory passed
+to the command, and embedded author tags remain unchanged.

@@ -1,0 +1,22 @@
+{
+  "level": "normal",
+  "paths": {
+    "data_dir": "~/audiobook-pipeline",
+    "work_dir": "~/audiobook-pipeline/work",
+    "log_dir": "~/audiobook-pipeline/logs",
+    "archive_dir": "~/audiobook-pipeline/archive",
+    "library_dir": "/media/audiobookshelf/audiobooks"
+  },
+  "encoding": {
+    "max_bitrate": 128,
+    "channels": 2
+  },
+  "permissions": {
+    "file_mode": "644",
+    "dir_mode": "755"
+  },
+  "logging": {
+    "level": "INFO",
+    "file_sink": true
+  }
+}
