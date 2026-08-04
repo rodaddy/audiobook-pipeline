@@ -1,204 +1,282 @@
 #!/opt/homebrew/bin/bash
-# verify.sh -- prove the installed hooks actually REJECT what they claim to.
+# verify.sh -- prove that the current commit gates reject representative defects.
 #
-# Installed is not the same as working. A hook can be present, executable, and
-# never fire: wrong hooksPath, a tool that exits 0 when absent, a check pointed
-# at a directory that does not exist. The only evidence that a gate works is
-# watching it refuse a deliberate violation.
-#
-# Every probe below stages a real violation in a scratch worktree, attempts a
-# real commit, and asserts the commit was REFUSED. Nothing here touches your
-# working tree or your branch.
+# All probes run in a detached worktree below the configured ThunderBolt temp
+# root. The live checkout supplies only the committed snapshot and its virtual
+# environment; no probe file, index update, or hook configuration is written
+# there.
 
 set -uo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-scratch="/Volumes/ThunderBolt/_tmp/audiobook-pipeline/_scratch/hook-verify.$$"
+temp_root="/Volumes/ThunderBolt/_tmp/audiobook-pipeline"
+run_id="hook-verify-$(date +%Y%m%d-%H%M%S)-$$"
+worktree_root="$temp_root/_worktrees"
+archive_root="$temp_root/_archive"
+artifact_root="$temp_root/_scratch/$run_id"
+archive_path="$archive_root/$run_id"
+scratch="$worktree_root/$run_id"
+hooks_dir="$artifact_root/hooks"
+global_hooks="$(git config --global --get core.hooksPath || true)"
 pass=0
 fail=0
+worktree_created=0
+finalized=0
 
-cleanup() {
-  cd "$repo_root" || true
-  git worktree remove --force "$scratch" 2>/dev/null || true
-  git worktree prune 2>/dev/null || true
+report() {
+  printf '%s\n' "$*"
+  printf '%s\n' "$*" >> "$artifact_root/proof.log"
 }
-trap cleanup EXIT
 
-printf '\n[verify] creating scratch worktree\n'
-mkdir -p "$(dirname "$scratch")"
-if ! git worktree add --detach "$scratch" HEAD >/dev/null 2>&1; then
-  printf '[verify] FAILED to create worktree at %s\n' "$scratch"
-  exit 1
-fi
+git_scratch() {
+  git -c core.hooksPath="$hooks_dir" -C "$scratch" "$@"
+}
 
-hooks_path="$(git -C "$repo_root" config core.hooksPath || true)"
-if [[ -z "$hooks_path" ]]; then
-  printf '[verify] core.hooksPath is UNSET -- run ./_githooks/install.sh first\n'
-  exit 1
-fi
-git -C "$scratch" config core.hooksPath "$hooks_path"
+archive_failed_probe() {
+  local name="$1"
+  local path="$2"
 
-# The scratch worktree has no .venv and no gitignored files, so `uv run
-# --no-sync ruff` would die there with "Failed to spawn: ruff" and every probe
-# would "block" for the wrong reason -- including the clean one. Link the real
-# environment and the size checker in so the probes exercise the actual gates.
-ln -sfn "$repo_root/.venv" "$scratch/.venv"
-mkdir -p "$scratch/_githooks"
-cp "$repo_root/_githooks/check_code_size.py" "$scratch/_githooks/"
-
-# probe <name> <relative-path> <file-content>
-# Asserts: committing this content is refused.
-probe() {
-  local name="$1" path="$2" content="$3"
-  printf '%s' "$content" > "$scratch/$path"
-  git -C "$scratch" add "$path" >/dev/null 2>&1
-
-  if git -C "$scratch" commit -q -m "test: probe $name" >/dev/null 2>&1; then
-    printf '  NOT BLOCKED  %s\n' "$name"
-    fail=$((fail + 1))
-    git -C "$scratch" reset --hard HEAD~1 >/dev/null 2>&1
-  else
-    printf '  blocked      %s\n' "$name"
-    pass=$((pass + 1))
-    git -C "$scratch" reset --hard HEAD >/dev/null 2>&1
+  git_scratch restore --staged -- "$path"
+  if [[ -e "$scratch/$path" || -L "$scratch/$path" ]]; then
+    mkdir -p "$artifact_root/failed-probes"
+    mv "$scratch/$path" "$artifact_root/failed-probes/$name.py"
   fi
-  rm -f "$scratch/$path"
 }
 
-printf '\n[verify] probing pre-commit gates\n'
+reject_probe() {
+  local name="$1"
+  local path="$2"
+  local marker="$3"
+  local output
 
-probe "ruff check (unused import)" "probe_lint.py" \
-'"""Probe module."""
+  git_scratch add "$path"
+  if output="$(git_scratch commit -m "test: hook proof $name" 2>&1)"; then
+    report "  NOT BLOCKED  $name"
+    report "$output"
+    fail=$((fail + 1))
+    return
+  fi
 
-import os
-'
+  if [[ "$output" == *"$marker"* ]]; then
+    report "  blocked      $name"
+    pass=$((pass + 1))
+  else
+    report "  WRONG BLOCK  $name (expected: $marker)"
+    report "$output"
+    fail=$((fail + 1))
+  fi
+  archive_failed_probe "$name" "$path"
+}
 
-# NOT a `probe` (which asserts refusal): badly-formatted code is AUTO-FIXED,
-# not rejected. Rico's global pre-commit runs `ruff format` on staged files and
-# re-stages them before this repo's hook sees anything, so the commit succeeds
-# and what LANDS is formatted. Asserting refusal here would be asserting the
-# wrong guarantee -- the guarantee is that unformatted code never lands.
-printf '%s' '"""Probe module."""
-x = {   "a":1,
-     "b":2 }
-' > "$scratch/probe_fmt.py"
-git -C "$scratch" add probe_fmt.py >/dev/null 2>&1
-git -C "$scratch" commit -q -m "test: probe formatting" >/dev/null 2>&1
-if git -C "$scratch" show HEAD:probe_fmt.py 2>/dev/null | grep -q '{"a": 1, "b": 2}'; then
-  printf '  auto-fixed   ruff format (unformatted code cannot land)\n'
-  pass=$((pass + 1))
-  git -C "$scratch" reset --hard HEAD~1 >/dev/null 2>&1
-else
-  printf '  NOT HANDLED  ruff format (unformatted code landed as written)\n'
-  fail=$((fail + 1))
-  git -C "$scratch" reset --hard HEAD >/dev/null 2>&1
+write_hook_wrappers() {
+  mkdir -p "$hooks_dir"
+  if [[ -n "$global_hooks" && -x "$global_hooks/pre-commit" ]]; then
+    {
+      printf '%s\n' '#!/opt/homebrew/bin/bash' 'set -uo pipefail'
+      printf 'global_hook=%q\n' "$global_hooks/pre-commit"
+      printf 'repo_hook=%q\n' "$scratch/_githooks/pre-commit"
+      # shellcheck disable=SC2016
+      printf '%s\n' '"$global_hook" "$@" || exit $?' '"$repo_hook" "$@"'
+    } > "$hooks_dir/pre-commit"
+  else
+    {
+      printf '%s\n' '#!/opt/homebrew/bin/bash' 'set -uo pipefail'
+      printf 'repo_hook=%q\n' "$scratch/_githooks/pre-commit"
+      # shellcheck disable=SC2016
+      printf '%s\n' '"$repo_hook" "$@"'
+    } > "$hooks_dir/pre-commit"
+  fi
+  {
+    printf '%s\n' '#!/opt/homebrew/bin/bash' 'set -uo pipefail'
+    printf 'repo_hook=%q\n' "$scratch/_githooks/commit-msg"
+    # shellcheck disable=SC2016
+    printf '%s\n' '"$repo_hook" "$@"'
+  } > "$hooks_dir/commit-msg"
+  chmod +x "$hooks_dir/pre-commit" "$hooks_dir/commit-msg"
+}
+
+format_probe() {
+  local path="probe_format.py"
+  local original='"""Formatting proof module."""
+VALUE = {   "a":1,
+     "b":2 }'
+  local output
+  local landed
+
+  printf '%s' "$original" > "$scratch/$path"
+  git_scratch add "$path"
+  if output="$(git_scratch commit -m "test: hook proof format" 2>&1)"; then
+    landed="$(git -C "$scratch" show "HEAD:$path")"
+    if [[ "$landed" != "$original" ]] && "$scratch/.venv/bin/ruff" format --check "$scratch/$path"; then
+      report "  reformatted  formatting cannot land unformatted"
+      pass=$((pass + 1))
+    else
+      report "  NOT HANDLED  formatting landed unchanged or invalid"
+      report "$output"
+      fail=$((fail + 1))
+    fi
+    return
+  fi
+
+  if [[ "$output" == *"ruff format"* ]]; then
+    report "  blocked      formatting cannot land unformatted"
+    pass=$((pass + 1))
+  else
+    report "  WRONG BLOCK  formatting"
+    report "$output"
+    fail=$((fail + 1))
+  fi
+  archive_failed_probe "format" "$path"
+}
+
+clean_commit_probe() {
+  local path="src/audiobook_pipeline/probe_clean.py"
+  local output
+
+  printf '%s\n' '"""A clean hook proof module."""' '' 'VALUE: int = 1' > "$scratch/$path"
+  git_scratch add "$path"
+  if output="$(git_scratch commit -m "test: clean hook proof" 2>&1)"; then
+    report "  accepted     clean commit"
+    pass=$((pass + 1))
+  else
+    report "  FALSE POSITIVE: clean commit was refused"
+    report "$output"
+    fail=$((fail + 1))
+    archive_failed_probe "clean" "$path"
+  fi
+}
+
+finalize() {
+  local result="$1"
+  local scratch_status
+
+  [[ $finalized -eq 0 ]] || return "$result"
+  finalized=1
+  if [[ $worktree_created -eq 1 ]]; then
+    if [[ -d "$scratch/.venv" ]] \
+      && [[ -L "$scratch/.venv/bin/python" ]] \
+      && [[ -L "$scratch/.venv/bin/ruff" ]] \
+      && [[ -L "$scratch/.venv/bin/mypy" ]]; then
+      mv "$scratch/.venv" "$artifact_root/tool-links"
+    elif [[ -e "$scratch/.venv" || -L "$scratch/.venv" ]]; then
+      report "[verify] BLOCKED: scratch virtual environment is not the proof tool-link set"
+      result=1
+    fi
+    scratch_status="$(git -C "$scratch" status --porcelain)"
+    if [[ -z "$scratch_status" ]]; then
+      report "[verify] scratch status clean"
+      if git -C "$repo_root" worktree remove "$scratch"; then
+        report "[verify] scratch worktree removed"
+        git -C "$repo_root" worktree prune
+      else
+        report "[verify] BLOCKED: ordinary worktree removal failed"
+        result=1
+      fi
+    else
+      report "[verify] BLOCKED: scratch worktree is not clean"
+      report "$scratch_status"
+      result=1
+    fi
+  fi
+  if [[ -d "$artifact_root" ]]; then
+    mv "$artifact_root" "$archive_path"
+    printf '[verify] artifacts archived at %s\n' "$archive_path"
+  fi
+  return "$result"
+}
+
+on_exit() {
+  local result=$?
+
+  trap - EXIT
+  finalize "$result"
+  exit $?
+}
+
+trap on_exit EXIT
+
+mkdir -p "$worktree_root" "$archive_root" "$artifact_root"
+report "[verify] creating detached scratch worktree"
+if ! git -C "$repo_root" worktree add --detach "$scratch" HEAD; then
+  report "[verify] FAILED to create scratch worktree at $scratch"
+  exit 1
 fi
-rm -f "$scratch/probe_fmt.py"
+worktree_created=1
 
-# Caught by SIM102 (collapsible-if), which stays at full strength in the hook.
-# PLR1702 itself is baselined and enforced by the ratchet, so do not read this
-# line as evidence that PLR1702 fires here -- it does not.
-probe "nested conditionals (SIM102)" "probe_nest.py" \
-'"""Probe module."""
+if [[ ! -d "$repo_root/.venv" ]]; then
+  report "[verify] BLOCKED: live repository virtual environment is missing"
+  exit 1
+fi
+if [[ -e "$scratch/.venv" || -L "$scratch/.venv" ]]; then
+  report "[verify] BLOCKED: scratch worktree already contains .venv"
+  exit 1
+fi
+mkdir -p "$scratch/.venv/bin"
+for tool in python ruff mypy; do
+  if [[ ! -x "$repo_root/.venv/bin/$tool" ]]; then
+    report "[verify] BLOCKED: live repository tool is missing: $tool"
+    exit 1
+  fi
+  ln -s "$repo_root/.venv/bin/$tool" "$scratch/.venv/bin/$tool"
+done
+write_hook_wrappers
 
+report "[verify] probing rejection gates"
+printf '%s\n' '"""Unused import proof module."""' '' 'import os' > "$scratch/src/audiobook_pipeline/probe_unused.py"
+reject_probe "unused import" "src/audiobook_pipeline/probe_unused.py" "unused-import"
 
-def f(a, b, c, d):
-    """Deliberately pyramided."""
-    if a:
-        if b:
-            if c:
-                if d:
-                    return 1
-    return 0
-'
+format_probe
 
-# 60 single-token code lines in one function: over the 50 ceiling, but flat,
-# so complexity and branch-count rules do NOT catch it. Only the size checker.
-#
-# ADVISORY in the hook, not blocking -- 25 files are already over the ceiling
-# and blocking here would refuse every edit to them. So this asserts the hook
-# WARNS and still commits; CI's ratchet is what refuses a NEW breach. The
-# ratchet is proven separately by its own probe below.
+printf '%s\n' \
+  '"""Nested conditional proof module."""' \
+  '' \
+  'def nested(first: bool, second: bool, third: bool, fourth: bool) -> int:' \
+  '    """Return one only through a deliberately nested path."""' \
+  '    if first:' \
+  '        if second:' \
+  '            if third:' \
+  '                if fourth:' \
+  '                    return 1' \
+  '    return 0' > "$scratch/src/audiobook_pipeline/probe_nested.py"
+reject_probe "nested conditional" "src/audiobook_pipeline/probe_nested.py" "collapsible-if"
+
 {
-  printf '"""Probe module."""\n\n\ndef f():\n    """Long but flat."""\n    x = 0\n'
-  for i in $(seq 1 60); do printf '    x += %d\n' "$i"; done
-  printf '    return x\n'
-} > "$scratch/probe_size.py"
-git -C "$scratch" add probe_size.py >/dev/null 2>&1
-size_output="$(git -C "$scratch" commit -m "test: probe size" 2>&1)"
-if printf '%s' "$size_output" | grep -q 'ceiling 50'; then
-  printf '  warned       code size (50 lines/function, advisory in hook)\n'
+  printf '%s\n' '"""Function-size proof module."""' ''
+  printf '%s\n' 'def overlong() -> int:' '    """Exceed the fifty-code-line ceiling."""' '    value = 0'
+  for number in $(seq 1 51); do
+    printf '    value += %s\n' "$number"
+  done
+  printf '%s\n' '    return value'
+} > "$scratch/src/audiobook_pipeline/probe_size.py"
+reject_probe "function over fifty code lines" "src/audiobook_pipeline/probe_size.py" "SIZE src/audiobook_pipeline/probe_size.py: overlong()"
+
+printf '%s\n' \
+  '"""Mypy proof module."""' \
+  '' \
+  'def wrong_return() -> int:' \
+  '    """Return an intentionally incompatible value."""' \
+  '    return "not an int"' > "$scratch/src/audiobook_pipeline/probe_types.py"
+reject_probe "mypy bad return" "src/audiobook_pipeline/probe_types.py" "return-value"
+
+printf '%s\n' '"""Commit subject proof module."""' '' 'VALUE = 1' > "$scratch/probe_message.py"
+git_scratch add probe_message.py
+if commit_message_output="$(git_scratch commit -m "not a conventional commit message" 2>&1)"; then
+  report "  NOT BLOCKED  commit message"
+  report "$commit_message_output"
+  fail=$((fail + 1))
+elif [[ "$commit_message_output" == *"[commit-msg] BLOCKED"* ]]; then
+  report "  blocked      commit message"
   pass=$((pass + 1))
 else
-  printf '  NOT REPORTED code size (the size gate never ran)\n'
+  report "  WRONG BLOCK  commit message"
+  report "$commit_message_output"
   fail=$((fail + 1))
 fi
-git -C "$scratch" reset --hard HEAD >/dev/null 2>&1
-rm -f "$scratch/probe_size.py"
+archive_failed_probe "commit-message" "probe_message.py"
 
-# The ratchet is the gate that actually REFUSES a new size/shape violation.
-# Proven here because "advisory in the hook" is only acceptable if something
-# else is strict.
-# mypy runs against the WORKING TREE (it needs the installed package), so this
-# probe writes into the real repo and removes it again rather than committing
-# from the scratch worktree.
-printf '\n[verify] probing the mypy gate\n'
-cat > "$repo_root/src/audiobook_pipeline/_verify_types.py" <<'PROBE'
-"""Type probe."""
+clean_commit_probe
 
-
-def f() -> int:
-    """Declared int, returns str."""
-    return "not an int"
-PROBE
-if (cd "$repo_root" && uv run --no-sync mypy) >/dev/null 2>&1; then
-  printf '  NOT BLOCKED  mypy (a wrong return type passed)\n'
-  fail=$((fail + 1))
-else
-  printf '  blocked      mypy (wrong return type refused)\n'
-  pass=$((pass + 1))
+report "[verify] $pass passed, $fail failed"
+if [[ $fail -ne 0 ]]; then
+  exit 1
 fi
-rm -f "$repo_root/src/audiobook_pipeline/_verify_types.py"
-
-printf '\n[verify] probing the CI ratchet\n'
-{
-  printf '"""Ratchet probe."""\n\n\ndef f(a, b, c, d):\n    """Pyramid."""\n'
-  printf '    if a:\n        if b:\n            if c:\n                if d:\n'
-  printf '                    return 1\n    return 0\n'
-} > "$repo_root/src/audiobook_pipeline/_verify_probe.py"
-if (cd "$repo_root" && uv run --no-sync python _githooks/check_baseline.py) \
-     >/dev/null 2>&1; then
-  printf '  NOT BLOCKED  ratchet (a new violation was tolerated)\n'
-  fail=$((fail + 1))
-else
-  printf '  blocked      ratchet (new complexity violation refused)\n'
-  pass=$((pass + 1))
-fi
-rm -f "$repo_root/src/audiobook_pipeline/_verify_probe.py"
-
-printf '\n[verify] probing commit-msg gate\n'
-printf '"""Probe."""\n' > "$scratch/probe_msg.py"
-git -C "$scratch" add probe_msg.py >/dev/null 2>&1
-if git -C "$scratch" commit -q -m "added a thing that is not conventional" >/dev/null 2>&1; then
-  printf '  NOT BLOCKED  commit-msg (non-conventional subject)\n'
-  fail=$((fail + 1))
-else
-  printf '  blocked      commit-msg (non-conventional subject)\n'
-  pass=$((pass + 1))
-fi
-git -C "$scratch" reset --hard HEAD >/dev/null 2>&1
-
-printf '\n[verify] probing that a CLEAN commit still succeeds\n'
-printf '"""A clean probe module."""\n\nVALUE = 1\n' > "$scratch/probe_clean.py"
-git -C "$scratch" add probe_clean.py >/dev/null 2>&1
-if git -C "$scratch" commit -q -m "test: clean probe commit" >/dev/null 2>&1; then
-  printf '  accepted     clean commit\n'
-  pass=$((pass + 1))
-else
-  printf '  FALSE POSITIVE: a clean commit was refused\n'
-  printf '  (a gate that blocks everything is as broken as one that blocks nothing)\n'
-  fail=$((fail + 1))
-fi
-
-printf '\n[verify] %d passed, %d failed\n\n' "$pass" "$fail"
-[[ $fail -eq 0 ]] || exit 1
