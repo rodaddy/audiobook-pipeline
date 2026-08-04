@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
 from audiobook_pipeline.config import Settings
 from audiobook_pipeline.models.ai import AiResolverOptions
@@ -35,9 +35,10 @@ def context() -> Iterator[RunContext]:
     conn.close()
 
 
-@dataclass(frozen=True)
-class AiSetup:
+class AiSetup(BaseModel):
     """Settings and optional caller-owned resolver for one identification."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid", frozen=True)
 
     level: PipelineLevel
     resolver: AiResolver | None = None
@@ -86,16 +87,17 @@ def resolver(selected: str | None, seen: list[dict[str, object]]) -> AiResolver:
     )
 
 
-@dataclass(frozen=True)
-class IdentifyInput:
+class IdentifyInput(BaseModel):
     """The remaining inputs to one AI-aware identification call."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid", frozen=True)
+
     setup: AiSetup
-    chapters: ChapterSet = field(
+    chapters: ChapterSet = Field(
         default_factory=lambda: ChapterSet(source=concat.SOURCE_EMBEDDED)
     )
-    payload: dict[str, object] = field(default_factory=dict)
-    claim: ParsedPath = field(
+    payload: dict[str, object] = Field(default_factory=dict)
+    claim: ParsedPath = Field(
         default_factory=lambda: ParsedPath(author="Path Author", title="The Book")
     )
 
@@ -138,13 +140,20 @@ def test_non_ai_levels_bypass_the_injected_resolver(
     monkeypatch.setattr(audible, "search", lambda *_: found)
     monkeypatch.setattr(selected, "resolve", lambda *_: pytest.fail("resolver called"))
 
-    assert identify(context, IdentifyInput(AiSetup(level, selected))) == found[0]
+    assert (
+        identify(
+            context,
+            IdentifyInput(setup=AiSetup(level=level, resolver=selected)),
+        )
+        == found[0]
+    )
     selected.close()
 
 
-@dataclass(frozen=True)
-class SelectionCase:
+class SelectionCase(BaseModel):
     """One provider outcome and the catalogue identity it must leave behind."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     level: PipelineLevel
     all_books: bool
@@ -156,10 +165,34 @@ class SelectionCase:
 @pytest.mark.parametrize(
     "case",
     [
-        SelectionCase(PipelineLevel.AI, False, "Path Author", "ASIN-2", 2),
-        SelectionCase(PipelineLevel.FULL, True, "Catalogue Author", "ASIN-1", 1),
-        SelectionCase(PipelineLevel.AI, False, "Path Author", "ASIN-5", 0),
-        SelectionCase(PipelineLevel.AI, False, "Path Author", None, 0),
+        SelectionCase(
+            level=PipelineLevel.AI,
+            all_books=False,
+            author="Path Author",
+            selected="ASIN-2",
+            expected=2,
+        ),
+        SelectionCase(
+            level=PipelineLevel.FULL,
+            all_books=True,
+            author="Catalogue Author",
+            selected="ASIN-1",
+            expected=1,
+        ),
+        SelectionCase(
+            level=PipelineLevel.AI,
+            all_books=False,
+            author="Path Author",
+            selected="ASIN-5",
+            expected=0,
+        ),
+        SelectionCase(
+            level=PipelineLevel.AI,
+            all_books=False,
+            author="Path Author",
+            selected=None,
+            expected=0,
+        ),
     ],
 )
 def test_ai_selection_is_bounded_and_falls_back_deterministically(
@@ -173,7 +206,11 @@ def test_ai_selection_is_bounded_and_falls_back_deterministically(
     metadata = identify(
         context,
         IdentifyInput(
-            AiSetup(case.level, selected, case.all_books),
+            setup=AiSetup(
+                level=case.level,
+                resolver=selected,
+                all_books=case.all_books,
+            ),
             claim=ParsedPath(author=case.author, title="The Book"),
         ),
     )
@@ -194,9 +231,9 @@ def test_ai_selected_edition_still_falls_back_when_runtime_mismatches(
     metadata = identify(
         context,
         IdentifyInput(
-            AiSetup(PipelineLevel.AI, selected),
-            ChapterSet(source="file-boundary"),
-            {"runtimeLengthMs": 3_600_000, "chapters": []},
+            setup=AiSetup(level=PipelineLevel.AI, resolver=selected),
+            chapters=ChapterSet(source="file-boundary"),
+            payload={"runtimeLengthMs": 3_600_000, "chapters": []},
         ),
     )
 
@@ -252,8 +289,11 @@ def test_pipeline_closes_only_the_resolver_it_creates(
     monkeypatch.setattr(ai_selection, "AiResolver", CapturingResolver)
     caller = resolver(None, [])
 
-    identify(context, IdentifyInput(AiSetup(PipelineLevel.AI)))
-    identify(context, IdentifyInput(AiSetup(PipelineLevel.AI, caller)))
+    identify(context, IdentifyInput(setup=AiSetup(level=PipelineLevel.AI)))
+    identify(
+        context,
+        IdentifyInput(setup=AiSetup(level=PipelineLevel.AI, resolver=caller)),
+    )
 
     assert created[0]._client.is_closed and not caller._client.is_closed
     caller.close()
