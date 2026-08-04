@@ -35,13 +35,23 @@ The same helper is available directly as `./scripts/setup/setup.sh`.
 5. Committed `config/config.json`.
 6. Built-in defaults.
 
-The committed default keeps all paths under `data/`. The repository currently
-also provides `sandbox` and `live` profile files. Select one only when its paths
-are appropriate for the machine running the command:
+The committed default keeps all paths under `data/`. The repository provides
+one committed profile, `sandbox`, which points at scratch paths:
 
 ```bash
 uv run audiobook-convert --profile sandbox --dry-run /path/to/one-book
 ```
+
+Create your own profile by copying it and editing the paths:
+
+```bash
+cp config/config.sandbox.json config/config.mylibrary.json
+uv run audiobook-convert --profile mylibrary --dry-run /path/to/one-book
+```
+
+A `--profile` naming a file that does not exist is not an error. The command
+runs with the committed defaults instead, so confirm the paths in a `--dry-run`
+rather than assuming the profile took effect.
 
 For an uncommitted local override, export a nested environment variable for the
 one command. For example:
@@ -77,6 +87,17 @@ For a larger source, keep the first non-dry run bounded:
 ```bash
 uv run audiobook-convert --limit 1 /path/to/incoming
 ```
+
+### What the conversion does to your files
+
+A successful conversion writes the M4B into `paths.library_dir` and then
+**moves** the original source directory into `paths.archive_dir`, so a
+subsequent run does not reprocess it. The source is relocated, not deleted.
+
+Both default under `data/`. Set `paths.archive_dir` deliberately before
+converting a source tree you need to stay where it is. `AUDIOBOOK_LEVEL=simple`
+skips archiving, but it also skips organization, leaving the M4B in the work
+directory instead of the library.
 
 ## Conversion modes and levels
 

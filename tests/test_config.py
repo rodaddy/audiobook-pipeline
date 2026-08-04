@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from audiobook_pipeline.config import Settings, load_settings
+from audiobook_pipeline.config import PathSettings, Settings, load_settings
 
 
 @pytest.fixture(autouse=True)
@@ -316,3 +316,17 @@ class TestKeystoneContract:
         """
         assert callable(load_settings)
         assert issubclass(Settings, object)
+
+
+def test_a_tilde_path_is_expanded_to_the_home_directory() -> None:
+    """``~/Audiobooks`` is what a user writes, and it must mean their home.
+
+    Without expansion Path keeps the tilde as a literal component, so the
+    pipeline creates a directory actually named "~" in the working directory
+    and files the library inside it. Nothing errors; the books just go
+    somewhere nobody looks.
+    """
+    settings = PathSettings(library_dir=Path("~/Audiobooks"))
+
+    assert settings.library_dir == Path.home() / "Audiobooks"
+    assert "~" not in settings.library_dir.parts

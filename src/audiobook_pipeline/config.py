@@ -127,6 +127,24 @@ class PathSettings(BaseModel):
     cannot reintroduce an absolute default without failing.
     """
 
+    @field_validator("*", mode="after")
+    @classmethod
+    def _expand_user(cls, value: Path) -> Path:
+        """Expand a leading ``~`` on EVERY path field.
+
+        Applied with ``"*"`` rather than per field so a new path setting is
+        covered the day it is added, which is the same reason the relative
+        default test asserts over all fields instead of by name.
+
+        Without this, ``Path`` keeps the tilde as a literal component: a user
+        writing ``~/Audiobooks`` -- the natural spelling, and the one the
+        example profiles use -- gets a directory actually named "~" created in
+        the working directory, with the library filed inside it. Nothing
+        raises, so the only symptom is that the books are somewhere nobody
+        thinks to look.
+        """
+        return value.expanduser()
+
     data_dir: Path = DEFAULT_DATA_DIR
 
     work_dir: Path = DEFAULT_DATA_DIR / "work"
