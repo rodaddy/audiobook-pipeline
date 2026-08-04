@@ -306,13 +306,51 @@ def find_author_override(start: Path, stop_at: Path) -> Path | None:
     Returns:
         The directory holding the marker, or None.
     """
-    current = start
+    current = start.resolve()
+    boundary = stop_at.resolve()
+    if not current.is_relative_to(boundary):
+        return None
     while True:
         if (current / AUTHOR_OVERRIDE_MARKER).is_file():
             return current
-        if current == stop_at or current.parent == current:
+        if current == boundary or current.parent == current:
             return None
         current = current.parent
+
+
+def apply_author_override(
+    metadata: BookMetadata, start: Path, stop_at: Path
+) -> BookMetadata:
+    """Apply the bounded marker directory as the placement author.
+
+    The marker is intentionally content-free: ``Dragonlance/.author-override``
+    means "file this subtree under Dragonlance." It affects placement only;
+    embedded tags retain the catalogue's credited author.
+
+    Args:
+        metadata: Resolved metadata used to build the library path.
+        start: Book directory where the bounded marker search begins.
+        stop_at: Highest directory the search may inspect.
+
+    Returns:
+        Metadata with the marker directory as author, or the original metadata
+        when no bounded marker exists.
+    """
+    marker_root = find_author_override(start, stop_at)
+    if marker_root is None:
+        return metadata
+    author = marker_root.name
+    series = _series_without_author_prefix(metadata.series, author)
+    log.info("author override applied from {}", marker_root / AUTHOR_OVERRIDE_MARKER)
+    return metadata.model_copy(update={"author": author, "series": series})
+
+
+def _series_without_author_prefix(series: str, author: str) -> str:
+    """Remove a redundant franchise prefix without erasing the whole series."""
+    if not series.casefold().startswith(author.casefold()):
+        return series
+    stripped = series[len(author) :].lstrip(":_ -")
+    return stripped or series
 
 
 def _unique_destination(destination: Path) -> Path:

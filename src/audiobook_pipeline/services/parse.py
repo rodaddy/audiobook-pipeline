@@ -185,11 +185,16 @@ def _walk_for_author(source: Path, root: Path, *, book_title: str) -> ParsedPath
     if not source.is_relative_to(root):
         return ParsedPath()
 
-    ancestors = list(source.parents)[:_MAX_CLIMB]
-    for depth, ancestor in enumerate(ancestors):
-        if not ancestor.is_relative_to(root):
-            break
-
+    ancestors = tuple(
+        ancestor
+        for ancestor in list(source.parents)[:_MAX_CLIMB]
+        if ancestor.is_relative_to(root)
+    )
+    # Prefer the outermost plausible name. In Author/Series/Book both the
+    # author and a series such as "Wheel of Time" can look person-like in
+    # isolation; the structural author is the one closer to the run root.
+    for depth in reversed(range(len(ancestors))):
+        ancestor = ancestors[depth]
         if _repeats_book_title(ancestor.name, book_title):
             log.debug("skipping {!r}: it repeats the book title", ancestor.name)
             continue

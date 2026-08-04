@@ -16,6 +16,7 @@ from audiobook_pipeline.models.metadata import BookMetadata
 from audiobook_pipeline.services.organize import (
     AUTHOR_OVERRIDE_MARKER,
     _normalize,
+    apply_author_override,
     book_stem,
     build_library_path,
     find_author_override,
@@ -260,6 +261,30 @@ def test_the_climb_stops_at_the_boundary(tmp_path: Path) -> None:
 
 def test_no_marker_yields_none(tmp_path: Path) -> None:
     assert find_author_override(tmp_path, tmp_path) is None
+
+
+def test_marker_directory_beats_the_catalogue_author(tmp_path: Path) -> None:
+    franchise = tmp_path / "Dragonlance"
+    book_dir = franchise / "Lost Histories" / "A Book"
+    book_dir.mkdir(parents=True)
+    (franchise / AUTHOR_OVERRIDE_MARKER).touch()
+    metadata = book(author="Margaret Weis", series="Dragonlance: Lost Histories")
+
+    overridden = apply_author_override(metadata, book_dir, franchise)
+
+    assert overridden.author == "Dragonlance"
+    assert overridden.series == "Lost Histories"
+    assert metadata.author == "Margaret Weis"
+
+
+def test_marker_search_refuses_a_start_outside_its_boundary(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    boundary = tmp_path / "bounded"
+    outside.mkdir()
+    boundary.mkdir()
+    (outside / AUTHOR_OVERRIDE_MARKER).touch()
+
+    assert find_author_override(outside, boundary) is None
 
 
 # ---------------------------------------------------------------------------

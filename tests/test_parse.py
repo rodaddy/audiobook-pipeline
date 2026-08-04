@@ -40,6 +40,16 @@ def test_the_author_is_read_from_whatever_level_holds_it() -> None:
     )
 
 
+def test_outer_author_beats_a_person_shaped_series_folder() -> None:
+    """The corpus exposed `Wheel of Time` being accepted before Robert Jordan."""
+    claim = parse(
+        "Robert Jordan/Wheel of Time/A Fire Within the Ways/A Fire Within the Ways.m4b"
+    )
+
+    assert claim.author == "Robert Jordan"
+    assert claim.series == "Wheel of Time"
+
+
 def test_a_path_that_names_no_person_yields_no_author() -> None:
     """Refusing beats guessing: a wrong author folder cannot be swept later."""
     assert parse("$100M Offers.mp3").author == ""

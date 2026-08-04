@@ -117,7 +117,9 @@ def main(**options: object) -> None:
     status = cast(str | None, options["status"])
     failures = cast(bool, options["failures"])
     if library_path is not None:
-        _run_library_surface(library_path, diff_target, checks, json_out)
+        exit_code = _run_library_surface(library_path, diff_target, checks, json_out)
+        if exit_code:
+            raise click.exceptions.Exit(exit_code)
         return
     _run_database_surface(profile, status, failures)
 
@@ -152,10 +154,17 @@ def _run_database_surface(profile: str, status: str | None, failures: bool) -> N
 
 def _run_library_surface(
     source: Path, target: Path | None, checks: tuple[str, ...], json_out: bool
-) -> None:
-    """Print a read-only filesystem audit or source-to-target comparison."""
+) -> int:
+    """Print a read-only filesystem audit or source-to-target comparison.
+
+    Returns:
+        One when a diff is missing books or an audit has critical findings;
+        zero otherwise. Warnings remain report-only so callers can distinguish
+        broken library invariants from cleanup advice.
+    """
     if target is not None:
         diff = compare_libraries(source, target)
+        failed = bool(diff.missing)
         payload = {
             "source_count": diff.source_count,
             "target_count": diff.target_count,
@@ -165,6 +174,7 @@ def _run_library_surface(
         }
     else:
         report = run_audit(source, checks=checks or ALL_CHECKS)
+        failed = report.count("critical") > 0
         payload = report.model_dump(mode="json") | {
             "summary": {
                 "total_issues": len(report.findings),
@@ -176,8 +186,9 @@ def _run_library_surface(
         }
     if json_out:
         click.echo(__import__("json").dumps(payload, indent=2, default=str))
-        return
-    click.echo(payload)
+    else:
+        click.echo(payload)
+    return int(failed)
 
 
 if __name__ == "__main__":

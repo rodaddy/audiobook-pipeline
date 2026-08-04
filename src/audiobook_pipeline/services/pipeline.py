@@ -570,9 +570,14 @@ def _organize_output(
         return converted
     if Stage.ORGANIZE not in plan.todo:
         return _stored_output(context.conn, plan.book_hash, Stage.ORGANIZE)
+    placement_metadata = identified.metadata
+    if context.source_root is not None:
+        placement_metadata = organize.apply_author_override(
+            placement_metadata, book.path, context.source_root
+        )
     final = organize.build_library_path(
         context.config.paths.library_dir.resolve(),
-        identified.metadata,
+        placement_metadata,
         index=context.library_index,
     )
     final = _place_organized_output(converted, final, context, plan)

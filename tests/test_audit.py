@@ -184,3 +184,31 @@ def test_library_cli_json_keeps_audit_summary_and_diff_compatibility(
     assert diff_payload["missing"] == 1
     assert isinstance(diff_payload["missing"], int)
     assert len(diff_payload["missing_books"]) == 1
+
+
+def test_library_cli_exits_one_for_critical_findings(tmp_path: Path) -> None:
+    root = _library(tmp_path, {"book.m4b": b"x"})
+    with patch(
+        "audiobook_pipeline.services.audit.probe",
+        return_value=_probe(GOOD_TAGS),
+    ):
+        result = CliRunner().invoke(main, [str(root), "--check", "structure"])
+
+    assert result.exit_code == 1
+
+
+def test_library_cli_keeps_warnings_report_only(tmp_path: Path) -> None:
+    root = _library(tmp_path, {"Author/book.m4b": b"x"})
+    result = CliRunner().invoke(main, [str(root), "--check", "structure"])
+
+    assert result.exit_code == 0
+
+
+def test_library_diff_exits_one_when_books_are_missing(tmp_path: Path) -> None:
+    source = _library(tmp_path, {"Author/Book/book.m4b": b"x"})
+    target = tmp_path / "target"
+    target.mkdir()
+
+    result = CliRunner().invoke(main, [str(source), "--diff", str(target)])
+
+    assert result.exit_code == 1

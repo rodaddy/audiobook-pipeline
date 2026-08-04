@@ -431,6 +431,46 @@ def test_organize_mode_does_not_rewrite_tags_or_metadata(
     }[Stage.METADATA.value] == StageStatus.COMPLETED.value
 
 
+def test_author_override_marker_controls_the_organized_folder(
+    tmp_path: Path, context: RunContext, stubbed: dict[str, int]
+) -> None:
+    """The public pipeline path must call the bounded marker helper."""
+    franchise = tmp_path / "source" / "Dragonlance"
+    book_dir = franchise / "Lost Histories" / "A Book"
+    book_dir.mkdir(parents=True)
+    (franchise / organize.AUTHOR_OVERRIDE_MARKER).touch()
+    book = BookDirectory(
+        path=book_dir,
+        files=(AudioFile(path=book_dir / "book.m4b", duration_ms=MINUTE_MS),),
+    )
+    book.files[0].path.write_bytes(b"audio")
+    queries.upsert_book(
+        context.conn,
+        BookRow(
+            book_hash=book_hash(book),
+            source_path=str(book.identity_path),
+            mode=PipelineMode.ORGANIZE.value,
+            parsed_title="A Book",
+            parsed_author="Margaret Weis",
+            parsed_series="Dragonlance: Lost Histories",
+        ),
+    )
+    run_context = context.model_copy(update={"source_root": franchise})
+
+    row = process_book(book, run_context, mode=PipelineMode.ORGANIZE)
+    receipt = next(
+        stage
+        for stage in queries.get_stages(context.conn, row.book_hash)
+        if stage.stage == Stage.ORGANIZE.value
+    )
+
+    assert receipt.output_file is not None
+    assert (
+        Path(receipt.output_file).relative_to(context.config.paths.library_dir).parts[0]
+        == "Dragonlance"
+    )
+
+
 # ---------------------------------------------------------------------------
 # failure
 # ---------------------------------------------------------------------------
