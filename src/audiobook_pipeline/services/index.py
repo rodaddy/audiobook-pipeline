@@ -435,6 +435,18 @@ class LibraryIndex:
         """Idempotently register a finished file produced without a reservation."""
         self._store.register_file(file)
 
+    def register_destination(self, file: IndexedFile) -> None:
+        """Register a committed file and every new folder below the library root."""
+        parent = self._library_root
+        try:
+            parts = file.destination.directory.relative_to(parent).parts
+        except ValueError as error:
+            raise IndexReservationError(_DESTINATION_MISMATCH_MESSAGE) from error
+        for name in parts:
+            self.register_folder(FolderIdentity(parent=parent, name=name))
+            parent /= name
+        self.register_file(file)
+
     def is_correctly_placed(
         self, source: Path, destination: DestinationIdentity
     ) -> bool:

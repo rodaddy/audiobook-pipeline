@@ -34,13 +34,16 @@ See Also:
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import uuid
 from pathlib import Path
 
 from loguru import logger
 
 from audiobook_pipeline.models.metadata import BookMetadata
+from audiobook_pipeline.services.index import LibraryIndex
 from audiobook_pipeline.utils.paths import sanitize_filename
 from audiobook_pipeline.utils.text import (
     fold_accents,
@@ -250,7 +253,9 @@ def book_stem(metadata: BookMetadata) -> str:
     return sanitize_filename(title)
 
 
-def build_library_path(library_root: Path, metadata: BookMetadata) -> Path:
+def build_library_path(
+    library_root: Path, metadata: BookMetadata, *, index: LibraryIndex | None = None
+) -> Path:
     """Work out where a book belongs in the library.
 
     Layout is ``Author/Series/Book N - Title/Book N - Title.m4b``. The book gets
@@ -264,20 +269,30 @@ def build_library_path(library_root: Path, metadata: BookMetadata) -> Path:
     Args:
         library_root: The library's root directory.
         metadata: The identified book.
+        index: Durable folder and author reuse state, when batch wiring supplies it.
 
     Returns:
         The full destination path, including filename.
     """
     author = sanitize_filename(metadata.author or "Unknown Author")
-    destination = library_root / reuse_existing_folder(library_root, author)
+    if index is not None:
+        author = index.match_author(author)
+    destination = library_root / _reused_folder(library_root, author, index)
 
     if metadata.has_series:
         series = sanitize_filename(metadata.series)
-        destination = destination / reuse_existing_folder(destination, series)
+        destination = destination / _reused_folder(destination, series, index)
 
     stem = book_stem(metadata)
-    destination = destination / reuse_existing_folder(destination, stem)
+    destination = destination / _reused_folder(destination, stem, index)
     return destination / f"{stem}.m4b"
+
+
+def _reused_folder(parent: Path, desired: str, index: LibraryIndex | None) -> str:
+    """Use the durable index when supplied, otherwise preserve direct behavior."""
+    if index is None:
+        return reuse_existing_folder(parent, desired)
+    return index.reuse_existing(parent, desired)
 
 
 def find_author_override(start: Path, stop_at: Path) -> Path | None:
@@ -355,3 +370,19 @@ def place_book(source: Path, destination: Path, *, move: bool = True) -> Path:
 
     log.info("{} -> {}", "moved" if move else "copied", final)
     return final
+
+
+def place_claimed_book(source: Path, destination: Path, *, move: bool = True) -> Path:
+    """Place at an already-reserved exact destination without suffixing or overwrite."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.partial")
+    try:
+        shutil.copy2(source, temporary)
+        os.link(temporary, destination)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+    temporary.unlink()
+    if move:
+        source.unlink()
+    return destination

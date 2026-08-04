@@ -11,6 +11,7 @@ from loguru import logger
 from audiobook_pipeline.config import Settings
 from audiobook_pipeline.db.connection import connect
 from audiobook_pipeline.models.book import BookDirectory
+from audiobook_pipeline.models.index import IndexOptions, SourceIdentity
 from audiobook_pipeline.models.scheduling import (
     BatchScheduleResult,
     BookOutcome,
@@ -18,6 +19,11 @@ from audiobook_pipeline.models.scheduling import (
     WorkerFactory,
 )
 from audiobook_pipeline.models.stage import PipelineMode
+from audiobook_pipeline.services.index import (
+    LibraryIndex,
+    SQLiteIndexStore,
+    sqlite_connection_factory,
+)
 from audiobook_pipeline.services.pipeline import RunContext, process_book
 from audiobook_pipeline.services.scheduler import BatchScheduler
 from audiobook_pipeline.utils.http import build_client
@@ -55,11 +61,13 @@ def _run_book(
     """Create thread-local resources and process one scheduled book."""
     worker_settings = _worker_settings(settings, threads)
     with connect(worker_settings.paths.db_path) as conn, build_client() as client:
+        index = _worker_index(worker_settings)
         context = RunContext(
             config=worker_settings,
             conn=conn,
             client=client,
             source_root=source_root,
+            library_index=index,
         )
         return process_book(book, context, mode=mode).status == "completed"
 
@@ -89,6 +97,39 @@ def _books_by_identity(books: Sequence[BookDirectory]) -> dict[Path, BookDirecto
     return identities
 
 
+def _index_database_path(settings: Settings) -> Path:
+    """Name the separate durable library index beside the pipeline database."""
+    return settings.paths.db_path.resolve().with_name("library-index.sqlite3")
+
+
+def _new_index(settings: Settings) -> LibraryIndex:
+    """Create one non-shared index coordinator over the batch's shared database."""
+    options = IndexOptions()
+    library_root = settings.paths.library_dir.resolve()
+    store = SQLiteIndexStore(
+        sqlite_connection_factory(_index_database_path(settings), options), options
+    )
+    return LibraryIndex(library_root, store)
+
+
+def _worker_index(settings: Settings) -> LibraryIndex:
+    """Create fresh worker-local index objects with no shared SQLite connection."""
+    return _new_index(settings)
+
+
+def _deduplicate_sources(
+    books: Sequence[BookDirectory], index: LibraryIndex
+) -> tuple[BookDirectory, ...]:
+    """Keep resolved-source deduplication at the sequential batch coordinator."""
+    return tuple(
+        book
+        for book in books
+        if not index.mark_processed(
+            SourceIdentity(stem=str(book.identity_path.resolve()))
+        )
+    )
+
+
 def run_batch(
     books: Sequence[BookDirectory],
     settings: Settings,
@@ -96,10 +137,14 @@ def run_batch(
     mode: PipelineMode,
 ) -> BatchScheduleResult:
     """Schedule all books and account deterministically for every terminal result."""
-    identities = _books_by_identity(books)
+    _books_by_identity(books)
+    index = _new_index(settings)
+    index.scan()
+    unique_books = _deduplicate_sources(books, index)
+    identities = _books_by_identity(unique_books)
     scheduler = BatchScheduler(scheduler_options(settings))
     coordinator = scheduler.start(
-        tuple(book.identity_path.resolve() for book in books),
+        tuple(book.identity_path.resolve() for book in unique_books),
         _worker_factory(identities, settings, source_root, mode),
     )
     try:

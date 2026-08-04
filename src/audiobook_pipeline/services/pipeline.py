@@ -41,6 +41,7 @@ from audiobook_pipeline.db import queries
 from audiobook_pipeline.db.rows import BookRow, StageRow
 from audiobook_pipeline.models.book import AudioFile, BookDirectory
 from audiobook_pipeline.models.chapter import ChapterSet
+from audiobook_pipeline.models.index import SourceIdentity
 from audiobook_pipeline.models.lifecycle import StagePlan
 from audiobook_pipeline.models.metadata import BookMetadata
 from audiobook_pipeline.models.parsed import ParsedPath
@@ -66,6 +67,8 @@ from audiobook_pipeline.services import (
     validate,
 )
 from audiobook_pipeline.services.ai import AiResolver
+from audiobook_pipeline.services.index import LibraryIndex
+from audiobook_pipeline.services.indexed_organization import place_indexed_book
 from audiobook_pipeline.services.metadata_stage import ResumeError
 from audiobook_pipeline.utils.ffmpeg import FfmpegError
 from audiobook_pipeline.utils.tagging import write_tags
@@ -108,6 +111,7 @@ class RunContext(BaseModel):
     #: names, instead of landing on the "Unknown Author" shelf. Defaults to
     #: unset, which simply means no author can be inferred from the layout.
     source_root: Path | None = None
+    library_index: LibraryIndex | None = None
 
 
 def book_hash(book: BookDirectory) -> str:
@@ -567,9 +571,11 @@ def _organize_output(
     if Stage.ORGANIZE not in plan.todo:
         return _stored_output(context.conn, plan.book_hash, Stage.ORGANIZE)
     final = organize.build_library_path(
-        context.config.paths.library_dir, identified.metadata
+        context.config.paths.library_dir.resolve(),
+        identified.metadata,
+        index=context.library_index,
     )
-    final = organize.place_book(converted, final)
+    final = _place_organized_output(converted, final, context, plan)
     _record_stage(
         context.conn,
         plan.book_hash,
@@ -578,6 +584,16 @@ def _organize_output(
         output_file=final,
     )
     return final
+
+
+def _place_organized_output(
+    converted: Path, final: Path, context: RunContext, plan: StagePlan
+) -> Path:
+    """Place through the durable index only when the caller supplied one."""
+    if context.library_index is None:
+        return organize.place_book(converted, final)
+    source_identity = SourceIdentity(stem=plan.book_hash)
+    return place_indexed_book(context.library_index, converted, final, source_identity)
 
 
 def _archive_and_cleanup(
