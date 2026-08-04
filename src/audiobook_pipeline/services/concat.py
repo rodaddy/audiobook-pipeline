@@ -138,6 +138,36 @@ def _titles_are_informative(files: tuple[AudioFile, ...]) -> bool:
     return len(set(generic)) * 2 > len(generic)
 
 
+def _clamped_embedded_chapters(
+    chapters: ChapterSet, *, duration_ms: int, offset_ms: int
+) -> tuple[Chapter, ...]:
+    """Clamp one source file's marks before moving them into the joined book.
+
+    A source chapter that ends past its file cannot describe the finished
+    audiobook. A mark starting at or after the file end becomes zero-length
+    when clamped, so it is dropped rather than violating ``Chapter``'s
+    non-zero invariant.
+    """
+    clamped: list[Chapter] = []
+    for chapter in chapters.chapters:
+        end_ms = min(chapter.end_ms, duration_ms)
+        if end_ms <= chapter.start_ms:
+            log.warning(
+                "dropping chapter {} outside source duration {}ms",
+                chapter.title,
+                duration_ms,
+            )
+            continue
+        clamped.append(
+            Chapter(
+                start_ms=chapter.start_ms + offset_ms,
+                end_ms=end_ms + offset_ms,
+                title=chapter.title,
+            )
+        )
+    return tuple(clamped)
+
+
 def _embedded_chapters(files: tuple[AudioFile, ...]) -> ChapterSet | None:
     """Collect embedded chapter marks across files, shifted into place.
 
@@ -160,17 +190,12 @@ def _embedded_chapters(files: tuple[AudioFile, ...]) -> ChapterSet | None:
             log.warning("cannot read chapters from {}: {}", audio.path, exc)
             return None
 
-        if not result.chapters.is_empty:
+        chapters = _clamped_embedded_chapters(
+            result.chapters, duration_ms=audio.duration_ms, offset_ms=offset_ms
+        )
+        if chapters:
             carriers += 1
-            collected.extend(
-                chapter.model_copy(
-                    update={
-                        "start_ms": chapter.start_ms + offset_ms,
-                        "end_ms": chapter.end_ms + offset_ms,
-                    }
-                )
-                for chapter in result.chapters.chapters
-            )
+            collected.extend(chapters)
         offset_ms += audio.duration_ms
 
     if not collected:

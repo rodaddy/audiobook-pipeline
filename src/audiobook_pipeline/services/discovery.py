@@ -35,6 +35,7 @@ See Also:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -44,6 +45,10 @@ from audiobook_pipeline.models.book import SOURCE_EXTENSIONS, AudioFile, BookDir
 from audiobook_pipeline.utils.ffmpeg import FfmpegError, probe
 
 log = logger.bind(stage="discovery")
+
+_DISC_DIRECTORY = re.compile(
+    r"^(?:cd|disc|disk|part|vol(?:ume)?)\s*[_ -]*(\d+)\b", re.IGNORECASE
+)
 
 
 def _is_hidden(path: Path) -> bool:
@@ -100,6 +105,48 @@ def _audio_files_in(directory: Path, excluded: frozenset[Path]) -> list[Path]:
         ),
         key=lambda p: p.name.lower(),
     )
+
+
+def _disc_index(directory: Path) -> int | None:
+    """Return a disc number for conventional multi-disc directory names."""
+    match = _DISC_DIRECTORY.match(directory.name)
+    return int(match.group(1)) if match else None
+
+
+def _disc_audio_paths(directory: Path, excluded: frozenset[Path]) -> list[Path]:
+    """Collect audio below one disc directory in play order."""
+    paths = _audio_files_in(directory, excluded)
+    for child in sorted(directory.iterdir(), key=lambda path: path.name.lower()):
+        if child.is_dir() and not _is_hidden(child):
+            paths.extend(_disc_audio_paths(child, excluded))
+    return paths
+
+
+def _grouped_disc_paths(
+    directory: Path, paths: list[Path], excluded: frozenset[Path]
+) -> tuple[list[Path], frozenset[Path]]:
+    """Return grouped disc audio and child directories consumed by that group.
+
+    A parent with direct audio plus a named disc child is one book. A parent
+    with no audio of its own needs at least two named disc children before that
+    conclusion is safe; one ``CD1`` directory might simply be the supplied
+    source root.
+    """
+    parts = [
+        child
+        for child in directory.iterdir()
+        if child.is_dir() and not _is_hidden(child) and _disc_index(child) is not None
+    ]
+    if not parts or (not paths and len(parts) < 2):
+        return paths, frozenset()
+
+    ordered_parts = sorted(parts, key=lambda part: (_disc_index(part) or 0, part.name))
+    disc_paths = [
+        path for part in ordered_parts for path in _disc_audio_paths(part, excluded)
+    ]
+    if not disc_paths:
+        return paths, frozenset()
+    return [*paths, *disc_paths], frozenset(parts)
 
 
 def _probe_duration(path: Path) -> int | None:
@@ -166,13 +213,14 @@ def walk_candidates(
         return
 
     paths = _audio_files_in(root, excluded)
-    if paths:
-        candidate = _build_candidate(root, paths)
+    grouped_paths, consumed_parts = _grouped_disc_paths(root, paths, excluded)
+    if grouped_paths:
+        candidate = _build_candidate(root, grouped_paths)
         if candidate is not None:
             yield candidate
 
     for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
-        if child.is_dir() and not _is_hidden(child):
+        if child.is_dir() and not _is_hidden(child) and child not in consumed_parts:
             yield from walk_candidates(child, excluded=excluded)
 
 

@@ -1,299 +1,193 @@
-"""Tests for chapter handling in concat + ffprobe.read_chapters.
-
-Chapters are the point of an M4B: they are what makes an 11-hour book
-navigable. The concat stage derived them from FILE BOUNDARIES only, and its
-single-file branch wrote a header with no chapters at all.
-
-Measured 2026-08-01 on the real files:
-    The Martian.m4b            160 embedded chapters -> 0 written
-    $100M Leads.m4b             29 embedded chapters -> 0 written
-    Legend of Drizzt Book 36    40 embedded chapters -> 0 written
-Verified end-to-end that the pipeline's own ffmpeg command DOES carry chapters
-into the encoded output once metadata.txt contains them.
-"""
+"""Regression coverage for the current ffprobe, concat, and identify boundaries."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
-from audiobook_pipeline.ffprobe import read_chapters
+import httpx
+import pytest
 
-
-def _ffprobe_json(chapters: list[dict]) -> object:
-    class R:
-        returncode = 0
-        stdout = json.dumps({"chapters": chapters})
-
-    return R()
-
-
-def _chapter(start: float, end: float, title: str | None) -> dict:
-    d = {"start_time": str(start), "end_time": str(end)}
-    if title is not None:
-        d["tags"] = {"title": title}
-    return d
+from audiobook_pipeline.models.book import AudioFile, BookDirectory
+from audiobook_pipeline.models.chapter import Chapter, ChapterSet
+from audiobook_pipeline.services import concat, identify
+from audiobook_pipeline.services.concat import (
+    SOURCE_EMBEDDED,
+    SOURCE_FILES,
+    build_chapters,
+)
+from audiobook_pipeline.services.identify import fetch_chapters
+from audiobook_pipeline.utils import ffmpeg
+from audiobook_pipeline.utils.ffmpeg import build_chapter_metadata, probe
 
 
-class TestReadChapters:
-    def test_reads_embedded_chapters(self):
-        probe = _ffprobe_json(
-            [
-                _chapter(0, 30.467, "Opening Credits"),
-                _chapter(30.467, 31.8, "Chapter 1"),
-            ]
-        )
-        with patch("audiobook_pipeline.ffprobe.subprocess.run", return_value=probe):
-            got = read_chapters(Path("/fake/book.m4b"))
-        assert got == [
-            {"start_ms": 0, "end_ms": 30467, "title": "Opening Credits"},
-            {"start_ms": 30467, "end_ms": 31800, "title": "Chapter 1"},
-        ]
-
-    def test_untitled_chapter_gets_a_positional_name(self):
-        with patch(
-            "audiobook_pipeline.ffprobe.subprocess.run",
-            return_value=_ffprobe_json([_chapter(0, 10, None)]),
-        ):
-            got = read_chapters(Path("/fake/book.m4b"))
-        assert got[0]["title"] == "Chapter 1"
-
-    def test_no_chapters_returns_empty(self):
-        with patch(
-            "audiobook_pipeline.ffprobe.subprocess.run",
-            return_value=_ffprobe_json([]),
-        ):
-            assert read_chapters(Path("/fake/book.m4b")) == []
-
-    def test_zero_length_chapter_skipped(self):
-        """A start==end mark is not navigable and breaks players."""
-        with patch(
-            "audiobook_pipeline.ffprobe.subprocess.run",
-            return_value=_ffprobe_json(
-                [_chapter(5, 5, "Empty"), _chapter(5, 10, "Ok")]
-            ),
-        ):
-            got = read_chapters(Path("/fake/book.m4b"))
-        assert [c["title"] for c in got] == ["Ok"]
-
-    def test_malformed_chapter_skipped_not_fatal(self):
-        bad = {"start_time": "not-a-number", "end_time": "10"}
-        with patch(
-            "audiobook_pipeline.ffprobe.subprocess.run",
-            return_value=_ffprobe_json([bad, _chapter(0, 10, "Good")]),
-        ):
-            got = read_chapters(Path("/fake/book.m4b"))
-        assert [c["title"] for c in got] == ["Good"]
-
-    def test_probe_failure_returns_empty(self):
-        class R:
-            returncode = 1
-            stdout = ""
-
-        with patch("audiobook_pipeline.ffprobe.subprocess.run", return_value=R()):
-            assert read_chapters(Path("/fake/book.m4b")) == []
-
-    def test_unparseable_output_returns_empty(self):
-        class R:
-            returncode = 0
-            stdout = "<html>not json</html>"
-
-        with patch("audiobook_pipeline.ffprobe.subprocess.run", return_value=R()):
-            assert read_chapters(Path("/fake/book.m4b")) == []
+def source_book(
+    tmp_path: Path, *names: str, duration_ms: int = 10_000
+) -> BookDirectory:
+    """Create a validated book with files that represent precise probe output."""
+    folder = tmp_path / "Book"
+    folder.mkdir(parents=True, exist_ok=True)
+    files = []
+    for name in names:
+        path = folder / name
+        path.write_bytes(b"audio")
+        files.append(AudioFile(path=path, duration_ms=duration_ms))
+    return BookDirectory(path=folder, files=tuple(files))
 
 
-class TestConcatWritesChapters:
-    """The metadata.txt that convert consumes must carry the chapters."""
-
-    def _run_concat(self, tmp_path, audio_files, chapters_by_name, durations):
-        """Run the concat stage over a fake book, return metadata.txt text."""
-        from audiobook_pipeline.config import PipelineConfig
-        from audiobook_pipeline.pipeline_db import PipelineDB
-        from audiobook_pipeline.stages import concat
-
-        book = tmp_path / "Book"
-        book.mkdir(parents=True, exist_ok=True)
-        paths = []
-        for name in audio_files:
-            f = book / name
-            f.write_bytes(b"\x00")
-            paths.append(f)
-
-        cfg = PipelineConfig(_env_file=None, work_dir=str(tmp_path / "work"))
-        db = PipelineDB(cfg.db_path)
-        h = "h" * 16
-        db.create(h, str(book), "convert")
-        work = Path(cfg.work_dir) / h
-        work.mkdir(parents=True, exist_ok=True)
-        (work / "audio_files.txt").write_text("\n".join(str(p) for p in paths) + "\n")
-
-        with (
-            patch(
-                "audiobook_pipeline.stages.concat.get_duration",
-                side_effect=lambda p: durations[p.name],
-            ),
-            patch(
-                "audiobook_pipeline.stages.concat.read_chapters",
-                side_effect=lambda p: chapters_by_name.get(p.name, []),
-            ),
-        ):
-            concat.run(book, h, cfg, db, dry_run=False)
-
-        return (work / "metadata.txt").read_text()
-
-    def test_single_file_embedded_chapters_are_written(self, tmp_path):
-        """THE bug: one already-chaptered m4b produced zero chapters."""
-        md = self._run_concat(
-            tmp_path,
-            ["The Martian.m4b"],
-            {
-                "The Martian.m4b": [
-                    {"start_ms": 0, "end_ms": 30467, "title": "Opening Credits"},
-                    {"start_ms": 30467, "end_ms": 60000, "title": "Chapter 1"},
-                ]
-            },
-            {"The Martian.m4b": 60.0},
-        )
-        assert md.count("[CHAPTER]") == 2
-        assert "title=Opening Credits" in md
-        assert "title=Chapter 1" in md
-
-    def test_single_file_without_chapters_is_one_chapter(self, tmp_path):
-        """No marks to preserve: the file itself is the chapter."""
-        md = self._run_concat(tmp_path, ["Book.mp3"], {}, {"Book.mp3": 3600.0})
-        assert md.count("[CHAPTER]") == 1
-        assert "title=Book" in md
-
-    def test_file_per_chapter_still_uses_file_boundaries(self, tmp_path):
-        """The original behaviour must be unchanged."""
-        md = self._run_concat(
-            tmp_path,
-            ["01 - One.mp3", "02 - Two.mp3", "03 - Three.mp3"],
-            {},
-            {"01 - One.mp3": 10.0, "02 - Two.mp3": 20.0, "03 - Three.mp3": 30.0},
-        )
-        assert md.count("[CHAPTER]") == 3
-        assert "START=0" in md
-        assert "START=10000" in md
-        assert "START=30000" in md
-
-    def test_multi_file_embedded_chapters_are_offset_and_kept(self, tmp_path):
-        """A 2-part book whose parts each carry chapters keeps ALL of them.
-
-        Previously this produced 2 chapters (one per file) and discarded the
-        4 real ones.
-        """
-        md = self._run_concat(
-            tmp_path,
-            ["Part 1.m4b", "Part 2.m4b"],
-            {
-                "Part 1.m4b": [
-                    {"start_ms": 0, "end_ms": 5000, "title": "A"},
-                    {"start_ms": 5000, "end_ms": 10000, "title": "B"},
-                ],
-                "Part 2.m4b": [
-                    {"start_ms": 0, "end_ms": 5000, "title": "C"},
-                    {"start_ms": 5000, "end_ms": 10000, "title": "D"},
-                ],
-            },
-            {"Part 1.m4b": 10.0, "Part 2.m4b": 10.0},
-        )
-        assert md.count("[CHAPTER]") == 4
-        # Part 2's marks must be shifted past Part 1's duration.
-        assert "START=10000" in md
-        assert "START=15000" in md
-
-    def test_chapter_past_end_of_file_is_clamped(self, tmp_path):
-        """A bad END in the source must not run past the joined audio."""
-        md = self._run_concat(
-            tmp_path,
-            ["A.m4b", "B.m4b"],
-            {"A.m4b": [{"start_ms": 0, "end_ms": 999999, "title": "Runaway"}]},
-            {"A.m4b": 10.0, "B.m4b": 10.0},
-        )
-        assert "END=10000" in md
-        assert "999999" not in md
+def chapter_set(*chapters: tuple[int, int, str]) -> ChapterSet:
+    """Build embedded chapters with the same Pydantic model production uses."""
+    return ChapterSet(
+        chapters=tuple(
+            Chapter(start_ms=start, end_ms=end, title=title)
+            for start, end, title in chapters
+        ),
+        source=SOURCE_EMBEDDED,
+    )
 
 
-class TestRemoteChapterFallback:
-    """Audnexus fills in only when the audio itself carries no marks."""
+@pytest.fixture
+def embedded(monkeypatch: pytest.MonkeyPatch) -> dict[Path, ChapterSet]:
+    """Control only the ffprobe result consumed by concat."""
+    table: dict[Path, ChapterSet] = {}
 
-    def _run(self, tmp_path, files, embedded, durations, remote=None):
-        from audiobook_pipeline.config import PipelineConfig
-        from audiobook_pipeline.pipeline_db import PipelineDB
-        from audiobook_pipeline.stages import concat
+    def fake_probe(path: Path, **_: object) -> object:
+        return type("Probed", (), {"chapters": table.get(path, ChapterSet())})()
 
-        book = tmp_path / "Book"
-        book.mkdir(parents=True, exist_ok=True)
-        paths = []
-        for name in files:
-            f = book / name
-            f.write_bytes(b"\x00")
-            paths.append(f)
+    monkeypatch.setattr(concat, "probe", fake_probe)
+    return table
 
-        cfg = PipelineConfig(_env_file=None, work_dir=str(tmp_path / "work"))
-        db = PipelineDB(cfg.db_path)
-        h = "r" * 16
-        db.create(h, str(book), "convert")
-        work = Path(cfg.work_dir) / h
-        work.mkdir(parents=True, exist_ok=True)
-        (work / "audio_files.txt").write_text("\n".join(str(p) for p in paths) + "\n")
 
-        with (
-            patch(
-                "audiobook_pipeline.stages.concat.get_duration",
-                side_effect=lambda p: durations[p.name],
-            ),
-            patch(
-                "audiobook_pipeline.stages.concat.read_chapters",
-                side_effect=lambda p: embedded.get(p.name, []),
-            ),
-            patch(
-                "audiobook_pipeline.stages.concat._remote_chapters",
-                return_value=remote or [],
-            ) as mock_remote,
-        ):
-            concat.run(book, h, cfg, db, dry_run=False)
+def test_probe_parses_embedded_chapters_and_uses_a_fallback_title(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = {
+        "format": {"duration": "31.8", "format_name": "mov"},
+        "streams": [{"codec_name": "aac", "sample_rate": "44100", "channels": 2}],
+        "chapters": [
+            {"start_time": "0", "end_time": "30.467", "tags": {"title": "Opening"}},
+            {"start_time": "30.467", "end_time": "31.8"},
+        ],
+    }
+    monkeypatch.setattr(ffmpeg, "_run", lambda *_args, **_kwargs: json.dumps(payload))
 
-        md = (work / "metadata.txt").read_text()
-        prov = ((db.read(h) or {}).get("metadata") or {}).get("chapter_source")
-        return md, prov, mock_remote
+    result = probe(tmp_path / "Book.m4b")
 
-    def test_remote_chapters_used_when_none_embedded(self, tmp_path):
-        """19 hour-long file splits become the book's 42 real chapters."""
-        files = [f"Part {n:02d}.mp3" for n in range(1, 20)]
-        remote = [(i * 1000, (i + 1) * 1000, f"Chapter {i + 1}") for i in range(42)]
-        md, prov, _ = self._run(
-            tmp_path, files, {}, dict.fromkeys(files, 3600.0), remote
-        )
-        assert md.count("[CHAPTER]") == 42
-        assert prov == "audnexus"
+    assert [
+        (chapter.start_ms, chapter.end_ms, chapter.title)
+        for chapter in result.chapters.chapters
+    ] == [
+        (0, 30_467, "Opening"),
+        (30_467, 31_800, "Chapter 2"),
+    ]
 
-    def test_embedded_chapters_are_never_replaced(self, tmp_path):
-        """Marks from the actual file always beat a remote guess."""
-        embedded = {
-            "Book.m4b": [{"start_ms": 0, "end_ms": 500, "title": "Real Chapter"}]
-        }
-        remote = [(0, 1000, "Remote Chapter")]
-        md, prov, mock_remote = self._run(
-            tmp_path, ["Book.m4b"], embedded, {"Book.m4b": 1.0}, remote
-        )
-        assert "title=Real Chapter" in md
-        assert "Remote Chapter" not in md
-        assert prov == "embedded"
-        mock_remote.assert_not_called()
 
-    def test_falls_back_to_file_boundaries_when_remote_has_nothing(self, tmp_path):
-        """A rejected or missing remote table keeps the file-boundary chapters.
+def test_probe_skips_malformed_and_zero_length_chapters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = {
+        "format": {"duration": "10", "format_name": "mp3"},
+        "streams": [{"codec_name": "mp3", "sample_rate": "44100", "channels": 2}],
+        "chapters": [
+            {"start_time": "bad", "end_time": "1"},
+            {"start_time": "5", "end_time": "5"},
+            {"start_time": "5", "end_time": "10", "tags": {"title": "Good"}},
+        ],
+    }
+    monkeypatch.setattr(ffmpeg, "_run", lambda *_args, **_kwargs: json.dumps(payload))
 
-        This is the Servant of the Crown case: Audnexus described a different
-        edition (13.42% duration gap) and was refused, so the 3 source files
-        stay as 3 chapters rather than the book getting a wrong chapter map.
-        """
-        files = ["Part 1.mp3", "Part 2.mp3", "Part 3.mp3"]
-        md, prov, _ = self._run(
-            tmp_path, files, {}, dict.fromkeys(files, 3600.0), remote=[]
-        )
-        assert md.count("[CHAPTER]") == 3
-        assert prov == "file-boundary"
+    result = probe(tmp_path / "Book.mp3")
+
+    assert [chapter.title for chapter in result.chapters.chapters] == ["Good"]
+
+
+def test_single_file_embedded_chapters_survive_into_ffmetadata(
+    tmp_path: Path, embedded: dict[Path, ChapterSet]
+) -> None:
+    book = source_book(tmp_path, "The Martian.m4b")
+    embedded[book.files[0].path] = chapter_set(
+        (0, 3_000, "Opening Credits"), (3_000, 10_000, "Chapter 1")
+    )
+
+    chapters = build_chapters(book)
+    metadata = build_chapter_metadata(chapters.chapters)
+
+    assert chapters.source == SOURCE_EMBEDDED
+    assert metadata.count("[CHAPTER]") == 2
+    assert "title=Opening Credits" in metadata
+    assert "title=Chapter 1" in metadata
+
+
+def test_multi_file_embedded_chapters_are_kept_with_offsets(
+    tmp_path: Path, embedded: dict[Path, ChapterSet]
+) -> None:
+    book = source_book(tmp_path, "Part 1.m4b", "Part 2.m4b")
+    embedded[book.files[0].path] = chapter_set((0, 5_000, "A"), (5_000, 10_000, "B"))
+    embedded[book.files[1].path] = chapter_set((0, 5_000, "C"), (5_000, 10_000, "D"))
+
+    chapters = build_chapters(book)
+
+    assert chapters.source == SOURCE_EMBEDDED
+    assert [(chapter.start_ms, chapter.title) for chapter in chapters.chapters] == [
+        (0, "A"),
+        (5_000, "B"),
+        (10_000, "C"),
+        (15_000, "D"),
+    ]
+
+
+def test_missing_or_partial_embedded_marks_fall_back_to_file_boundaries(
+    tmp_path: Path, embedded: dict[Path, ChapterSet]
+) -> None:
+    book = source_book(tmp_path, "01 - One.mp3", "02 - Two.mp3")
+    embedded[book.files[0].path] = chapter_set((0, 10_000, "Real Chapter"))
+
+    chapters = build_chapters(book)
+
+    assert chapters.source == SOURCE_FILES
+    assert [
+        (chapter.start_ms, chapter.end_ms, chapter.title)
+        for chapter in chapters.chapters
+    ] == [
+        (0, 10_000, "One"),
+        (10_000, 20_000, "Two"),
+    ]
+
+
+def test_remote_chapters_are_accepted_only_for_the_matching_edition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "runtimeLengthMs": 20_000,
+        "chapters": [
+            {"startOffsetMs": 0, "lengthMs": 5_000, "title": "Opening"},
+            {"startOffsetMs": 5_000, "lengthMs": 15_000, "title": "Chapter 1"},
+        ],
+    }
+
+    monkeypatch.setattr(identify, "get_json", lambda *_args, **_kwargs: payload)
+    with httpx.Client() as client:
+        result = fetch_chapters(client, "ASIN", local_ms=20_000)
+
+    assert result.edition_verified
+    assert result.chapters.source == "audnexus"
+    assert [chapter.title for chapter in result.chapters.chapters] == [
+        "Opening",
+        "Chapter 1",
+    ]
+
+
+def test_embedded_chapter_end_is_clamped_to_its_source_duration(
+    tmp_path: Path, embedded: dict[Path, ChapterSet]
+) -> None:
+    """Historical guard currently missing from concat's embedded path.
+
+    This intentionally red test records that a 10-second source can presently
+    emit a chapter ending at 999999ms. No source change belongs in this port.
+    """
+    book = source_book(tmp_path, "Book.m4b")
+    embedded[book.files[0].path] = chapter_set((0, 999_999, "Runaway"))
+
+    chapters = build_chapters(book)
+
+    assert chapters.chapters[0].end_ms == 10_000
