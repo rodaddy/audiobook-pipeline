@@ -210,11 +210,12 @@ def duration_matches(*, local_ms: int, remote_ms: int | None) -> bool:
     return True
 
 
-def _chapters_from_payload(payload: dict[str, Any]) -> ChapterSet:
+def _chapters_from_payload(payload: dict[str, Any], *, local_ms: int) -> ChapterSet:
     """Build a chapter table from an Audnexus response.
 
     Args:
         payload: The decoded response.
+        local_ms: Runtime of the local audio whose chapter table is being built.
 
     Returns:
         The table. Empty when the response carried no usable chapters.
@@ -227,10 +228,14 @@ def _chapters_from_payload(payload: dict[str, Any]) -> ChapterSet:
         length = entry.get("lengthMs")
         if start is None or not length:
             continue
+        start_ms = int(start)
+        end_ms = min(start_ms + int(length), local_ms)
+        if start_ms >= local_ms or end_ms <= start_ms:
+            continue
         chapters.append(
             Chapter(
-                start_ms=int(start),
-                end_ms=int(start) + int(length),
+                start_ms=start_ms,
+                end_ms=end_ms,
                 title=str(entry.get("title") or f"Chapter {index}"),
             )
         )
@@ -275,6 +280,6 @@ def fetch_chapters(
     ):
         return FetchedChapters(chapters=ChapterSet(), edition_mismatch=True)
 
-    chapters = _chapters_from_payload(payload)
+    chapters = _chapters_from_payload(payload, local_ms=local_ms)
     log.info("fetched {} chapter(s) for {}", len(chapters.chapters), asin)
     return FetchedChapters(chapters=chapters, edition_verified=True)
