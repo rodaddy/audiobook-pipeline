@@ -1,266 +1,103 @@
-"""Tests for convert stage."""
+"""Regression coverage for current encoder selection and encode arguments."""
 
-import subprocess
+from __future__ import annotations
+
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
-from audiobook_pipeline.config import PipelineConfig
-from audiobook_pipeline.pipeline_db import PipelineDB
-from audiobook_pipeline.models import PipelineMode
-from audiobook_pipeline.stages.convert import run, _detect_encoder
+import pytest
 
-
-class TestDetectEncoder:
-    @patch("audiobook_pipeline.stages.convert.subprocess.run")
-    def test_detects_aac_at(self, mock_run):
-        _detect_encoder.cache_clear()
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout="V..... some_encoder\nA..... aac_at\nV..... another\n",
-            stderr="",
-        )
-        assert _detect_encoder() == "aac_at"
-        _detect_encoder.cache_clear()
-
-    @patch("audiobook_pipeline.stages.convert.subprocess.run")
-    def test_falls_back_to_aac(self, mock_run):
-        _detect_encoder.cache_clear()
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout="V..... some_encoder\nA..... aac\nV..... another\n",
-            stderr="",
-        )
-        assert _detect_encoder() == "aac"
-        _detect_encoder.cache_clear()
+from audiobook_pipeline.config import EncodingSettings
+from audiobook_pipeline.models.chapter import Chapter, ChapterSet
+from audiobook_pipeline.models.media import AudioStream, ProbeResult
+from audiobook_pipeline.services import convert
+from audiobook_pipeline.services.convert import can_stream_copy, convert_to_m4b
 
 
-class TestConvertStage:
-    def _make_config(self, tmp_path):
-        return PipelineConfig(
-            _env_file=None,
-            work_dir=tmp_path / "work",
-        )
-
-    def _setup_work_dir(self, config, book_hash):
-        work_dir = config.work_dir / book_hash
-        work_dir.mkdir(parents=True)
-        (work_dir / "files.txt").write_text("file '/src/ch01.mp3'\n")
-        (work_dir / "metadata.txt").write_text(";FFMETADATA1\ntitle=Test\n")
-        return work_dir
-
-    def _create_manifest(self, tmp_path, config, book_hash, bitrate=128, file_count=2):
-        manifest = PipelineDB(tmp_path / "test.db")
-        manifest.create(book_hash, "/src/book", PipelineMode.CONVERT)
-        manifest.update(
-            book_hash,
-            {
-                "metadata": {
-                    "target_bitrate": bitrate,
-                    "file_count": file_count,
-                }
-            },
-        )
-        return manifest
-
-    @patch("audiobook_pipeline.stages.convert._detect_encoder", return_value="aac")
-    @patch("audiobook_pipeline.stages.convert.subprocess.run")
-    def test_dry_run_skips_ffmpeg(self, mock_run, mock_enc, tmp_path):
-        config = self._make_config(tmp_path)
-        manifest = self._create_manifest(tmp_path, config, "testconv01")
-        self._setup_work_dir(config, "testconv01")
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="testconv01",
-            config=config,
-            manifest=manifest,
-            dry_run=True,
-        )
-
-        mock_run.assert_not_called()
-        data = manifest.read("testconv01")
-        assert data["stages"]["convert"]["status"] == "completed"
-        assert "output_file" in data["stages"]["convert"]
-
-    def test_missing_files_txt_fails(self, tmp_path):
-        config = self._make_config(tmp_path)
-        manifest = self._create_manifest(tmp_path, config, "testconv02")
-        # Don't create work dir files
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="testconv02",
-            config=config,
-            manifest=manifest,
-        )
-
-        data = manifest.read("testconv02")
-        assert data["stages"]["convert"]["status"] == "failed"
-
-    @patch("audiobook_pipeline.stages.convert.count_chapters", return_value=2)
-    @patch(
-        "audiobook_pipeline.stages.convert.get_format_name", return_value="mov,mp4,m4a"
+def source_probe(path: Path, *, codec: str, bit_rate: int | None) -> ProbeResult:
+    """Build the typed ffprobe result used by the conversion service."""
+    return ProbeResult(
+        path=path,
+        duration_ms=60_000,
+        stream=AudioStream(
+            codec=codec, sample_rate=44_100, channels=2, bit_rate=bit_rate
+        ),
     )
-    @patch("audiobook_pipeline.stages.convert.get_codec", return_value="aac")
-    @patch("audiobook_pipeline.stages.convert._detect_encoder", return_value="aac")
-    @patch("audiobook_pipeline.stages.convert.subprocess.run")
-    def test_successful_conversion(
-        self, mock_run, mock_enc, mock_codec, mock_fmt, mock_ch, tmp_path
-    ):
-        config = self._make_config(tmp_path)
-        manifest = self._create_manifest(tmp_path, config, "testconv03")
-        self._setup_work_dir(config, "testconv03")
-
-        # Mock ffmpeg success and create output file
-        def ffmpeg_side_effect(cmd, **kwargs):
-            output_path = Path(cmd[-1])
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text("fake m4b content")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
-            )
-
-        mock_run.side_effect = ffmpeg_side_effect
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="testconv03",
-            config=config,
-            manifest=manifest,
-        )
-
-        data = manifest.read("testconv03")
-        assert data["stages"]["convert"]["status"] == "completed"
-        assert data["metadata"]["codec"] == "aac"
-
-    @patch("audiobook_pipeline.stages.convert._detect_encoder", return_value="aac")
-    @patch("audiobook_pipeline.stages.convert.subprocess.run")
-    def test_ffmpeg_failure_sets_failed(self, mock_run, mock_enc, tmp_path):
-        config = self._make_config(tmp_path)
-        manifest = self._create_manifest(tmp_path, config, "testconv04")
-        self._setup_work_dir(config, "testconv04")
-
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="Error: bad input"
-        )
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="testconv04",
-            config=config,
-            manifest=manifest,
-        )
-
-        data = manifest.read("testconv04")
-        assert data["stages"]["convert"]["status"] == "failed"
-
-    @patch("audiobook_pipeline.stages.convert._detect_encoder", return_value="aac_at")
-    @patch("audiobook_pipeline.stages.convert.subprocess.run")
-    def test_threads_kwarg_passed_to_ffmpeg(self, mock_run, mock_enc, tmp_path):
-        config = self._make_config(tmp_path)
-        manifest = self._create_manifest(tmp_path, config, "testconv05")
-        self._setup_work_dir(config, "testconv05")
-
-        run(
-            source_path=Path("/src/book"),
-            book_hash="testconv05",
-            config=config,
-            manifest=manifest,
-            dry_run=True,
-            threads=4,
-        )
-
-        # In dry_run mode, subprocess.run should not be called
-        mock_run.assert_not_called()
-        # But we can verify the manifest was updated
-        data = manifest.read("testconv05")
-        assert data["stages"]["convert"]["status"] == "completed"
 
 
-class TestStreamCopyDecision:
-    """When it is safe to join sources without re-encoding.
+def chapter_table() -> ChapterSet:
+    """Return one valid chapter for metadata mapping assertions."""
+    return ChapterSet(chapters=(Chapter(start_ms=0, end_ms=60_000, title="One"),))
 
-    A wrong "yes" produces an audiobook that plays as noise after the first
-    file boundary, so every check here is a refusal case. Re-encoding AAC to
-    AAC at the same bitrate is pure generation loss for hours of CPU.
-    """
 
-    def _cfg(self, tmp_path):
-        return PipelineConfig(
-            _env_file=None, work_dir=tmp_path / "w", nfs_output_dir=tmp_path / "l"
-        )
+@pytest.fixture
+def ffmpeg_calls(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Capture ffmpeg input instead of performing a real encode."""
+    calls: list[list[str]] = []
 
-    def test_uniform_aac_is_copyable(self, tmp_path):
-        from audiobook_pipeline.stages.convert import _can_stream_copy
+    def record(args: list[str], **_: object) -> str:
+        calls.append(args)
+        return ""
 
-        info = {"codec_name": "aac", "sample_rate": "44100", "channels": 2}
-        with patch(
-            "audiobook_pipeline.stages.convert.get_stream_info", return_value=info
-        ):
-            assert _can_stream_copy(
-                [Path("a.m4b"), Path("b.m4b")], 64, self._cfg(tmp_path)
-            )
+    monkeypatch.setattr(convert, "run_ffmpeg", record)
+    return calls
 
-    def test_mp3_sources_are_not_copyable(self, tmp_path):
-        from audiobook_pipeline.stages.convert import _can_stream_copy
 
-        info = {"codec_name": "mp3", "sample_rate": "44100", "channels": 2}
-        with patch(
-            "audiobook_pipeline.stages.convert.get_stream_info", return_value=info
-        ):
-            assert not _can_stream_copy([Path("a.mp3")], 64, self._cfg(tmp_path))
+@pytest.mark.parametrize(
+    ("codec", "bit_rate", "expected"),
+    [
+        ("aac", 96_000, True),
+        ("aac", 256_000, False),
+        ("mp3", 96_000, False),
+        ("aac", None, False),
+    ],
+)
+def test_stream_copy_selection_requires_measured_compatible_aac(
+    codec: str, bit_rate: int | None, expected: bool
+) -> None:
+    assert (
+        can_stream_copy(codec=codec, source_bps=bit_rate, configured_kbps=128)
+        is expected
+    )
 
-    def test_mixed_sample_rates_refused(self, tmp_path):
-        """Concat with -c copy requires identical stream parameters."""
-        from audiobook_pipeline.stages.convert import _can_stream_copy
 
-        infos = [
-            {"codec_name": "aac", "sample_rate": "44100", "channels": 2},
-            {"codec_name": "aac", "sample_rate": "22050", "channels": 2},
-        ]
-        with patch(
-            "audiobook_pipeline.stages.convert.get_stream_info", side_effect=infos
-        ):
-            assert not _can_stream_copy(
-                [Path("a.m4b"), Path("b.m4b")], 64, self._cfg(tmp_path)
-            )
+def test_aac_at_or_under_ceiling_uses_stream_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ffmpeg_calls: list[list[str]]
+) -> None:
+    monkeypatch.setattr(
+        convert,
+        "probe",
+        lambda path, **_: source_probe(path, codec="aac", bit_rate=96_000),
+    )
 
-    def test_mixed_channel_counts_refused(self, tmp_path):
-        from audiobook_pipeline.stages.convert import _can_stream_copy
+    convert_to_m4b(
+        tmp_path / "in.m4b", tmp_path / "out.m4b", chapter_table(), EncodingSettings()
+    )
 
-        infos = [
-            {"codec_name": "aac", "sample_rate": "44100", "channels": 2},
-            {"codec_name": "aac", "sample_rate": "44100", "channels": 1},
-        ]
-        with patch(
-            "audiobook_pipeline.stages.convert.get_stream_info", side_effect=infos
-        ):
-            assert not _can_stream_copy(
-                [Path("a.m4b"), Path("b.m4b")], 64, self._cfg(tmp_path)
-            )
+    args = ffmpeg_calls[0]
+    assert args[args.index("-c:a") + 1] == "copy"
+    assert "-b:a" not in args
 
-    def test_low_bitrate_is_not_worth_keeping(self, tmp_path):
-        from audiobook_pipeline.stages.convert import _can_stream_copy
 
-        info = {"codec_name": "aac", "sample_rate": "44100", "channels": 2}
-        with patch(
-            "audiobook_pipeline.stages.convert.get_stream_info", return_value=info
-        ):
-            assert not _can_stream_copy([Path("a.m4b")], 32, self._cfg(tmp_path))
+def test_other_sources_use_configured_encoder_bitrate_and_thread_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ffmpeg_calls: list[list[str]]
+) -> None:
+    monkeypatch.setattr(
+        convert,
+        "probe",
+        lambda path, **_: source_probe(path, codec="mp3", bit_rate=64_000),
+    )
 
-    def test_unprobeable_file_refused(self, tmp_path):
-        """Cannot read it means cannot claim it is safe."""
-        from audiobook_pipeline.stages.convert import _can_stream_copy
+    convert_to_m4b(
+        tmp_path / "in.mp3",
+        tmp_path / "out.m4b",
+        chapter_table(),
+        EncodingSettings(codec="aac", max_bitrate=128, threads=3),
+        work_dir=tmp_path / "work",
+    )
 
-        with patch(
-            "audiobook_pipeline.stages.convert.get_stream_info",
-            side_effect=OSError("gone"),
-        ):
-            assert not _can_stream_copy([Path("a.m4b")], 64, self._cfg(tmp_path))
-
-    def test_empty_list_refused(self, tmp_path):
-        from audiobook_pipeline.stages.convert import _can_stream_copy
-
-        assert not _can_stream_copy([], 64, self._cfg(tmp_path))
+    args = ffmpeg_calls[0]
+    assert args[args.index("-c:a") + 1] == "aac"
+    assert args[args.index("-b:a") + 1] == "64k"
+    assert args[args.index("-threads") + 1] == "3"
+    assert args[args.index("-map_metadata") + 1] == "1"
+    assert (tmp_path / "work" / "chapters.txt").is_file()
