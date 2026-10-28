@@ -203,6 +203,15 @@ The pipeline is resumable. Stages already completed are recorded in
 problem and running the same command again picks up where it stopped rather
 than re-encoding from scratch.
 
+## How it was built
+
+The first version was a Bash pipeline planned and built in phases on
+2026-02-20, each phase ending in a verification report. Three days later it
+was rewritten in Python with 417 tests; v1.0.0 (2026-08-04) followed a review
+and real-library runs, with 899 tests and every fix backed by a test that
+failed first. Dates, decisions and the bugs that mattered are in
+[docs/BUILD-STORY.md](docs/BUILD-STORY.md).
+
 ## Project status
 
 Active. The Python implementation is covered by the test suite (`uv run pytest`), and CI runs the repository's standards gate and tests on every push.
