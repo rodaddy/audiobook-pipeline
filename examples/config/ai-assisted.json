@@ -1,0 +1,20 @@
+{
+  "level": "ai",
+  "paths": {
+    "data_dir": "~/audiobook-pipeline",
+    "work_dir": "~/audiobook-pipeline/work",
+    "log_dir": "~/audiobook-pipeline/logs",
+    "archive_dir": "~/audiobook-pipeline/archive",
+    "library_dir": "~/Audiobooks"
+  },
+  "ai": {
+    "base_url": "http://localhost:4000",
+    "model": "claude-haiku-4-5",
+    "all_books": false,
+    "timeout_seconds": 30
+  },
+  "logging": {
+    "level": "INFO",
+    "file_sink": true
+  }
+}

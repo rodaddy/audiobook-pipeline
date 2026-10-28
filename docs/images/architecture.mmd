@@ -1,0 +1,27 @@
+flowchart TB
+  SRC["source folder<br/>loose audio files"]
+  subgraph APPS["commands (apps/)"]
+    direction LR
+    CONV["audiobook-convert"]
+    WATCH["audiobook-watch<br/>incoming folder"]
+    AUDIT["audiobook-audit<br/>read-only library audit"]
+  end
+  DISC["discovery.py<br/>find books, plan concat or single file"]
+  subgraph PIPE["pipeline.py stages (models/stage.py)"]
+    direction TB
+    V["validate"] --> CC["concat"] --> CV["convert<br/>ffmpeg to chaptered M4B"]
+    CV --> AS["asin<br/>audible.py + matching.py<br/>duration guard, optional ai.py"]
+    AS --> MD["metadata<br/>tags, cover art, chapters"]
+    MD --> OR["organize<br/>Author/Series/Book N - Title"]
+    OR --> AR["archive<br/>move source aside"] --> CL["cleanup"]
+  end
+  AUD[("Audible catalogue")]
+  DB[("SQLite state<br/>data/work/pipeline.db")]
+  LIB[("library<br/>Plex / Audiobookshelf layout")]
+
+  SRC --> CONV & WATCH
+  CONV & WATCH --> DISC --> V
+  AS <--> AUD
+  PIPE -. "stage results, resumable" .-> DB
+  OR --> LIB
+  AUDIT --> LIB

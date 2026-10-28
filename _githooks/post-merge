@@ -1,0 +1,50 @@
+#!/opt/homebrew/bin/bash
+# post-merge -- tell the developer when a merge changed something that requires
+# an action they will otherwise forget.
+#
+# Advisory by design: a post-merge hook cannot block anything, the merge has
+# already happened. Its whole job is to convert a silent state change into a
+# visible one. The failure it prevents is the afternoon spent debugging an
+# ImportError that a `uv sync` would have fixed.
+
+set -uo pipefail
+
+changed() {
+  git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD 2>/dev/null \
+    | grep -qE "$1"
+}
+
+acted=0
+
+if changed '^(pyproject\.toml|uv\.lock)$'; then
+  printf '\n[post-merge] dependencies changed -- run:\n'
+  printf '    uv sync --extra dev\n'
+  acted=1
+fi
+
+if changed '^_githooks/'; then
+  printf '\n[post-merge] the hooks themselves changed -- reinstall them:\n'
+  printf '    ./_githooks/install.sh\n'
+  printf '  Git does not version .git/hooks, so your installed copies are stale.\n'
+  acted=1
+fi
+
+# The pipeline stores state in SQLite with no migration tool: a schema change
+# in pipeline_db.py applies to newly created databases, while an existing
+# pipeline.db keeps whatever shape it was created with. Worth knowing before
+# debugging a confusing "no such column".
+if changed '^src/audiobook_pipeline/pipeline_db\.py$'; then
+  printf '\n[post-merge] pipeline_db.py changed -- if the schema moved, an\n'
+  printf '  existing work_dir/pipeline.db predates it. There is no migration\n'
+  printf '  step; remove the stale db to have it recreated.\n'
+  acted=1
+fi
+
+if changed '^\.env\.(example|schema)$'; then
+  printf '\n[post-merge] the env example/schema changed -- your local .env may\n'
+  printf '  be missing a new key. Diff it against the example.\n'
+  acted=1
+fi
+
+[[ $acted -eq 1 ]] && printf '\n'
+exit 0

@@ -1,0 +1,14 @@
+{
+  "level": "normal",
+  "paths": {
+    "data_dir": "~/audiobook-pipeline",
+    "work_dir": "~/audiobook-pipeline/work",
+    "log_dir": "~/audiobook-pipeline/logs",
+    "archive_dir": "~/audiobook-pipeline/archive",
+    "library_dir": "~/Audiobooks"
+  },
+  "logging": {
+    "level": "INFO",
+    "file_sink": true
+  }
+}

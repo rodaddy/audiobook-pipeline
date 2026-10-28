@@ -1,0 +1,19 @@
+{
+  "level": "normal",
+  "logging": {
+    "level": "INFO",
+    "file_sink": true,
+    "json_sink": false
+  },
+  "encoding": {
+    "max_bitrate": 128,
+    "channels": 1,
+    "codec": "aac"
+  },
+  "metadata": {
+    "source": "audible",
+    "audible_region": "com",
+    "audnexus_region": "us",
+    "asin_search_threshold": 65
+  }
+}

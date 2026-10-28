@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# run -- the front door to everything a USER runs.
+#
+#     ./scripts/run                 show what is available
+#     ./scripts/run setup           first-time install
+#     ./scripts/run check           every gate the pre-commit hook runs
+#     ./scripts/run <name>          run a specific helper
+#
+# TWO KINDS OF SCRIPT, TWO HOMES. The split is deliberate:
+#
+#   scripts/{setup,ops}/   what a USER runs. Installer, library helpers. Part
+#                          of the shipped experience, and what this menu lists.
+#   _githooks/             what the REPO runs on ITSELF. Size checks, config
+#                          compliance, README generation. Machinery invoked by
+#                          hooks and CI, living beside the hooks that call it.
+#
+# Someone converting an audiobook has no use for the README generator, and
+# burying the installer among enforcement scripts is how a first-time user
+# fails to find it. `check` below is the one bridge: it runs the repo's own
+# gates on demand, so compliance is checkable BEFORE staging rather than
+# discovered when a commit is refused.
+#
+# DISCOVERY IS LIVE, not a hardcoded list. The menu is built by scanning the
+# directories, so a helper added tomorrow appears here without editing this
+# file -- a launcher whose list drifts from its directory is worse than no
+# launcher, because it teaches people that a real script does not exist.
+
+set -uo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root" || exit 1
+
+bold=$'\033[1m'; dim=$'\033[2m'; green=$'\033[32m'; red=$'\033[31m'
+yellow=$'\033[33m'; reset=$'\033[0m'
+
+say()  { printf '%s\n' "$*"; }
+head2() { printf '\n%s%s%s\n' "$bold" "$*" "$reset"; }
+ok()   { printf '  %sOK%s    %s\n' "$green" "$reset" "$*"; }
+bad()  { printf '  %sFAIL%s  %s\n' "$red" "$reset" "$*"; }
+skip() { printf '  %sSKIP%s  %s\n' "$yellow" "$reset" "$*"; }
+
+# ── Description: first non-shebang comment line of a script ──────────────────
+# Read from the file rather than kept in a table here, so the description a
+# helper shows is the one its author wrote, and cannot go stale separately.
+describe() {
+  local file="$1" line
+  case "$file" in
+    *.py)
+      # First line of the module docstring.
+      line=$(rg -m1 -N '^"""' "$file" 2>/dev/null | sed 's/^"""//; s/"""$//')
+      ;;
+    *)
+      # First `# text` line after the shebang, minus the script's own name.
+      line=$(sed -n '2,6p' "$file" 2>/dev/null \
+             | rg -m1 -N '^# \S' \
+             | sed 's/^# //; s/^[a-zA-Z0-9_.-]* -- //')
+      ;;
+  esac
+  printf '%s' "${line:-no description}"
+}
+
+# ── Locate a helper by bare name, in any scripts/ subdirectory ───────────────
+find_helper() {
+  local want="$1"
+  fd --type f --max-depth 2 . scripts 2>/dev/null | while read -r f; do
+    local base="${f##*/}"
+    if [[ "$base" == "$want" || "${base%.*}" == "$want" ]]; then
+      printf '%s' "$f"
+      return 0
+    fi
+  done
+}
+
+# ── The menu ─────────────────────────────────────────────────────────────────
+show_menu() {
+  say ""
+  say "${bold}audiobook-pipeline${reset}"
+  say "${dim}convert audio into chaptered, tagged M4B audiobooks${reset}"
+
+  local group dir
+  for group in setup ops; do
+    dir="scripts/$group"
+    [[ -d "$dir" ]] || continue
+
+    local found=0
+    while IFS= read -r f; do
+      [[ -n "$f" ]] || continue
+      [[ -x "$f" || "$f" == *.py ]] || continue
+      if (( found == 0 )); then
+        head2 "$group"
+        found=1
+      fi
+      local base="${f##*/}"
+      printf '  %-22s %s%s%s\n' "${base%.*}" "$dim" "$(describe "$f")" "$reset"
+    done < <(fd --type f . "$dir" 2>/dev/null | sort)
+  done
+
+  head2 "shortcuts"
+  printf '  %-22s %sinstall, then convert your first book%s\n' "setup" "$dim" "$reset"
+  printf '  %-22s %severy gate the pre-commit hook runs%s\n' "check" "$dim" "$reset"
+  say ""
+  say "${dim}usage: ./scripts/run <name>${reset}"
+  say ""
+}
+
+# ── `check`: the same gates the hook runs, on demand ─────────────────────────
+#
+# The point is that compliance is checkable BEFORE staging. A developer who can
+# only discover a violation by attempting a commit will learn to pass --no-verify.
+run_checks() {
+  local fail=0
+
+  head2 "python standards"
+  if ./_githooks/pre-commit --working; then
+    ok "working-tree hook"
+  else
+    bad "working-tree hook"
+    fail=1
+  fi
+
+  head2 "configuration"
+  if uv run --no-sync python _githooks/check_config_compliance.py --check; then
+    ok "config compliance"
+  else
+    bad "config compliance"
+    fail=1
+  fi
+
+  head2 "tests"
+  if uv run --no-sync pytest -q; then
+    ok "pytest"
+  else
+    bad "pytest"
+    fail=1
+  fi
+
+  say ""
+  if (( fail )); then
+    say "${red}${bold}Not clean.${reset} Fix the above before committing."
+  else
+    say "${green}${bold}All gates pass.${reset}"
+  fi
+  say ""
+  return $fail
+}
+
+# ── Dispatch ─────────────────────────────────────────────────────────────────
+cmd="${1:-}"
+case "$cmd" in
+  ""|-h|--help|help)
+    show_menu
+    ;;
+  check)
+    shift
+    run_checks "$@"
+    ;;
+  *)
+    target="$(find_helper "$cmd")"
+    if [[ -z "$target" ]]; then
+      say ""
+      say "${red}No helper named '${cmd}'.${reset}"
+      show_menu
+      exit 1
+    fi
+    shift
+    case "$target" in
+      *.py) exec uv run python "$target" "$@" ;;
+      *)    exec "$target" "$@" ;;
+    esac
+    ;;
+esac
