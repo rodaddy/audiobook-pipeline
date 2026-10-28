@@ -214,7 +214,7 @@ failed first. Dates, decisions and the bugs that mattered are in
 
 ## Project status
 
-Active. The Python implementation is covered by the test suite (`uv run pytest`), and CI runs the repository's standards gate and tests on every push.
+Active. The Python implementation is covered by the test suite (`uv sync --extra dev`, then `uv run pytest`), and CI runs the repository's standards gate and tests on every push.
 
 ## Credits
 

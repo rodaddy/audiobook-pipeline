@@ -139,7 +139,7 @@ Keep the first line under 72 characters. Add a body for complex changes explaini
 1. **`lib/audible.sh`** -- add the field to `normalize_audible_json()` jq filter
 2. **`lib/metadata.sh`** -- extract the field in `tag_m4b()` and add the tone flag
 3. **`README.md`** -- add a row to the Metadata Fields table
-4. **`config.env.example`** -- add config var if the field is configurable
+4. **`.env.example`** -- add config var if the field is configurable
 
 The field should be conditional: `[[ -n "$field" ]] && tone_args+=("--meta-flag" "$field")` so it works with both Audible and Audnexus sources.
 
@@ -153,23 +153,21 @@ The field should be conditional: `[[ -n "$field" ]] && tone_args+=("--meta-flag"
 
 ## Testing
 
-There's no automated test suite yet (contributions welcome). For now:
-
 ```bash
-# Lint all shell scripts
-shellcheck -x -e SC1091,SC2034 lib/*.sh stages/*.sh bin/*.sh bin/audiobook-convert install.sh
+# Install the test and lint tools (setup syncs runtime dependencies only)
+uv sync --extra dev
+
+# Every gate the pre-commit hook and CI run: standards, config, pytest
+./scripts/run check
+
+# Or the test suite alone
+uv run pytest -q
+
+# Lint the legacy shell scripts, as CI does
+shellcheck -x -S warning -e SC1091,SC2034 lib/*.sh stages/*.sh bin/*.sh bin/audiobook-convert install.sh
 
 # Dry-run a conversion
-bin/audiobook-convert --dry-run --verbose /path/to/mp3-directory/
-
-# Dry-run an enrichment
-bin/audiobook-convert --dry-run --verbose /path/to/existing.m4b
-
-# Test metadata-only mode
-bin/audiobook-convert --mode metadata --dry-run --verbose /path/to/book.m4b
-
-# Verify metadata was written
-tone dump /path/to/tagged.m4b --format json
+uv run audiobook-convert --dry-run /path/to/mp3-directory/
 ```
 
 ## Pull Request Process
@@ -177,11 +175,11 @@ tone dump /path/to/tagged.m4b --format json
 1. Fork the repo and create a feature branch from `main`
 2. Make your changes
 3. Run `shellcheck` on all modified files
-4. Test with `--dry-run --verbose` against a sample audiobook
+4. Run `./scripts/run check`, then `uv run audiobook-convert --dry-run` against a sample audiobook
 5. Submit a PR against `main` -- the PR template will guide you
 6. Address any review feedback
 
-PRs that add new config options must also update `config.env.example` and the README.
+PRs that add new config options must also update `.env.example` and the README.
 
 ## Questions?
 
